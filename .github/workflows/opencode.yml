@@ -29,13 +29,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Configure git identity
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
@@ -63,13 +62,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Configure git identity
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
@@ -114,14 +112,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          persist-credentials: true
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
       - name: Configure git identity
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Run opencode (adversarial pass)
         uses: anomalyco/opencode/github@latest
