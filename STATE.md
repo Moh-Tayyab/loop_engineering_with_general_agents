@@ -21,10 +21,10 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 
 ## 2. Current Beat
 
-- **Beat #:** 3
+- **Beat #:** 4
 - **Date:** 2026-08-17
-- **Trigger:** advanced loop engineering phase (manual)
-- **Status:** Adding inner/outer loop design, test gate, escalation protocols, skills
+- **Trigger:** senior-engineer pass — add real code to loop on
+- **Status:** textutils library + tests added; CI verification pending
 
 ## 3. Beat Log
 
@@ -32,7 +32,8 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 |------|------|---------|--------|--------|
 | 1 | 2026-08-17 | manual | Repo init, workflow setup, auth fix, `/oc summarize` test | PASS — agent replied on issue #1 |
 | 2 | 2026-08-17 | manual | Setup STATE.md, AGENTS.md, heartbeat cron, issue-to-PR trigger | PASS — agent answered `/oc ask` on issue #1 |
-| 3 | 2026-08-17 | manual | Advanced loop design: inner/outer loops, test gate, escalation, skills | In progress |
+| 3 | 2026-08-17 | manual | Advanced loop design: inner/outer loops, test gate, escalation, skills | PASS — pushed `bb93f18`, test-gate workflow runs |
+| 4 | 2026-08-17 | manual | Add textutils practice library + 46 pytest tests | PASS — 46 passed locally; test-gate CI pending |
 
 ## 4. Budget & Stopping Conditions
 
@@ -128,8 +129,7 @@ Prevent `STATE.md` from overflowing the context window on long multi-beat loops:
 
 ## 10. Next Actionable Tasks
 
-1. Complete outer loop design: Maker–Checker split enforced via AGENTS.md.
-2. Test Autonomous Issue-to-PR Loop end-to-end (issue → branch → code → tests → PR).
-3. Add a real practice project (small app) to loop on.
-4. Add a pytest or npm test suite so the automated test gate has real tests to run.
-5. Exercise the adversarial checker on a real code change.
+1. Merge beat 4 via CI (test-gate must pass on the textutils suite).
+2. Exercise the adversarial checker (`/oc check`) on the textutils code.
+3. Open a real feature-request issue to run the Autonomous Issue-to-PR Loop end-to-end.
+4. Expand textutils with a new function (e.g., `wrap_text`) via an issue-driven beat.
