@@ -6,7 +6,7 @@ on:
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened]
+    types: [opened, reopened]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   schedule:
