@@ -1,0 +1,53 @@
+name: test-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+        if: hashFiles('pyproject.toml', 'requirements.txt', 'setup.py') != ''
+
+      - name: Install Python dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+          pip install pytest
+        if: hashFiles('pyproject.toml', 'requirements.txt', 'setup.py') != ''
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+        if: hashFiles('package.json') != ''
+
+      - name: Install Node dependencies
+        run: npm install
+        if: hashFiles('package.json') != ''
+
+      - name: Run tests
+        run: |
+          if [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; then
+            python -m pytest -q
+          elif [ -f package.json ]; then
+            npm test
+          else
+            echo "No test suite found in this repo yet."
+          fi

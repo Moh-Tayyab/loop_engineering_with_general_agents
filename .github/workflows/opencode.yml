@@ -83,3 +83,51 @@ jobs:
               STATE.md §4 are met.
 
             Update STATE.md (beat log + current beat) before finishing.
+
+  # Adversarial Checker: a dedicated "try to break it" review profile.
+  # Trigger: comment /oc check or /opencode check on an issue or PR.
+  adversarial-checker:
+    if: |
+      (github.event_name == 'issue_comment' ||
+       github.event_name == 'pull_request_review_comment') &&
+      (contains(github.event.comment.body, '/oc check') ||
+       contains(github.event.comment.body, '/opencode check'))
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+
+      - name: Run opencode (adversarial pass)
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode/deepseek-v4-flash-free
+          use_github_token: true
+          prompt: |
+            You are the ADVERSARIAL CHECKER for the proposed solution in this
+            issue/PR. Your only job is to BREAK it. Follow AGENTS.md §5.
+
+            1. Invalid inputs: empty/null data, boundary values, malformed input,
+               extreme edge cases. Does the code crash or behave badly?
+            2. Security: secret leakage, prompt/code injection, unsafe
+               deserialization, overly broad permissions, SSRF/path traversal.
+            3. Error paths: are exceptions handled and logged without leaking
+               internal details? Does it fail open when it should fail closed?
+            4. Correctness: does it actually solve the stated problem, including
+               the unstated cases?
+
+            Verdict format — reply with one of:
+            - `APPROVED` if the change survives every attack you attempted.
+            - `CHANGES REQUESTED` if you found any issue, listing each failing
+              case with a concrete reproduction. Do NOT write code fixes; the
+              Maker will address them in a rework beat.
