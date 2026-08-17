@@ -21,10 +21,10 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 
 ## 2. Current Beat
 
-- **Beat #:** 4
+- **Beat #:** 5
 - **Date:** 2026-08-17
-- **Trigger:** senior-engineer pass — add real code to loop on
-- **Status:** textutils library + tests added; CI verification pending
+- **Trigger:** feature issue #2 — add `wrap_text` to textutils
+- **Status:** `wrap_text` implemented + 32 tests added; Maker/Checker/Adversarial PASS
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 | 2 | 2026-08-17 | manual | Setup STATE.md, AGENTS.md, heartbeat cron, issue-to-PR trigger | PASS — agent answered `/oc ask` on issue #1 |
 | 3 | 2026-08-17 | manual | Advanced loop design: inner/outer loops, test gate, escalation, skills | PASS — pushed `bb93f18`, test-gate workflow runs |
 | 4 | 2026-08-17 | manual | Add textutils practice library + 46 pytest tests | PASS — 46 passed locally; test-gate CI pending |
+| 5 | 2026-08-17 | issue | Implement `wrap_text` + validation + edge cases + tests | PASS — 78 tests pass; adversarial PASS; Checker APPROVED |
 
 ## 4. Budget & Stopping Conditions
 
@@ -129,7 +130,6 @@ Prevent `STATE.md` from overflowing the context window on long multi-beat loops:
 
 ## 10. Next Actionable Tasks
 
-1. Merge beat 4 via CI (test-gate must pass on the textutils suite).
-2. Exercise the adversarial checker (`/oc check`) on the textutils code.
-3. Open a real feature-request issue to run the Autonomous Issue-to-PR Loop end-to-end.
-4. Expand textutils with a new function (e.g., `wrap_text`) via an issue-driven beat.
+1. Merge beat 5 (wrap_text) via CI — test-gate must pass on the expanded suite.
+2. Open a new feature-request issue to run the Autonomous Issue-to-PR Loop again.
+3. Consider a follow-up feature (e.g., `indent_text` or `detect_language`).

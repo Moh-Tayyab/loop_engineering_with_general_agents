@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+import textwrap
 
-__all__ = ["slugify", "truncate", "count_words", "redact_secrets"]
+__all__ = ["slugify", "truncate", "count_words", "redact_secrets", "wrap_text"]
 
 
 def slugify(text: str, *, max_len: int = 64) -> str:
@@ -74,6 +75,30 @@ def redact_secrets(text: str, *, replacement: str = "[REDACTED]") -> str:
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def wrap_text(text: str, width: int = 80) -> str:
+    """Wrap ``text`` to ``width`` columns, joining wrapped lines with ``"\\n"``.
+
+    - Existing line breaks are preserved (each paragraph is wrapped separately).
+    - Paragraphs are trimmed of surrounding whitespace; interior spacing is kept.
+    - Words longer than ``width`` are hard-broken, never left overflowing.
+    - ``""`` / whitespace-only input returns ``""`` (no trailing newline).
+    - Raises ``ValueError`` for non-str input or invalid ``width``.
+    """
+    _require_str(text)
+    if not isinstance(width, int) or isinstance(width, bool):
+        raise ValueError("width must be an int")
+    if width < 1:
+        raise ValueError("width must be >= 1")
+
+    if text.strip() == "":
+        return ""
+
+    return "\n".join(
+        textwrap.fill(paragraph.strip(), width=width)
+        for paragraph in text.split("\n")
+    )
 
 
 def _require_str(value: object) -> None:
