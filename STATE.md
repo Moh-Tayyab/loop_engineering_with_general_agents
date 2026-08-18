@@ -21,10 +21,10 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 
 ## 2. Current Beat
 
-- **Beat #:** 4
-- **Date:** 2026-08-17
-- **Trigger:** senior-engineer pass — add real code to loop on
-- **Status:** textutils library + tests added; CI verification pending
+- **Beat #:** 5
+- **Date:** 2026-08-18
+- **Trigger:** schedule heartbeat — adversarial Checker pass on textutils
+- **Status:** 46/46 tests pass; adversarial pass found `redact_secrets` gaps → filed issue #6
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 | 2 | 2026-08-17 | manual | Setup STATE.md, AGENTS.md, heartbeat cron, issue-to-PR trigger | PASS — agent answered `/oc ask` on issue #1 |
 | 3 | 2026-08-17 | manual | Advanced loop design: inner/outer loops, test gate, escalation, skills | PASS — pushed `bb93f18`, test-gate workflow runs |
 | 4 | 2026-08-17 | manual | Add textutils practice library + 46 pytest tests | PASS — 46 passed locally; test-gate CI pending |
+| 5 | 2026-08-18 | schedule | Heartbeat: adversarial Checker pass on textutils | CHANGES REQUESTED — `redact_secrets` misses `sk-...`/uppercase tokens; bug issue #6 filed |
 
 ## 4. Budget & Stopping Conditions
 
@@ -129,7 +130,8 @@ Prevent `STATE.md` from overflowing the context window on long multi-beat loops:
 
 ## 10. Next Actionable Tasks
 
-1. Merge beat 4 via CI (test-gate must pass on the textutils suite).
-2. Exercise the adversarial checker (`/oc check`) on the textutils code.
-3. Open a real feature-request issue to run the Autonomous Issue-to-PR Loop end-to-end.
-4. Expand textutils with a new function (e.g., `wrap_text`) via an issue-driven beat.
+1. Fix issue #6: harden `redact_secrets` (dash tokens, IGNORECASE) + type-check `max_len`/`max_chars`; add tests.
+2. Merge beat 4 via CI (test-gate must pass on the textutils suite).
+3. Exercise the adversarial checker (`/oc check`) on the textutils code.
+4. Open a real feature-request issue to run the Autonomous Issue-to-PR Loop end-to-end.
+5. Expand textutils with a new function (e.g., `wrap_text`) via an issue-driven beat.
