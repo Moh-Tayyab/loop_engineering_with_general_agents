@@ -48,6 +48,12 @@ def test_slugify_rejects_nonpositive_max_len():
         slugify("hello", max_len=0)
 
 
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_slugify_rejects_non_int_max_len(bad):
+    with pytest.raises(ValueError):
+        slugify("hello", max_len=bad)
+
+
 # --- truncate ----------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -81,6 +87,12 @@ def test_truncate_rejects_non_str(bad):
 def test_truncate_rejects_negative_max_chars():
     with pytest.raises(ValueError):
         truncate("abc", max_chars=-1)
+
+
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_truncate_rejects_non_int_max_chars(bad):
+    with pytest.raises(ValueError):
+        truncate("abc", max_chars=bad)
 
 
 def test_truncate_rejects_ellipsis_longer_than_max_chars():
@@ -121,6 +133,20 @@ def test_redact_secrets_github_token():
 
 def test_redact_secrets_aws_key():
     assert redact_secrets("AKIAIOSFODNN7EXAMPLE") == "[REDACTED]"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("sk-proj-9f8e7d6c5b4a3c2d1e0f", "[REDACTED]"),  # OpenAI-style dashed key
+        ("GHP_abcdefghijklmnopqrstuvwxyz1234567890", "[REDACTED]"),  # uppercase github token
+        ("token SK_test_abcdefghijklmnopqrstuvwxyz123456", "token [REDACTED]"),  # uppercase sk_
+        ("PK-prod-abcdefghijklmnopqrstuvwxyz123456", "[REDACTED]"),  # pk prefix
+        ("AKIAIOSFODNN7EXAMPLE", "[REDACTED]"),  # uppercase AWS key
+    ],
+)
+def test_redact_secrets_new_formats(text, expected):
+    assert redact_secrets(text) == expected
 
 
 def test_redact_secrets_bearer_token():

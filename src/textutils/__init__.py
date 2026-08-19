@@ -15,6 +15,7 @@ def slugify(text: str, *, max_len: int = 64) -> str:
     - Raises ``ValueError`` for empty/non-string input.
     """
     _require_str(text)
+    _require_int(max_len, "max_len")
     if max_len < 1:
         raise ValueError("max_len must be >= 1")
 
@@ -39,6 +40,7 @@ def truncate(text: str, *, max_chars: int = 80, ellipsis: str = "...") -> str:
     """
     _require_str(text)
     _require_str(ellipsis)
+    _require_int(max_chars, "max_chars")
     if max_chars < 0:
         raise ValueError("max_chars must be >= 0")
     if len(ellipsis) > max_chars:
@@ -59,7 +61,7 @@ def count_words(text: str) -> int:
 
 
 _SECRET_PATTERNS = [
-    re.compile(r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_]{16,}\b"),
+    re.compile(r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_-]{16,}\b", re.IGNORECASE),
     re.compile(r"bearer\s+[a-z0-9._~+/=-]{20,}", re.IGNORECASE),
 ]
 
@@ -79,3 +81,8 @@ def redact_secrets(text: str, *, replacement: str = "[REDACTED]") -> str:
 def _require_str(value: object) -> None:
     if not isinstance(value, str):
         raise ValueError(f"expected str, got {type(value).__name__}")
+
+
+def _require_int(value: object, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an int, got {type(value).__name__}")
