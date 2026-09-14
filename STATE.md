@@ -21,10 +21,10 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 
 ## 2. Current Beat
 
-- **Beat #:** 5
-- **Date:** 2026-08-18
-- **Trigger:** schedule heartbeat — adversarial Checker pass on textutils
-- **Status:** 46/46 tests pass; adversarial pass found `redact_secrets` gaps → filed issue #6
+- **Beat #:** 6
+- **Date:** 2026-09-14
+- **Trigger:** schedule heartbeat — morning triage
+- **Status:** Issue #6 CLEAR FIX implemented — 57/57 tests pass; 133/133 total pass; checker model unavailable, verified manually. PR #7 already open with same fix (2026-08-19). RISKY/AMBIGUOUS issues (#1, #3, #4) deferred to §10.
 
 ## 3. Beat Log
 
@@ -35,8 +35,9 @@ The OpenCode agent reads this file at the start of every run and updates it at t
 | 3 | 2026-08-17 | manual | Advanced loop design: inner/outer loops, test gate, escalation, skills | PASS — pushed `bb93f18`, test-gate workflow runs |
 | 4 | 2026-08-17 | manual | Add textutils practice library + 46 pytest tests | PASS — 46 passed locally; test-gate CI pending |
 | 5 | 2026-08-18 | schedule | Heartbeat: adversarial Checker pass on textutils | CHANGES REQUESTED — `redact_secrets` misses `sk-...`/uppercase tokens; bug issue #6 filed |
+| 6 | 2026-09-14 | schedule | Morning triage: issue #6 CLEAR FIX implemented | PASS — 57/57 tests pass; `redact_secrets` hardened; type-check added |
 
-## 4. Budget & Stopping Conditions
+## 10. Open / Needs a Human
 
 **Hard ceiling (budget):**
 - Max beats per run: **3** (a run that exceeds this must stop and report, never spin)
@@ -128,10 +129,19 @@ Prevent `STATE.md` from overflowing the context window on long multi-beat loops:
   Never delete the "Current Beat", budget (§4), or escalation (§8) sections.
 - After compressing, note `compressed at <date>` in the beat log header.
 
-## 10. Next Actionable Tasks
+## 10. Open / Needs a Human
 
-1. Fix issue #6: harden `redact_secrets` (dash tokens, IGNORECASE) + type-check `max_len`/`max_chars`; add tests.
-2. Merge beat 4 via CI (test-gate must pass on the textutils suite).
-3. Exercise the adversarial checker (`/oc check`) on the textutils code.
+Items classified RISKY/AMBIGUOUS — do NOT touch code; human gate required.
+
+- **Issue #1** (Test OpenCode agent workflow): Just a test issue; no actionable bug. Needs human review to determine if it should be closed or expanded.
+- **Issue #3** (Feature: Add wrap_text to textutils): Duplicate of #4. New feature requiring product decisions on behavior, edge cases, and API design.
+- **Issue #4** (Feature: Add wrap_text to textutils): New feature requiring product decisions on behavior, edge cases, and API design.
+- **Beat 4 merge**: test-gate CI must pass on the textutils suite (could not verify via `gh` API — 403 error).
+
+## 11. Next Actionable Tasks
+
+1. Merge beat 4 via CI (test-gate must pass on the textutils suite) — blocked by API 403.
+2. Exercise the adversarial checker (`/oc check`) on the textutils code.
+3. Resolve RISKY/AMBIGUOUS issues (#1, #3, #4) — human decision required.
 4. Open a real feature-request issue to run the Autonomous Issue-to-PR Loop end-to-end.
 5. Expand textutils with a new function (e.g., `wrap_text`) via an issue-driven beat.
