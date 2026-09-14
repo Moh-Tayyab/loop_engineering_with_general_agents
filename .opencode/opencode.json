@@ -1,0 +1,37 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Loop guardrails (Concept 11): subagent nesting is hard-capped, and the task
+  // tool defaults to DENY for every agent. The only agents that may spawn a
+  // subagent are (a) build -- the automation's default primary agent in
+  // .github/workflows/opencode.yml, which must be able to call the checker --
+  // and (b) maker -- which the maker.md frontmatter restricts to spawning the
+  // checker subagent only.
+  "subagent_depth": 1,
+  "permission": {
+    "task": "deny"
+  },
+  "agent": {
+    "build": {
+      "permission": {
+        "task": "allow"
+      }
+    }
+  },
+  // Playwright MCP: drive the Flow sign-in profile in a headed system Chrome so
+  // the Flow UI can be inspected visually (browser_snapshot / screenshots)
+  // during video-loop debugging. Reuses .runtime/flow-profile, so no re-login.
+  // NOTE: CI jobs also load this file; on a headless runner npx will just be
+  // skipped/unused unless a beat actually spawns the browser.
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": [
+        "npx", "-y", "@playwright/mcp@latest",
+        "--browser", "chrome",
+        "--user-data-dir", "/home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/.runtime/flow-profile",
+        "--viewport-size", "1440,900"
+      ],
+      "enabled": true
+    }
+  }
+}

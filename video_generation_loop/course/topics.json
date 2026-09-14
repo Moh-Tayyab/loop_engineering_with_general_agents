@@ -1,0 +1,92 @@
+[
+  {
+    "id": "concept-01",
+    "title": "What these tools actually are",
+    "takeaway": "Claude Code and OpenCode are not chatbots; they take action on your computer. Stop asking questions, start giving instructions.",
+    "status": "done"
+  },
+  {
+    "id": "concept-02",
+    "title": "Plan mode (the most underused feature)",
+    "takeaway": "Flip the AI into a look-but-do-not-touch state so it writes a plan you can correct before any work happens. Use it for tasks longer than 10 minutes.",
+    "status": "done"
+  },
+  {
+    "id": "concept-03",
+    "title": "Permissions discipline",
+    "takeaway": "Keep the AI on a short leash at first, reading every permission request, and only auto-approve safe actions (read, tests, git status) as trust is earned.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-04",
+    "title": "Match the model to the task",
+    "takeaway": "Plan with your strongest model and execute with a cheap one; the biggest cost saving with zero quality loss.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-05",
+    "title": "Context rot is real",
+    "takeaway": "Conversations silently degrade as they grow; keep sessions short and focused and reset when you pass roughly half the window.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-06",
+    "title": "/clear and /compact",
+    "takeaway": "/clear wipes for a brand-new task, /compact shrinks the current one; compact at task boundaries and file the facts first.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-07",
+    "title": "Resume sessions",
+    "takeaway": "Conversations auto-save so you can pick up later and undo mistakes, but treat undo as a safety net, never a substitute for git.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-08",
+    "title": "CLAUDE.md / AGENTS.md done well",
+    "takeaway": "The rules file is permanent project instructions the AI reads every turn; keep it short and add a line only when a mistake earns it.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-09",
+    "title": "Commands and skills",
+    "takeaway": "A skill or command is a saved, reusable instruction file; save anything you find yourself typing more than twice.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-10",
+    "title": "Hooks and plugins",
+    "takeaway": "Automatic rules that run every time with no model judgment — turning your setup into a verification loop: attempt, check, fix, repeat.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-11",
+    "title": "Subagents",
+    "takeaway": "An isolated agent with its own context window does the heavy reading in private and returns only a summary; delegate info-heavy tasks.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-12",
+    "title": "MCP, used honestly",
+    "takeaway": "Model Context Protocol connects the AI to live services (Slack, GitHub, databases); connect only what you need, every server costs tokens.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-13",
+    "title": "Terminal, IDE, or desktop?",
+    "takeaway": "Start in the terminal so you can see which files the model reads and which commands it runs; every fancier interface is a thin wrapper.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-14",
+    "title": "Build a personal context library, slowly",
+    "takeaway": "Put shared style and conventions in your home config and add items one at a time only when real problems demand them.",
+    "status": "pending"
+  },
+  {
+    "id": "concept-15",
+    "title": "Memory beyond the basics",
+    "takeaway": "Keep a notes/ folder or memory server with absolute dates and decisions, written for a reader who knows nothing — because that reader is always a future session.",
+    "status": "pending"
+  }
+]

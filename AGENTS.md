@@ -66,6 +66,11 @@ Checker pass) → update `STATE.md` → report concisely as a comment.
 ## 7. Skills & Rules File
 
 Custom skills may live in `.opencode/skills/`. If a skill is referenced in a task, load and follow it.
+Available skills: `python-test-runner` (pytest/CI gate), `agentic-loop` (autonomous recurring loops —
+thin scheduler + opencode brain via decision tokens; see `.opencode/skills/agentic-loop/SKILL.md`),
+`verify-loop-state` (codified Checker: checks STATE.md/beat-log coherence + secret hygiene after every
+beat), and `triage-issue` (morning-loop triage: classifies a CI failure or issue as CLEAR FIX vs
+RISKY/AMBIGUOUS and drafts the fix plan).
 
 ## 8. Reporting Format
 
@@ -73,3 +78,35 @@ When the workflow replies to an issue/PR, keep reports short:
 - What changed (one line)
 - Verification result (`PASS` / `FAIL` / `CHANGES REQUESTED` / `ESCALATED`)
 - Next beat suggestion
+
+## 9. Spine — State Between Runs
+
+The model forgets everything between runs; the repo does not. Two files are the spine. Read them first
+and update them last, every run:
+
+- **AGENTS.md (this file) = the rules file — the front of the diary.** Durable habits and lessons, read
+  on every run. Keep it short: every line is paid on every beat. When the loop keeps making the same
+  mistake, fix it here — write the lesson once so every future run benefits — not with a one-off prompt.
+- **STATE.md = the progress file — the back of the diary.** Checkpoints: current beat, beat log, budget,
+  next tasks. Read first to restore context (§1), update last with the beat's outcome. Without it, every
+  run is a stranger at the start line.
+
+Improvement habit: repeated mistakes are the signal to update the rules file. One mistake is noise; the
+same mistake three times is a missing lesson. Propose the lesson through the `verify-loop-state` skill and
+let a human approve — the rules file is the highest-leverage write in the system.
+
+## 10. Lessons Learned
+
+Durable lessons from past beats (added via the §9 habit; keep each to one line):
+
+- **Use `opencode/*` free models for cheap/read-only subagents.** `anthropic/claude-haiku-4-5-20251001`
+  404s in this env; the checker runs on `opencode/hy3-free`.
+- **A read-only checker must deny `edit` AND `bash` entirely.** A bash allowlist of "read-only" command
+  patterns is bypassable (`pytest; rm -rf x`, `git diff > out.txt`); pass the diff and test results to it.
+- **Keep the nesting guard.** `subagent_depth: 1` + global `permission.task: deny`; grant `task` explicitly
+  only where a spawn is required (build and maker→checker).
+- **Write STATE.md beat-log rows tight (≤ ~400 chars, §9).** Bloated rows get auto-compressed by
+  `verify-loop-state`; write them lean the first time.
+- **Flow UI is fragile and changes often.** Drive it visually via the Playwright MCP browser
+  (project `.opencode/opencode.json`) against a live snapshot, not blind DOM probes — confirm
+  selectors first, then spend generation credits.

@@ -1,0 +1,20 @@
+# Direct deps, EXACT-PINNED to the versions verified with this repo
+# (`.venv` on 2026-09-13; CI installs reach the same set). Loose `>=` pins
+# drifted across majors (openai 1.x->3.x) and quietly broke the test gate.
+# To bump a dep deliberately: `pip install <pkg>==<new>`, run the suite,
+# then update this file and the AGENTS.md test counts.
+python-dotenv==1.2.3
+openai==3.6.0
+playwright==1.62.0
+imageio-ffmpeg==0.6.0
+
+# YouTube Data API v3 (official scheduled uploads; lazy-imported)
+google-api-python-client==2.199.0
+google-auth-oauthlib==1.4.1
+google-auth-httplib2==0.4.2
+
+# test/dev
+pytest==9.1.1   # CI also installs pytest-cov (not used by this repo's config)
+
+# After `pip install -r requirements.txt`, install the Playwright browser once:
+#   python -m playwright install chromium   (or rely on system Chrome for Flow)

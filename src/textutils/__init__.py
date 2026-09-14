@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["slugify", "truncate", "count_words", "redact_secrets"]
+from ._validate import require_str as _require_str
+from .diff import diff, render_unified, similarity
+
+__all__ = [
+    "slugify",
+    "truncate",
+    "count_words",
+    "redact_secrets",
+    "diff",
+    "render_unified",
+    "similarity",
+]
 
 
 def slugify(text: str, *, max_len: int = 64) -> str:
@@ -74,8 +85,3 @@ def redact_secrets(text: str, *, replacement: str = "[REDACTED]") -> str:
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
-
-
-def _require_str(value: object) -> None:
-    if not isinstance(value, str):
-        raise ValueError(f"expected str, got {type(value).__name__}")

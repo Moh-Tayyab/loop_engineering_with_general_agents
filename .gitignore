@@ -7,3 +7,10 @@ dist/
 venv/
 .coverage
 .pytest_cache/
+
+# secrets / local env (may hold a real GitHub MCP PAT)
+.env
+*.local
+
+# playwright MCP debug dumps (may capture signed-in session page content)
+.playwright-mcp/

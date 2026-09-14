@@ -1,0 +1,16 @@
+# secrets / credentials
+.env
+.slc/
+
+# runtime + generated output
+.runtime/
+output/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+*.egg-info/

@@ -10,7 +10,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 9 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/deepseek-v4-flash-free
+          model: opencode/gemini-3-flash
           use_github_token: true
 
   # Autonomous beats: Issue-to-PR loop, PR review, and daily heartbeat.
@@ -75,7 +75,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/deepseek-v4-flash-free
+          model: opencode/gemini-3-flash
           use_github_token: true
           prompt: |
             Follow AGENTS.md. Read STATE.md first to restore loop context.
@@ -83,12 +83,31 @@ jobs:
             Determine the trigger:
             - If this is a new issue: run the Autonomous Issue-to-PR Loop. If there
               is a clear, minimal fix, create a branch, implement the change, run
-              any available tests, and open a pull request. If the fix is ambiguous,
-              reply on the issue with analysis and concrete next steps instead.
+              any available tests, and invoke the `checker` subagent (Task tool,
+              read-only) to grade the change; open a pull request only on an
+              APPROVED verdict. If the fix is ambiguous or the checker requests
+              changes beyond the retry bound, reply on the issue with analysis
+              and concrete next steps, and note it under STATE.md §10 for a human.
             - If this is a pull_request event: review the PR for bugs, security
               issues, and style problems; leave an inline or summary review.
-            - If this is a schedule/workflow_dispatch heartbeat: do one small,
-              useful task in the repo, then report the outcome in the run log.
+            - If this is a schedule/workflow_dispatch heartbeat (weekday 9am):
+              run the morning triage loop.
+              1. Read STATE.md first (spine) to restore context.
+              2. Find last night's failures and open issues:
+                 `gh run list --workflow=test-gate.yml --limit=5` (look for
+                 failed runs) and `gh issue list --state=open`.
+              3. For each failure/issue, load the `triage-issue` skill and
+                 classify it as CLEAR FIX or RISKY/AMBIGUOUS.
+                 - CLEAR FIX: create a branch, implement the minimal fix, run
+                   the tests (`python -m pytest -q`), then invoke the `checker`
+                   subagent (Task tool, read-only) to grade the change. Only
+                   open a pull request if the checker replies APPROVED. If it
+                   replies CHANGES REQUESTED, rework up to the retry bound
+                   (STATE.md §8), then leave it for a human.
+                 - RISKY/AMBIGUOUS: do NOT touch code. Write the item under
+                   STATE.md §10 (Open / needs a human) with the evidence, and
+                   leave it for the human gate.
+              4. Update STATE.md (beat log + current beat) before finishing.
               Never spin — stop as soon as budget or stopping conditions in
               STATE.md §4 are met.
 
@@ -126,7 +145,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/deepseek-v4-flash-free
+          model: opencode/gemini-3-flash
           use_github_token: true
           prompt: |
             You are the ADVERSARIAL CHECKER for the proposed solution in this
