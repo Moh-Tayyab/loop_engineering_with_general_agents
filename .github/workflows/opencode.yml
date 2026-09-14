@@ -42,7 +42,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/gemini-3-flash
+          model: opencode/hy3-free
           use_github_token: true
 
   # Autonomous beats: Issue-to-PR loop, PR review, and daily heartbeat.
@@ -75,7 +75,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/gemini-3-flash
+          model: opencode/hy3-free
           use_github_token: true
           prompt: |
             Follow AGENTS.md. Read STATE.md first to restore loop context.
@@ -145,7 +145,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/gemini-3-flash
+          model: opencode/hy3-free
           use_github_token: true
           prompt: |
             You are the ADVERSARIAL CHECKER for the proposed solution in this
