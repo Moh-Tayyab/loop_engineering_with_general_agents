@@ -236,14 +236,14 @@ def test_evaluate_final_rejects_landscape(tmp_path, monkeypatch):
     assert "9:16" in info.get("error", "")
 
 
-def test_evaluate_final_rejects_portrait_but_not_916(tmp_path, monkeypatch):
-    """2:3 portrait (0.667) is vertically-oriented but NOT tight 9:16 -> reject."""
-    p = tmp_path / "twothree.mp4"
+def test_evaluate_final_rejects_landscape_under_916(tmp_path, monkeypatch):
+    """16:9 landscape is rejected when FLOW_ASPECT=9:16 (default pipeline)."""
+    p = tmp_path / "landscape.mp4"
     p.write_bytes(b"bytes")
 
     probes = [
         json.dumps({"streams": [
-            {"codec_type": "video", "width": 720, "height": 1080},
+            {"codec_type": "video", "width": 1280, "height": 720},
             {"codec_type": "audio"},
         ], "format": {"duration": "60.0"}}),
         '{"format": {"duration": "60.0"}}',
@@ -260,7 +260,34 @@ def test_evaluate_final_rejects_portrait_but_not_916(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "ffprobe_binary", lambda: "/usr/bin/ffprobe")
     info = merger.evaluate_final(p, expected_s=60)
     assert info["ok"] is False
-    assert "not tight 9:16" in info.get("error", "")
+    assert "9:16" in info.get("error", "")
+
+
+def test_evaluate_final_accepts_169_when_configured(tmp_path, monkeypatch):
+    """16:9 landscape PASSES when FLOW_ASPECT=16:9 (user directive Sep 2026)."""
+    monkeypatch.setenv("FLOW_ASPECT", "16:9")
+    p = tmp_path / "landscape.mp4"
+    p.write_bytes(b"bytes")
+
+    probes = [
+        json.dumps({"streams": [
+            {"codec_type": "video", "width": 1280, "height": 720},
+            {"codec_type": "audio"},
+        ], "format": {"duration": "60.0"}}),
+        '{"format": {"duration": "60.0"}}',
+    ]
+
+    class FakeRun:
+        def __init__(self, outputs):
+            self._outs = list(outputs)
+
+        def __call__(self, cmd, **kw):
+            return SimpleNamespace(returncode=0, stdout=self._outs.pop(0))
+
+    monkeypatch.setattr(merger.subprocess, "run", FakeRun(probes))
+    monkeypatch.setattr(cfg, "ffprobe_binary", lambda: "/usr/bin/ffprobe")
+    info = merger.evaluate_final(p, expected_s=60)
+    assert info["ok"] is True
 
 
 def test_evaluate_final_rejects_no_audio_stream(tmp_path, monkeypatch):

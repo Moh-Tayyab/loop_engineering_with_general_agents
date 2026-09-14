@@ -14,6 +14,7 @@ Only imported when a browser run is requested (keeps --dry-run dependency-free).
 """
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Callable
@@ -337,16 +338,33 @@ class FlowClipper:
         try:
             page.goto(cfg.flow_url(), wait_until="domcontentloaded", timeout=60_000)
             self._enter_workspace(page)   # Flow's landing -> project workspace
+            project_url = page.url.split("?")[0]   # for download crash-recovery
             if reference_image:
                 self._ensure_presenter_character(page, reference_image)
             self._fill_prompt(page, prompt)
             if reference_image:
-                self._attach_character_to_prompt(page)
-            self._select_video_mode(page)   # Image->Video toggle + model + 9:16
+                if not self._attach_character_to_prompt(page):
+                    raise FlowAutomationError(
+                        "presenter character was NOT attached to the prompt — "
+                        "refusing to generate a presenter clip without the "
+                        "reference image in the prompt (paid-account guard)."
+                    )
+            self._select_video_mode(page)   # Image->Video toggle + model + FLOW_ASPECT
             self._click_generate(page)
             self._approve_credits(page)   # "Approve N credits" dialog (Flow PRO)
             self._wait_until_finished(page)
-            self._download_clip(page, output_path)
+            try:
+                self._download_clip(page, output_path)
+            except Exception as exc:
+                # A download that crashes the browser has ALREADY spent the
+                # generation credits. NEVER silently re-generate — reconnect to
+                # the SAME project and try to re-download the finished clip once.
+                self.manifest(
+                    f"download failed ({type(exc).__name__}); "
+                    "trying in-project re-download (no re-generation)"
+                )
+                if not self._recover_download(project_url, output_path):
+                    raise
             self._ensure_real_video(page, output_path)   # never re-generate, re-download
         except Exception as exc:
             self.manifest(f"AUTO-STEP FAILED ({type(exc).__name__}): {exc}")
@@ -359,13 +377,20 @@ class FlowClipper:
     # --- internals (each best-effort, degrade to manual-assist) ---------------------
     def _enter_workspace(self, page) -> None:
         """Flow's public landing page sits in front of the tool now (Aug 2026
-        redesign): get past it to the EDITOR (a contenteditable prompt box).
-        Click the in-viewport CTA -> New project (workspace) -> editor, up to a
-        few times; a missing button means we are already one step in."""
-        for _ in range(6):
+        redesign), and an unauthenticated profile lands on the marketing screen
+        (Sep 2026: flow.google.com/about). Click the in-viewport CTA -> New
+        project (workspace) -> editor. A signed-out profile (accounts.google
+        redirect) or an unreachable editor is a FAIL-FAST error — never click
+        around blind and never run generation without the editor."""
+        for _ in range(8):
             if page.locator(", ".join(ENTERED_HINTS)).count() > 0:
                 self.manifest("entry: editor prompt box detected")
                 return
+            if "accounts.google.com" in page.url:
+                raise FlowAutomationError(
+                    "Flow profile is signed out (redirected to Google sign-in). "
+                    "Re-sign in the flow-profile browser once, then retry."
+                )
             clicked = False
             for name in ENTRY_CLICKS:
                 btn = page.get_by_role("button", name=name).first
@@ -379,28 +404,40 @@ class FlowClipper:
                 except Exception:
                     continue
             time.sleep(10 if clicked else 5)  # SPA hops take a moment
-        self.manifest("entry: no editor prompt box found — continuing anyway")
+        self.manifest("entry: no editor prompt box found")
+        raise FlowAutomationError(
+            "could not reach the Flow editor — profile signed out or the "
+            "landing CTAs changed. Re-sign in the flow-profile browser once, "
+            "then retry."
+        )
 
     def _select_video_mode(self, page) -> None:
         """Flow's bottom toolbar chip carries the generation settings: Image/Video
-        toggle, model (Veo), duration, and aspect ratio.
+        toggle, model (Veo), duration, aspect ratio, and output count.
 
-        MCP-verified (Aug 2026): the bottom toolbar shows a chip like
-        'Video · 720p 📱 x1' with an arrow-forward submit button. Clicking the
-        chip text area opens a menu. Inside: Image/Video toggle, model picker
-        (Omni 1.1 Flash, Veo 3.1 - Lite/Fast/Quality), duration, and aspect
-        ratio. The model picker is a nested submenu under the model chip.
-
-        Updated (Aug 2026): the toolbar chip is at the BOTTOM of the editor
-        (not the top). Selectors target the chip by its visible text pattern
-        and aria-haspopup='menu'."""
+        Live-verified Sep 2026 on the current Flow DOM:
+          - 'Settings trigger' chip opens the menu; inside, settings are
+            [role=radio] buttons (Mode, Video type, Aspect ratio, Output
+            count) plus a 'Select model family' button whose popover is made
+            of [role=menuitem] items (Omni 1.1 Flash / Veo 3.1 - Lite /
+            Fast / Quality).
+          - A FRESH project already defaults to most of the wanted state:
+            Video mode, Ingredients video-type, x1, Veo 3.1 - Lite,
+            720p, 8s. The aspect is ENFORCED from cfg.flow_aspect()
+            (FLOW_ASPECT; user-requested 16:9 Sep 2026).
+          - The resolution/duration radios ONLY render while the model family
+            is 'Omni 1.1 Flash'. Selecting Veo hides them and pins the
+            duration to 8s, so 10s clips are NOT reachable via this menu under
+            Veo (current Flow behavior; live-verified). This code sets them
+            when present and otherwise leaves the Veo default (720p, 8s).
+          - Older versions captured the popover via 'menuitem' selectors and
+            CORRUPTED this menu (image mode / Nano Banana / 16:9 / x2). This
+            version only ENFORCES the wanted radios via role=name clicks."""
         def _menu_items():
-            """(element, text) pairs for the currently-open menu."""
+            """(element, text) pairs for the currently-open model popover."""
             out = []
             seen = set()
-            for it in page.locator(
-                "[role='menuitem']:visible, [data-state='open'] button:visible, "
-                "[role='menu'] button:visible").all()[:80]:
+            for it in page.locator("[role='menuitem']:visible").all()[:40]:
                 try:
                     t = " ".join(it.inner_text().split())
                 except Exception:
@@ -411,11 +448,10 @@ class FlowClipper:
                 out.append((it, t))
             return out
 
-        def _open_bottom_toolbar_menu():
-            """Click the bottom toolbar chip to open the generation settings menu.
-            The chip shows text like 'Video · 720p 📱 x1' or 'Settings trigger'
-            and is located near the prompt submit button at the bottom of the editor."""
-            # Focus the prompt box first to ensure the toolbar is mounted
+        def _open_bottom_toolbar_menu() -> bool:
+            """Open the 'Settings trigger' menu (current DOM) with a guarded
+            fallback for older layouts. Only opens menus that look like the
+            generation settings popover; never clicks unrelated controls."""
             for sel in PROMPT_FIELD_HINTS:
                 box = page.locator(sel).first
                 if box.count():
@@ -424,149 +460,105 @@ class FlowClipper:
                     except Exception:
                         pass
                     break
-            page.wait_for_timeout(2000)
-
-            # Strategy 1: "Settings trigger" button (MCP-verified Sep 2026)
-            settings_btn = page.get_by_role("button", name="Settings trigger").first
-            if settings_btn.count() > 0:
+            page.wait_for_timeout(1500)
+            settings = page.get_by_role("button", name="Settings trigger")
+            if settings.count() > 0:
                 try:
-                    settings_btn.click(timeout=3_000)
-                    page.wait_for_timeout(1500)
-                    texts = [t for _, t in _menu_items()]
-                    if texts:
+                    settings.first.click(timeout=3_000)
+                    page.wait_for_timeout(1000)
+                    if page.locator("[role='radio']:visible").count() > 0:
                         self.manifest("toolbar: opened Settings trigger menu")
-                        return "Settings trigger"
+                        return True
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(300)
                 except Exception:
                     pass
-
-            # Strategy 2: find the bottom toolbar chip by aria-haspopup='menu'
-            # that contains video/image mode text (NOT "More options for the project")
             for btn in page.locator("button[aria-haspopup='menu']:visible").all():
                 try:
                     label = " ".join((btn.get_attribute("aria-label") or btn.inner_text() or "").split())
                     bb = btn.bounding_box()
-                    if not bb or not label:
+                    if not bb or not label or bb['y'] < 400:
                         continue
-                    # Skip project-level menus ("More options for the project", "Sort", etc.)
                     if any(skip in label.lower() for skip in
                            ['project', 'sort', 'filter', 'more options', 'search']):
                         continue
-                    # The toolbar chip is at the BOTTOM of the page (y > 400)
-                    if bb['y'] > 400 and any(kw in label.lower() for kw in
-                            ['video', 'image', '720p', '1080p', '480p', 'crop', 'model',
-                             'nano', 'veo', 'banana']):
+                    if any(kw in label.lower() for kw in
+                           ['video', 'image', '720p', '1080p', '480p', 'crop', 'model',
+                            'nano', 'veo', 'banana']):
                         btn.click(timeout=3_000)
-                        texts = [t for _, t in _menu_items()]
-                        for _ in range(6):
-                            if texts:
-                                break
-                            page.wait_for_timeout(500)
-                            texts = [t for _, t in _menu_items()]
-                        if texts:
-                            self.manifest(f"toolbar: opened bottom chip '{label}'")
-                            return label
+                        page.wait_for_timeout(800)
+                        if page.locator("[role='radio']:visible").count() > 0:
+                            self.manifest(f"toolbar: opened bottom chip '{label[:40]}'")
+                            return True
                         page.keyboard.press("Escape")
                         page.wait_for_timeout(300)
                 except Exception:
                     continue
-
-            # Strategy 3: find any button with 'arrow_drop_down' near the bottom
-            for btn in page.locator("button:visible").all():
-                try:
-                    text = " ".join(btn.inner_text().split())
-                    bb = btn.bounding_box()
-                    if not bb or bb['y'] < 400:
-                        continue
-                    if 'arrow_drop_down' in text or 'Video' in text or 'Image' in text:
-                        btn.click(timeout=3_000)
-                        texts = [t for _, t in _menu_items()]
-                        for _ in range(6):
-                            if texts:
-                                break
-                            page.wait_for_timeout(500)
-                            texts = [t for _, t in _menu_items()]
-                        if texts:
-                            self.manifest(f"toolbar: opened chip '{text[:40]}'")
-                            return text[:40]
-                        page.keyboard.press("Escape")
-                        page.wait_for_timeout(300)
-                except Exception:
-                    continue
-            return None
-
-        def _click_menu_item(pred):
-            for it, t in _menu_items():
-                if pred(t):
-                    try:
-                        it.click(timeout=3_000)
-                        return True
-                    except Exception:
-                        return False
             return False
 
-        # First check if video mode is already on (chip shows "Video · ...")
-        body_text = page.inner_text('body')
-        if 'Video' in body_text and ('720p' in body_text or '1080p' in body_text):
-            self.manifest("toolbar: video mode already active")
-            # Still try to set model/duration/aspect
-            pass
-
-        label = _open_bottom_toolbar_menu()
-        if label is None:
-            self.manifest("no toolbar menu found (video mode unknown)")
-            return
-
-        done = []
-        # Step 1: ensure Video mode is on
-        if _click_menu_item(lambda t: "videocam" in t and "Video" in t):
-            done.append("video mode on")
-            page.wait_for_timeout(1200)
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(800)
-            _open_bottom_toolbar_menu()
-
-        # Step 2: open model picker and select Veo 3.1 Lite
-        model_picked = False
-        for it, t in _menu_items():
-            if 'arrow_drop_down' in t or 'drop_down' in t:
+        def _click_radio(name: str) -> bool:
+            """Click the [role=radio] with accessible name `name` if it is not
+            already checked. Returns True only on an actual change."""
+            for el in page.get_by_role("radio", name=name, exact=True).all():
                 try:
-                    it.click(timeout=3_000)
-                    page.wait_for_timeout(1200)
-                    model_picked = True
-                    self.manifest("toolbar: opened model picker")
-                    break
+                    if el.get_attribute("aria-checked") == "true":
+                        return False
+                    el.click(timeout=3_000)
+                    return True
                 except Exception:
                     continue
-        if model_picked:
-            # Look for Veo 3.1 Lite in the submenu
-            for it, t in _menu_items():
-                if 'veo' in t.lower() and 'lite' in t.lower():
-                    try:
-                        it.click(timeout=3_000)
-                        done.append("model Veo Lite")
-                        page.wait_for_timeout(1200)
-                        break
-                    except Exception:
-                        continue
-            page.keyboard.press("Escape")
+            return False
+
+        def _ensure_model_veo_lite() -> bool:
+            """Open the model-family popover and pick 'Veo 3.1 - Lite' unless
+            the current model already is a Veo family."""
+            btn = page.get_by_role("button", name="Select model family")
+            if btn.count() == 0:
+                return False
+            try:
+                label = " ".join(btn.first.inner_text().split()).lower()
+            except Exception:
+                label = ""
+            if "veo" in label:
+                return False
+            try:
+                btn.first.click(timeout=3_000)
+                page.wait_for_timeout(800)
+            except Exception:
+                return False
+            for el in page.get_by_role("menuitem", name="Veo 3.1 - Lite", exact=True).all():
+                try:
+                    el.click(timeout=3_000)
+                    page.wait_for_timeout(800)
+                    return True
+                except Exception:
+                    continue
+            return False
+
+        changed = []
+        if not _open_bottom_toolbar_menu():
+            self.manifest("no settings menu found; leaving toolbar defaults")
+            return
+        if _click_radio("Video"):
+            changed.append("mode->Video")
+            page.wait_for_timeout(1000)
+        _click_radio("Ingredients")
+        aspect_target = cfg.flow_aspect()
+        if _click_radio(aspect_target):
+            changed.append(f"aspect->{aspect_target}")
+        if _click_radio("x1"):
+            changed.append("count->x1")
+        if _ensure_model_veo_lite():
+            changed.append("model->Veo 3.1 Lite")
             page.wait_for_timeout(800)
-            _open_bottom_toolbar_menu()
-
-        # Step 3: set duration to 10s
-        if _click_menu_item(lambda t: "10s" in t or "10 s" in t):
-            done.append("duration 10s")
-            page.wait_for_timeout(1200)
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(800)
-            _open_bottom_toolbar_menu()
-
-        # Step 4: set aspect ratio to 9:16
-        if _click_menu_item(lambda t: "9:16" in t or "crop_9_16" in t or "portrait" in t.lower()):
-            done.append("aspect 9:16")
-            page.wait_for_timeout(1200)
-
+        # Resolution/duration are only rendered while the family is Omni Flash;
+        # under Veo they are hidden (8s is the UI's pinned default). Best-effort:
+        if _click_radio("720p"):
+            changed.append("res->720p")
+        if _click_radio("10s"):
+            changed.append("dur->10s")
         page.keyboard.press("Escape")
-        self.manifest("generation menu set: " + (", ".join(done) if done else "no changes applied"))
+        self.manifest("generation menu set: " + (", ".join(changed) if changed else "defaults already correct"))
 
     def _fill_prompt(self, page, prompt: str) -> None:
         """Type the generation prompt into the Flow editor's prompt box.
@@ -700,21 +692,33 @@ class FlowClipper:
 
         # 5. In the "Select media" dialog, pick the asset by its filename
         #    The dialog has a listbox[aria-label='Asset list'] with option elements.
+        #    NOTE (Sep 2026, live-verified): the dialog AUTO-SELECTS the most
+        #    recent asset (aria-selected="true"); clicking an already-selected
+        #    option DESELECTS it and hides the 'Add media' button. Only click
+        #    when the target asset is not already selected.
         picked = False
-        options = page.locator(f"[role='option']:has-text('{name}')").all()
-        if options:
-            try:
-                options[0].click(timeout=6_000)
+        target_opt = page.locator(f"[role='option']:has-text('{name}')").first
+        if target_opt.count() == 0:
+            target_opt = page.locator(f"[role='listitem']:has-text('{name}')").first
+        if target_opt.count() > 0:
+            if target_opt.get_attribute("aria-selected") == "true":
                 picked = True
-                self.manifest(f"char: picked asset {name} from dialog")
-            except Exception:
-                pass
+                self.manifest(f"char: asset {name} already selected in dialog")
+            else:
+                try:
+                    target_opt.click(timeout=6_000)
+                    picked = True
+                    self.manifest(f"char: picked asset {name} from dialog")
+                except Exception:
+                    pass
         if not picked:
-            # fallback: click the first option in the asset list
+            # fallback: click the first option in the asset list (respecting the
+            # already-selected guard above)
             first_opt = page.locator("[role='option']:visible").first
             if first_opt.count() > 0:
                 try:
-                    first_opt.click(timeout=6_000)
+                    if first_opt.get_attribute("aria-selected") != "true":
+                        first_opt.click(timeout=6_000)
                     picked = True
                     self.manifest("char: picked first available asset")
                 except Exception:
@@ -725,10 +729,16 @@ class FlowClipper:
                 f"could not pick asset {name} in media dialog (paid-account guard)."
             )
 
-        # 6. Click "Add media" button in the dialog to confirm selection
-        page.wait_for_timeout(1000)
-        add_media_btn = page.locator(ADD_MEDIA_IN_DIALOG).first
-        if add_media_btn.count() == 0:
+        # 6. Click "Add media" button in the dialog to confirm selection.
+        #    The button can render slightly after selection — poll briefly.
+        add_media_btn = None
+        for _ in range(8):
+            cand = page.locator(ADD_MEDIA_IN_DIALOG).first
+            if cand.count():
+                add_media_btn = cand
+                break
+            page.wait_for_timeout(500)
+        if add_media_btn is None:
             # some layouts auto-navigate to character page on asset click
             if "/character/" in page.url:
                 self.manifest("char: auto-navigated to character page")
@@ -801,53 +811,139 @@ class FlowClipper:
 
         Pipeline (MCP-verified Sep 2026):
           1. Click "Add ingredients to the prompt box" button
-          2. Select the character from the asset list (on default "All" tab)
-          3. Character is auto-attached — verify by checking for "Ingredient" button
+          2. Select the character from the asset list
+          3. Confirm a character chip actually landed in the prompt editor.
+             The chip renders OUTSIDE the contenteditable as a sibling
+             `div.chip-image-wrapper > img[alt='Character ingredient image']`
+             (contenteditable-scoped checks were a false negative); a picker
+             thumbnail ('Character thumbnail') is NOT proof of attach.
 
-        Returns True if the character was successfully attached."""
-        # 1. Open ingredients picker
-        ing_btn = page.get_by_role("button", name="Add ingredients to the prompt box").first
-        if ing_btn.count() == 0:
-            ing_btn = page.locator(ADD_INGREDIENTS_BTN).first
-        if ing_btn.count() == 0:
-            ing_btn = page.locator("button:has-text('Add ingredients')").first
-        if ing_btn.count() == 0:
-            self.manifest("ingredients: 'Add ingredients' button not found")
+        Returns True only when the ingredient chip is verified inside the
+        editor; generate_clip refuses to run a presenter scene without it."""
+        def _editor_has_ingredient() -> bool:
+            ed = page.locator("[contenteditable='true']:visible").first
+            # Sep 2026: the ingredient chip renders OUTSIDE the contenteditable
+            # as `div.chip-image-wrapper > img[alt='Character ingredient image']`
+            # beside the prompt box (Flow's `flow-base-prompt-box`). Scope by the
+            # chip's own alt first (never the picker 'Character thumbnail'), then
+            # fall back to the contenteditable-scoped variants.
+            chip = page.locator("img[alt*='ingredient' i]").first
+            if chip.count() > 0 and chip.is_visible():
+                return True
+            if ed.count() == 0:
+                return False
+            chip_ed = page.locator(
+                "div[contenteditable='true'] img[alt*='Character' i],"
+                "div[contenteditable='true'] img[alt*='ingredient' i]"
+            ).first
+            if chip_ed.count() > 0:
+                return True
+            try:
+                return ("@" + character_name) in (ed.inner_text() or "")
+            except Exception:
+                return False
+
+        def _try_attach_once(attempt: int) -> bool:
+            """Open picker -> Characters tab -> click character -> poll for chip.
+
+            Returns True only when the ingredient chip is verified in the editor
+            (a picker thumbnail is NOT proof of attach). Credit-free; safe to retry."""
+            ing_btn = page.get_by_role("button", name="Add ingredients to the prompt box").first
+            if ing_btn.count() == 0:
+                ing_btn = page.locator(ADD_INGREDIENTS_BTN).first
+            if ing_btn.count() == 0:
+                ing_btn = page.locator("button:has-text('Add ingredients')").first
+            if ing_btn.count() == 0:
+                self.manifest("ingredients: 'Add ingredients' button not found")
+                return False
+            ing_btn.click(timeout=6_000)
+            page.wait_for_timeout(1500)
+            self.manifest("ingredients: opened picker")
+
+            # The Sep 2026 picker tabs content by type (All / Images / Videos /
+            # Voices / Characters / Avatars / Uploads). Characters only appear
+            # under the Characters tab — searching the default "All" tab finds
+            # nothing (the regression the old 'thumbnail' check masked).
+            chars_tab = page.get_by_role("tab", name="Characters", exact=True).first
+            if chars_tab.count() > 0:
+                try:
+                    chars_tab.click(timeout=6_000)
+                    page.wait_for_timeout(1500)
+                    self.manifest("ingredients: switched to Characters tab")
+                except Exception:
+                    pass
+
+            char_option = page.locator(f"[role='option']:has-text('{character_name}')").first
+            if char_option.count() == 0:
+                char_option = page.locator(f"[role='listitem']:has-text('{character_name}')").first
+            if char_option.count() == 0:
+                char_option = page.locator("[role='option']:visible").first
+            if char_option.count() == 0:
+                self.manifest(f"ingredients: character '{character_name}' not found in list")
+                page.keyboard.press("Escape")
+                return False
+            char_option.click(timeout=6_000)
+            # A freshly created character's first insert can settle late
+            # (and occasionally skip in headed mode) — poll up to ~6s.
+            for _ in range(12):
+                page.wait_for_timeout(500)
+                if _editor_has_ingredient():
+                    self.manifest(f"ingredients: attached character '{character_name}' to prompt")
+                    return True
+            self.manifest(f"ingredients: attempt {attempt} clicked character '{character_name}' (attach unconfirmed)")
             return False
-        ing_btn.click(timeout=6_000)
-        page.wait_for_timeout(1500)
-        self.manifest("ingredients: opened picker")
 
-        # 2. Select the character from the list (default "All" tab shows characters)
-        char_option = page.locator(f"[role='option']:has-text('{character_name}')").first
-        if char_option.count() == 0:
-            char_option = page.locator("[role='option']:visible").first
-        if char_option.count() == 0:
-            self.manifest(f"ingredients: character '{character_name}' not found in list")
-            page.keyboard.press("Escape")
-            return False
-        char_option.click(timeout=6_000)
-        page.wait_for_timeout(1500)
-        self.manifest(f"ingredients: clicked character '{character_name}'")
-
-        # 3. Verify character was attached — look for "Ingredient" button with character image
-        ingredient_btn = page.locator("button:has(img[alt='Character ingredient image'])").first
-        if ingredient_btn.count() == 0:
-            ingredient_btn = page.get_by_role("button", name="Ingredient").first
-        if ingredient_btn.count() > 0:
-            self.manifest(f"ingredients: attached character '{character_name}' to prompt")
-            return True
-
-        # 4. Fallback: check if the "Add to prompt" button appeared (older Flow versions)
-        add_prompt = page.locator(ADD_TO_PROMPT_BTN).first
-        if add_prompt.count() > 0:
-            add_prompt.click(timeout=6_000)
+        # 1+2+3. Retry the picker insert up to 3x. Credit-free; the chip
+        #         verification refuses false positives, so a flake never burns a
+        #         generation credit nor attaches the wrong thing.
+        for attempt in range(1, 4):
+            if _try_attach_once(attempt):
+                return True
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
             page.wait_for_timeout(1000)
-            self.manifest(f"ingredients: clicked 'Add to prompt' for '{character_name}'")
-            return True
+            if _editor_has_ingredient():
+                self.manifest(f"ingredients: attached character '{character_name}' (post-close)")
+                return True
 
-        self.manifest(f"ingredients: character '{character_name}' may not have attached (no verification)")
+        # 4. The click may have only previewed the character — use the picker's
+        #    explicit insert control if one is visible.
+        for sel in ("button:has-text('Add to prompt')", "button:has-text('Insert')"):
+            ctrl = page.locator(sel).first
+            if ctrl.count() == 0 or not ctrl.is_visible():
+                continue
+            try:
+                ctrl.click(timeout=6_000)
+                page.wait_for_timeout(1200)
+                if _editor_has_ingredient():
+                    self.manifest(f"ingredients: inserted '{character_name}' via '{sel}'")
+                    return True
+            except Exception:
+                continue
+
+        # 5. Close the picker and re-check once more
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(800)
+        if _editor_has_ingredient():
+            self.manifest(f"ingredients: attached character '{character_name}' (post-close)")
+            return True
+        self.manifest(f"ingredients: character '{character_name}' NOT attached to prompt")
         return False
+
+    def _generation_in_progress(self, page) -> bool:
+        """True while Flow is rendering a clip: the pre-2026 'Stop' control, a
+        real progressbar element, or any visible '%NN' text (Sep 2026 UI shows
+        a percent chip like 'play_circle 42%' instead of a Stop button)."""
+        try:
+            if page.locator("button:has-text('Stop'):visible").count() > 0:
+                return True
+            if page.locator("[role='progressbar']:visible").count() > 0:
+                return True
+            return page.get_by_text(re.compile(r"\d+\s*%")).count() > 0
+        except Exception:
+            return False
 
     def _click_generate(self, page) -> None:
         """Click the generate/create button. Some buttons start disabled
@@ -868,61 +964,92 @@ class FlowClipper:
                 page.wait_for_timeout(2000)
             try:
                 el.click(timeout=8_000)
-                self.manifest("generate clicked")
-                return
             except Exception:
                 continue
+            self.manifest("generate clicked")
+            # Post-click sanity (Sep 2026 UI): confirm something actually
+            # started — progress ('Stop' / progressbar / percent chip), an
+            # already-rendered video, or an approval dialog — so a silently
+            # failed click is caught in 20s instead of a 900s generation wait.
+            for _ in range(20):
+                started = (
+                    self._generation_in_progress(page)
+                    or page.locator("video:visible").count() > 0
+                    or page.locator("[role='dialog']:visible").count() > 0
+                )
+                if started:
+                    return
+                page.wait_for_timeout(1000)
+            raise FlowAutomationError(
+                "generate clicked but no generation started within 20s (no "
+                "progress control, no video, no approval dialog) — aborted "
+                "before anything could be charged"
+            )
         raise FlowAutomationError("no generate button found")
 
     def _approve_credits(self, page) -> None:
-        """Flow PRO asks "Approve N credits" before each generation. Click the
-        dialog's confirm button — and ONLY inside a real dialog, never
-        page-wide so a stray Continue/OK/Yes button cannot spend credits.
-        Fail-closed: if the day has never seen an explicit approval, a missing/
-        unmatched dialog aborts the clip (money gate) rather than proceeding
-        without it. Lenient only after the first approval succeeds once, where
-        Flow may not re-ask. Set FLOW_CREDITS_PREAPPROVED=1 to skip the
-        gate entirely if your account auto-approves credits (rare)."""
+        """Money gate (live-verified Sep 2026): the current Flow UI consumes the
+        account's FREE daily credits silently — no modal — and only shows an
+        approval dialog when a paid generation is attempted.
+
+        Policy:
+          - No approval dialog detected -> free-credit generation: accept.
+          - Approval dialog detected:
+              * FLOW_APPROVE_CREDITS=1 (supervised runs only) -> click it once.
+              * otherwise -> HARD STOP (never auto-spend paid credits).
+          - FLOW_CREDITS_PREAPPROVED=1 still bypasses the gate entirely (compat).
+        Approval clicks, when they happen, are scoped to a real overlay marker
+        (role=dialog / alertdialog / aria-modal), never page-wide, so a stray
+        Continue/OK/Yes button in the page background cannot spend credits."""
         if self._credits_approved:
             self.manifest("credits already approved this clip")
             return
-        for _ in range(10):
-            for scope, sel in _approval_candidates():
-                el = page.locator(scope).first
-                if el.count() == 0 or not el.is_visible():
-                    continue
-                try:
-                    el.click(timeout=4_000)
-                    self._credits_approved = True
-                    self._run_credits_approved = True
-                    self.manifest(f"approved credits via '{scope}{sel}'")
-                    return
-                except Exception:
-                    continue
-            time.sleep(2)
         if self._run_credits_approved:
-            self.manifest("credit dialog not detected, but credits were already "
-                          "approved earlier this run — continuing")
+            # Free-credit mode already confirmed earlier in this run — no need
+            # to re-scan for a dialog on every clip.
+            self._credits_approved = True
             return
         if cfg.env_or("FLOW_CREDITS_PREAPPROVED", "").strip().lower() in ("1", "true", "yes"):
             self._run_credits_approved = True
             self.manifest("FLOW_CREDITS_PREAPPROVED=1 set; skipping credit dialog gate")
             return
-        raise FlowAutomationError(
-            "no credit-approval dialog detected for the first generation. "
-            "Refusing to spend credits without an explicit approval. "
-            "If Flow's UI changed, update APPROVE_HINTS/APPROVAL_SCOPES or "
-            "approve the dialog manually in the browser then retry."
-        )
+        auto_approve = cfg.env_or("FLOW_APPROVE_CREDITS", "").strip().lower() in ("1", "true", "yes")
+        for _ in range(5):
+            for scope, sel in _approval_candidates():
+                el = page.locator(scope).first
+                if el.count() == 0 or not el.is_visible():
+                    continue
+                if auto_approve:
+                    try:
+                        el.click(timeout=4_000)
+                        self._credits_approved = True
+                        self._run_credits_approved = True
+                        self.manifest(f"approved credits via '{scope}{sel}'")
+                        return
+                    except Exception:
+                        continue
+                raise FlowAutomationError(
+                    "PAID credit-approval dialog detected and FLOW_APPROVE_CREDITS "
+                    "is not set — refusing to spend money automatically. Approve "
+                    "manually in the browser, or set FLOW_APPROVE_CREDITS=1 only "
+                    "for a supervised (Gate 5) run."
+                )
+            time.sleep(2)
+        # No dialog appeared before generation started: Flow is consuming the
+        # account's FREE daily credits (current UI). Accept and remember.
+        self._credits_approved = True
+        self._run_credits_approved = True
+        self.manifest("no credit dialog — free-credit generation accepted (daily budget)")
 
     def _wait_until_finished(self, page) -> None:
         deadline = time.time() + 900  # Flow generations can take 5-12 min (Veo 3.1 Lite)
         while time.time() < deadline:
             elapsed = int(time.time() - (deadline - 900))
-            # A running generation shows a "Stop" control on the submit button;
-            # when it disappears AND a result (video or download control) exists,
-            # the generation is truly done.
-            generating = page.locator("button:has-text('Stop'):visible").count() > 0
+            # A running generation shows a "Stop" control on the submit button,
+            # a progressbar, or a percent chip (Sep 2026 UI); when none is
+            # present AND a result (video or download control) exists, the
+            # generation is truly done.
+            generating = self._generation_in_progress(page)
             if not generating:
                 vids = page.locator("video:visible").count()
                 dl = any(page.locator(s).count() > 0 for s in DOWNLOAD_HINTS)
@@ -1018,18 +1145,34 @@ class FlowClipper:
                 try:
                     with page.expect_download(timeout=120_000) as dl_info:
                         dl_item.click(timeout=5_000)
-                        page.wait_for_timeout(1500)
-                        for res in ("720p", "1080p", "480p"):
-                            r = page.locator(
-                                f"[role='menuitem']:has-text('{res}'):visible, "
-                                f"[data-state='open'] button:has-text('{res}'):visible").first
-                            if r.count() and r.is_visible():
-                                try:
-                                    r.click(timeout=4_000)
-                                    self.manifest(f"chose resolution {res}")
-                                    break
-                                except Exception:
-                                    continue
+                        # The generation config is already 720p (set by
+                        # _select_video_mode), so the browser's DEFAULT download
+                        # is a 720p file. Clicking a resolution inside Flow's
+                        # download flow has crashed the headed browser
+                        # (TargetClosedError, Sep 2026), so try the default
+                        # download FIRST (~25s). Only if nothing arrives do we
+                        # tap the explicit 720p item (user-requested).
+                        started = False
+                        for _ in range(17):
+                            page.wait_for_timeout(1500)
+                            try:
+                                dl_info.value
+                                started = True
+                                break
+                            except Exception:
+                                continue
+                        if not started:
+                            for res in ("720p", "1080p", "480p"):
+                                r = page.locator(
+                                    f"[role='menuitem']:has-text('{res}'):visible, "
+                                    f"[data-state='open'] button:has-text('{res}'):visible").first
+                                if r.count() and r.is_visible():
+                                    try:
+                                        r.click(timeout=4_000)
+                                        self.manifest(f"chose resolution {res}")
+                                        break
+                                    except Exception:
+                                        continue
                         page.wait_for_timeout(8000)
                     dl_info.value.save_as(str(output_path))
                     self.manifest(f"saved clip -> {output_path}")
@@ -1038,6 +1181,37 @@ class FlowClipper:
                     self.manifest(f"tile-download failed ({type(exc).__name__})")
         self._dump_controls(page)
         raise FlowAutomationError("no download control found")
+
+    def _recover_download(self, project_url: str, output_path: Path) -> bool:
+        """Re-download a finished clip WITHOUT re-generating (credits already
+        spent). Used when the browser died mid-download: reconnect to the same
+        flow project on a fresh page and try the download path again."""
+        page = self._browser.new_page()
+        page.set_default_timeout(60_000)
+        try:
+            page.goto(project_url, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(8000)
+            for name in ("Videos", "All media"):
+                t = page.get_by_text(name, exact=True).first
+                if t.count() > 0 and t.is_visible():
+                    try:
+                        t.click(timeout=4_000)
+                        page.wait_for_timeout(4000)
+                        break
+                    except Exception:
+                        pass
+            self._download_clip(page, output_path)
+            self._ensure_real_video(page, output_path)
+            self.manifest(f"recovered clip download from project: {output_path.name}")
+            return True
+        except Exception as exc:
+            self.manifest(f"in-project re-download also failed ({type(exc).__name__})")
+            return False
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
 
     def _ensure_real_video(self, page, output_path: Path) -> None:
         """Download-verify loop: accept only a real, readable video file.

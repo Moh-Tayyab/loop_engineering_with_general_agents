@@ -474,7 +474,9 @@ def _run_real_locked(state: st.LoopState, args: argparse.Namespace) -> int:
         state.finish_day(day_state, ok=False, error=f"merge: {exc}")
         cfg.die(f"merge failed: {exc}")
 
-    check = merger.evaluate_final(final_path, expected_s=SCENES * DURATION_S)
+    check = merger.evaluate_final(
+        final_path, expected_s=SCENES * cfg.clip_duration_s()
+    )
     if not check["ok"]:
         state.finish_day(day_state, ok=False, error=f"eval: {check}")
         cfg.die(f"final video failed evaluation: {check}")

@@ -73,6 +73,27 @@ def flow_headless() -> bool:
     return os.environ.get("FLOW_HEADLESS", "1") == "1"
 
 
+def flow_aspect() -> str:
+    """Target aspect ratio for the FINAL video. Must match what Flow generates
+    and what the final evaluator accepts. '9:16' (vertical shorts) is the
+    historical default; '16:9' (landscape) is the user-requested format.
+    Override with FLOW_ASPECT=16:9. Invalid values fail closed -> 9:16."""
+    v = os.environ.get("FLOW_ASPECT", "9:16").strip()
+    return v if v in ("9:16", "16:9") else "9:16"
+
+
+def clip_duration_s() -> int:
+    """Feasible per-clip duration. Veo 3.1 pins every clip to 8s (live-verified
+    Sep 2026 — the 10s radio only exists under Omni Flash), so a day's final
+    video is SCENES*8s even though storyboards nominally plan 10s scenes. The
+    final evaluator must gate on the FEASIBLE length, not the nominal one.
+    Override with FLOW_CLIP_DURATION_S."""
+    try:
+        return int(os.environ.get("FLOW_CLIP_DURATION_S", "8"))
+    except (TypeError, ValueError):
+        return 8
+
+
 def browser_profile_dir() -> Path:
     return Path(os.environ.get("FLOW_PROFILE_DIR", str(BROWSER_PROFILE_DIR)))
 

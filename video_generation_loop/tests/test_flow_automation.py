@@ -223,16 +223,28 @@ def _fresh_clipper(tmp_path):
     return c
 
 
-def test_first_clip_no_dialog_raises(monkeypatch, tmp_path):
+def test_first_clip_no_dialog_accepts_free_path(monkeypatch, tmp_path):
+    """Sep 2026 UI: no modal + generation already starting -> Flow consumes the
+    account's FREE daily credits; accept (nothing paid is auto-spent)."""
     monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
     c = _fresh_clipper(tmp_path)
-    with pytest.raises(FlowAutomationError, match="no credit-approval dialog"):
-        c._approve_credits(_page_no_dialog())
-    assert not c._credits_approved
+    c._approve_credits(_page_no_dialog())
+    assert c._credits_approved
+    assert c._run_credits_approved
 
 
-def test_first_clip_dialog_approves(monkeypatch, tmp_path):
+def test_paid_dialog_without_optin_hard_stops(monkeypatch, tmp_path):
     monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    c = _fresh_clipper(tmp_path)
+    with pytest.raises(FlowAutomationError, match="FLOW_APPROVE_CREDITS"):
+        c._approve_credits(_page_with_dialog())
+    assert not c._credits_approved
+    assert not c._run_credits_approved
+
+
+def test_paid_dialog_autoapproves_only_with_env(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    monkeypatch.setenv("FLOW_APPROVE_CREDITS", "1")
     c = _fresh_clipper(tmp_path)
     c._approve_credits(_page_with_dialog())
     assert c._credits_approved
@@ -243,7 +255,8 @@ def test_second_clip_no_dialog_continues_when_session_approved(monkeypatch, tmp_
     monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
     c = _fresh_clipper(tmp_path)
     c._run_credits_approved = True
-    c._approve_credits(_page_no_dialog())  # must not raise
+    c._approve_credits(_page_no_dialog())  # free-credit mode already known
+    assert c._credits_approved
 
 
 def test_preapproved_env_skips_gate(monkeypatch, tmp_path):
@@ -251,5 +264,60 @@ def test_preapproved_env_skips_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("FLOW_CREDITS_PREAPPROVED", "1")
     c = _fresh_clipper(tmp_path)
     c._approve_credits(_page_no_dialog())
-    assert not c._credits_approved  # no actual click happened
+    assert not c._credits_approved  # no actual dialog click happened
     assert c._run_credits_approved
+
+
+# --- Sep 2026 progress detection (no 'Stop' text; percent chip instead) ---
+
+class _StubLoc:
+    def __init__(self, n):
+        self._n = n
+
+    def count(self):
+        return self._n
+
+
+class _StubPage:
+    def __init__(self, stop=0, progressbar=0, percent=0):
+        self.stop, self.progressbar, self.percent = stop, progressbar, percent
+
+    def locator(self, sel):
+        return _StubLoc(self.stop if "Stop" in sel else self.progressbar)
+
+    def get_by_text(self, _pat):
+        return _StubLoc(self.percent)
+
+
+def test_progress_detected_via_stop_control(tmp_path):
+    c = _fresh_clipper(tmp_path)
+    assert c._generation_in_progress(_StubPage(stop=1))
+
+
+def test_progress_detected_via_progressbar(tmp_path):
+    c = _fresh_clipper(tmp_path)
+    assert c._generation_in_progress(_StubPage(progressbar=1))
+
+
+def test_progress_detected_via_percent_chip(tmp_path):
+    c = _fresh_clipper(tmp_path)
+    assert c._generation_in_progress(_StubPage(percent=1))
+
+
+def test_no_progress_detected_when_idle(tmp_path):
+    c = _fresh_clipper(tmp_path)
+    assert not c._generation_in_progress(_StubPage())
+
+
+def test_progress_detection_never_raises(tmp_path):
+    """Even when the DOM/API throws, the guard degrades to False (never crash)."""
+    c = _fresh_clipper(tmp_path)
+
+    class _Broken:
+        def locator(self, sel):
+            raise RuntimeError("boom")
+
+        def get_by_text(self, _pat):
+            raise RuntimeError("boom")
+
+    assert c._generation_in_progress(_Broken()) is False

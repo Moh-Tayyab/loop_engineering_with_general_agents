@@ -135,16 +135,27 @@ def probe_media(path: Path) -> dict[str, object] | None:
 
 
 ASPECT_9_16 = 9 / 16  # 0.5625
-ASPECT_TOLERANCE = 0.03  # ~±5% — admits 720x1280 / 1080x1920; rejects 2:3, 3:4, 1:1, 4:5
+ASPECT_16_9 = 16 / 9  # 1.7778
+ASPECT_TOLERANCE = 0.03  # ~±3% — admits 9:16/16:9 axis files; rejects 2:3, 3:4, 1:1, 4:5
+
+
+def target_aspect() -> float:
+    """Aspect ratio the FINAL video must have, from config (FLOW_ASPECT)."""
+    return ASPECT_16_9 if cfg.flow_aspect() == "16:9" else ASPECT_9_16
+
+
+def target_aspect_label() -> str:
+    return cfg.flow_aspect()
 
 
 def evaluate_final(path: Path, expected_s: int, tolerance_s: int = 5) -> dict[str, object]:
     """Check the final video: exists, non-empty, ~expected duration.
 
     When ffprobe is available, additionally require a real set of streams:
-    video present AND audio present AND a TIGHT 9:16 aspect ratio (9/16 ± 3%).
-    Portrait-but-not-916 files (2:3, 3:4, 4:5, 1:1) are rejected for the
-    vertical format.
+    video present AND audio present AND a TIGHT aspect ratio matching the
+    configured FLOW_ASPECT (9:16 or 16:9, ± 3%). Mis-oriented files (2:3,
+    3:4, 4:5, 1:1, plain landscape when 9:16 is configured, etc.) are
+    rejected for the wrong format.
 
     Missing ffprobe -> pass on size/duration alone (mirror the download-verify
     contract: a valid video is never rejected just because nothing could probe
@@ -173,8 +184,12 @@ def evaluate_final(path: Path, expected_s: int, tolerance_s: int = 5) -> dict[st
         info["width"], info["height"] = w, h
         ratio = w / h if h else 0.0
         info["aspect"] = round(ratio, 4)
-        if not (ASPECT_9_16 - ASPECT_TOLERANCE <= ratio <= ASPECT_9_16 + ASPECT_TOLERANCE):
-            info["error"] = f"aspect {ratio:.3f} not tight 9:16 (w={w}, h={h})"
+        target = target_aspect()
+        if not (target - ASPECT_TOLERANCE <= ratio <= target + ASPECT_TOLERANCE):
+            info["error"] = (
+                f"aspect {ratio:.3f} not {target_aspect_label()} "
+                f"(w={w}, h={h}, target {target:.4f}±{ASPECT_TOLERANCE})"
+            )
             return info
 
     dur = probe_duration(path)
