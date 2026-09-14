@@ -1,6 +1,8 @@
 name: test-gate
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review_comment:
@@ -16,6 +18,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Install system dependencies (ffmpeg/ffprobe for merger path tests)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Set up Python
         uses: actions/setup-python@v5

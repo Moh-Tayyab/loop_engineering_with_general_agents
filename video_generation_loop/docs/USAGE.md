@@ -172,6 +172,13 @@ YouTube auto-publishes it at `publishAt` (no browser needed on the runner).
   non-TTY stdin like cron), a blocking step FAILS loudly instead — the day
   stops at its first blocker, the step is queued in `manual_todo.txt`, and
   nothing is burned past it.
+- **Money gate (fail-closed):** the first generation of a day MUST see an explicit
+  "Approve N credits" Flow dialog before it proceeds. If Flow's DOM drifts or
+  your account silently auto-approves, the first clip aborts immediately with a
+  clear error rather than burn credits behind your back. If you *know* no dialog
+  will ever appear, set `FLOW_CREDITS_PREAPPROVED=1` to opt out (the day then
+  trusts your browser). Later clips in the same run continue leniently after the
+  first approval succeeds.
 - `FLOW_HEADLESS=0` shows the browser while it works (helpful for diagnosis).
 - If there is no system Chrome, point `FLOW_PROFILE_DIR` at your real Chrome
   profile or install `chromium`/`google-chrome` so Playwright can use the
@@ -223,7 +230,7 @@ Add to cron (daily 18:00 PKT = 13:00 UTC):
 .venv/bin/python -m pytest
 ```
 
-**140 tests** in this repo (`src/planner.py`, `src/gemini_web.py`, `src/state.py`,
+**144 tests** in this repo (`src/planner.py`, `src/gemini_web.py`, `src/state.py`,
 `src/youtube_upload.py`, `src/main.py --dry-run` preflight capture, Flow automation
 capture, YouTube upload error contract incl. post-commit-failure recovery),
 all runnable without network/keys (template planner + mocked ffmpeg + mocked

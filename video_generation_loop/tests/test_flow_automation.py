@@ -1,7 +1,9 @@
 """Tests for the account-access gate (pure helpers only; no Playwright)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,6 +14,7 @@ from src.flow_automation import (
     GOOGLE_SESSION_COOKIES,
     REDOWNLOAD_RETRIES,
     FlowAutomationError,
+    FlowClipper,
     _approval_candidates,
     _clip_is_real_video,
     _has_google_session,
@@ -193,3 +196,60 @@ def test_manual_assist_fails_fast_when_unattended(tmp_path, monkeypatch):
     with pytest.raises(FlowAutomationError, match="fail-fast"):
         clipper._manual_assist("prompt xyz", tmp_path / "clip.mp4")
     assert "prompt xyz" in todo.read_text()
+
+
+def _page_no_dialog():
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 0
+    loc.is_visible.return_value = False
+    page.locator.return_value.first = loc
+    return page
+
+
+def _page_with_dialog():
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    loc.is_visible.return_value = True
+    page.locator.return_value.first = loc
+    return page
+
+
+def _fresh_clipper(tmp_path):
+    c = FlowClipper(headless=True, profile_dir=tmp_path, manifest=lambda m: None)
+    c._credits_approved = False
+    c._run_credits_approved = False
+    return c
+
+
+def test_first_clip_no_dialog_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    c = _fresh_clipper(tmp_path)
+    with pytest.raises(FlowAutomationError, match="no credit-approval dialog"):
+        c._approve_credits(_page_no_dialog())
+    assert not c._credits_approved
+
+
+def test_first_clip_dialog_approves(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    c = _fresh_clipper(tmp_path)
+    c._approve_credits(_page_with_dialog())
+    assert c._credits_approved
+    assert c._run_credits_approved
+
+
+def test_second_clip_no_dialog_continues_when_session_approved(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    c = _fresh_clipper(tmp_path)
+    c._run_credits_approved = True
+    c._approve_credits(_page_no_dialog())  # must not raise
+
+
+def test_preapproved_env_skips_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.flow_automation.time.sleep", lambda _: None)
+    monkeypatch.setenv("FLOW_CREDITS_PREAPPROVED", "1")
+    c = _fresh_clipper(tmp_path)
+    c._approve_credits(_page_no_dialog())
+    assert not c._credits_approved  # no actual click happened
+    assert c._run_credits_approved

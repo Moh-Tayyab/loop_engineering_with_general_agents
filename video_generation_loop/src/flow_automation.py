@@ -224,6 +224,7 @@ class FlowClipper:
         self.manifest = manifest or (lambda msg: print(f"[flow] {msg}"))
         self._browser = None
         self._credits_approved = False  # once per clip (Beat 2 money-path guard)
+        self._run_credits_approved = False  # once per run: the day must see its money gate
 
     def __enter__(self) -> "FlowClipper":
         import playwright.sync_api
@@ -877,7 +878,11 @@ class FlowClipper:
         """Flow PRO asks "Approve N credits" before each generation. Click the
         dialog's confirm button — and ONLY inside a real dialog, never
         page-wide so a stray Continue/OK/Yes button cannot spend credits.
-        Idempotent per clip: once approved, never approved again."""
+        Fail-closed: if the day has never seen an explicit approval, a missing/
+        unmatched dialog aborts the clip (money gate) rather than proceeding
+        without it. Lenient only after the first approval succeeds once, where
+        Flow may not re-ask. Set FLOW_CREDITS_PREAPPROVED=1 to skip the
+        gate entirely if your account auto-approves credits (rare)."""
         if self._credits_approved:
             self.manifest("credits already approved this clip")
             return
@@ -889,12 +894,26 @@ class FlowClipper:
                 try:
                     el.click(timeout=4_000)
                     self._credits_approved = True
+                    self._run_credits_approved = True
                     self.manifest(f"approved credits via '{scope}{sel}'")
                     return
                 except Exception:
                     continue
             time.sleep(2)
-        self.manifest("no credit-approval dialog detected (continuing)")
+        if self._run_credits_approved:
+            self.manifest("credit dialog not detected, but credits were already "
+                          "approved earlier this run — continuing")
+            return
+        if cfg.env_or("FLOW_CREDITS_PREAPPROVED", "").strip().lower() in ("1", "true", "yes"):
+            self._run_credits_approved = True
+            self.manifest("FLOW_CREDITS_PREAPPROVED=1 set; skipping credit dialog gate")
+            return
+        raise FlowAutomationError(
+            "no credit-approval dialog detected for the first generation. "
+            "Refusing to spend credits without an explicit approval. "
+            "If Flow's UI changed, update APPROVE_HINTS/APPROVAL_SCOPES or "
+            "approve the dialog manually in the browser then retry."
+        )
 
     def _wait_until_finished(self, page) -> None:
         deadline = time.time() + 900  # Flow generations can take 5-12 min (Veo 3.1 Lite)
