@@ -1,0 +1,10 @@
+.env
+.runtime/
+.slc/
+output/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+playwright-report/
+test-results/

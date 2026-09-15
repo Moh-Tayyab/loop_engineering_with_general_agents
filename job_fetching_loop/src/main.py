@@ -1,0 +1,471 @@
+"""Job Fetching Loop — CLI orchestrator.
+
+Usage:
+    python -m src.main                         # run per day-of-week schedule
+    python -m src.main --source linkedin       # test a single source
+    python -m src.main --source indeed --dry-run  # mock run, no notifications
+    python -m src.main --window daily          # override schedule
+    python -m src.main --window weekly         # force weekly digest
+    python -m src.main --digest                # force digest generation
+    python -m src.main --stats                 # print circuit-breaker stats
+    python -m src.main --reset-circuit         # reset all circuit breakers
+    python -m src.main --linkedin-login        # manual LinkedIn login gate
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import src.config as cfg
+from src.log import get_logger, setup_logging
+from src.models import (
+    LOCATION_REMOTE,
+    NormalizedJob,
+    RawJob,
+    ai_keyword_matches,
+    classify_job_type,
+    classify_location,
+    is_expired_job,
+    is_worldwide_remote,
+    job_id,
+    normalize_text,
+    parse_salary,
+    utc_now,
+)
+from src.schedule import compute_fetch_window, check_last_run_freshness
+from src.circuit_breaker import CircuitManager
+from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text
+from src.dedup import accept_and_record, dedup_job
+from src.digest import collect_weekly_jobs, generate_digest, write_digest, week_key
+from src.notifier import build_notifiers
+from src.scrapers import load_all_scrapers, all_scrapers, enabled_scrapers, get_scraper
+
+log = get_logger(__name__)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="AI/ML Job Fetching Loop")
+    p.add_argument("--dry-run", action="store_true", help="no notifications, log output only")
+    p.add_argument("--source", type=str, default=None, help="test a single source by name")
+    p.add_argument("--window", choices=["daily", "weekly", "backfill", "idle", "auto"], default="auto",
+                   help="override schedule logic")
+    p.add_argument("--digest", action="store_true", help="force weekly digest generation")
+    p.add_argument("--stats", action="store_true", help="print per-source circuit breaker stats")
+    p.add_argument("--reset-circuit", action="store_true", help="reset all circuit breakers")
+    p.add_argument("--linkedin-login", action="store_true", help="open LinkedIn login gate")
+    p.add_argument("--list-sources", action="store_true", help="print registered sources and exit")
+    p.add_argument("--keywords", type=str, default=None, help="override SCRAPE_KEYWORDS (comma-sep)")
+    return p.parse_args(argv)
+
+
+# ── LinkedIn login gate ──────────────────────────────────────────────────────
+
+async def linkedin_login() -> int:
+    from src.browser import launch_browser
+
+    log.info("opening LinkedIn in headed browser; sign in manually, then close it")
+    async with launch_browser("linkedin", headless=False, persistent=True) as context:
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto("https://www.linkedin.com/login")
+        log.info("waiting for manual sign-in (press Ctrl+C when done)...")
+        try:
+            await asyncio.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+        await page.close()
+    # Deterministic session gate: is_available() consults this marker, not a
+    # "profile dir has any file" heuristic (Chromium creates hundreds of files
+    # before a human has even logged in).
+    marker = cfg.RUNTIME_DIR / ".linkedin-session"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(utc_now().isoformat(), encoding="utf-8")
+    log.info("session saved (marker %s). You can now run: python -m src.main", marker)
+    return 0
+
+
+# ── Normalization ────────────────────────────────────────────────────────────
+
+def normalize_raw(raw: RawJob) -> NormalizedJob:
+    """Convert a source-specific RawJob to the standard NormalizedJob schema."""
+    salary_min, salary_max, salary_currency = parse_salary(raw.salary)
+    location_type = classify_location(raw.location)
+    jid = job_id(raw.url, raw.title, raw.company)
+    snippet = (raw.description or "")[:300]
+    return NormalizedJob(
+        id=jid,
+        title=raw.title,
+        title_normalized=normalize_text(raw.title),
+        company=raw.company,
+        company_normalized=normalize_text(raw.company),
+        url=raw.url,
+        source=raw.source,
+        location=raw.location,
+        location_type=location_type,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        salary_currency=salary_currency,
+        job_type=classify_job_type(raw.job_type),
+        posted_date=None,
+        fetched_at=raw.fetched_at,
+        tags=raw.tags,
+        description_snippet=snippet,
+        raw=raw.to_dict(),
+    )
+
+
+def is_remotely_workable(location_type: str, location: str | None = None) -> bool:
+    """True only when the job is clearly worldwide-remote.
+
+    Used by SCRAPE_REMOTE_ONLY: drops city/state-restricted remote jobs
+    (e.g. "Remote in Brooklyn, NY") and non-remote positions entirely.
+    When location text is available, uses is_worldwide_remote for precision;
+    otherwise falls back to location_type == LOCATION_REMOTE."""
+    if location is not None:
+        return is_worldwide_remote(location)
+    return location_type == LOCATION_REMOTE
+
+
+# ── Save jobs to file ────────────────────────────────────────────────────────
+
+def save_jobs(jobs: list[NormalizedJob], output_dir: Path) -> Path:
+    """Write jobs_YYYY-MM-DD.json atomically and return the path.
+
+    Merges with any existing file for the day so two beats both land in it.
+    Atomic temp-file + os.replace means a crash never leaves a torn file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    today = utc_now().date().isoformat()
+    path = output_dir / f"jobs_{today}.json"
+    existing: list[dict] = []
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            existing = raw if isinstance(raw, list) else raw.get("jobs", [])
+        except (json.JSONDecodeError, OSError):
+            log.warning("existing jobs file unreadable; starting fresh: %s", path)
+            existing = []
+    seen = {j["id"] for j in existing if "id" in j}
+    for j in jobs:
+        if j.id not in seen:
+            existing.append(j.to_dict())
+            seen.add(j.id)
+    atomic_write_text(path, json.dumps(existing, indent=2, ensure_ascii=False))
+    log.info("saved %d jobs -> %s", len(existing), path)
+    return path
+
+
+# ── Source execution ─────────────────────────────────────────────────────────
+
+def run_source(
+    source_name: str,
+    keywords: list[str],
+    posted_after: datetime,
+    seen: SeenStore,
+    circuit: CircuitManager,
+    max_jobs: int,
+    dry_run: bool = False,
+    outcomes: dict[str, str] | None = None,
+) -> list[NormalizedJob]:
+    """Run one source, normalize + dedup, return new jobs.
+
+    `dry_run`: rehearsal semantics — mutations stay in memory (the in-process
+    `seen` set keeps cross-source dedup working) but NOTHING is written to
+    `.slc/` (rule 6: a dry-run that writes state is a bug, not a feature).
+
+    `outcomes`: optional tally of this source's verdict for the run report
+    ('ok' | 'failed' | 'open' | 'login'), used by the outer run to detect a
+    total-outage day for the exit code.
+    """
+    def _verdict(v: str) -> None:
+        if outcomes is not None:
+            outcomes[source_name] = v
+
+    if not circuit.is_available(source_name):
+        log.info("[%s] circuit OPEN — skipping", source_name)
+        _verdict("open")
+        return []
+
+    log.info("[%s] fetching (after=%s)", source_name, posted_after.date())
+    scraper = get_scraper(source_name)
+    if scraper.login_required() and not scraper.is_available():
+        log.warning("[%s] login required but no session — skipping (run --linkedin-login)", source_name)
+        _verdict("login")
+        return []
+
+    new_jobs: list[NormalizedJob] = []
+    try:
+        count = 0
+        for raw in scraper.fetch(keywords, posted_after):
+            if count >= max_jobs:
+                break
+            if not ai_keyword_matches(raw, cfg.scan_keywords()):
+                continue
+            if is_expired_job(raw):
+                log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
+                continue
+            normalized = normalize_raw(raw)
+            if cfg.scrape_remote_only() and not is_remotely_workable(normalized.location_type, raw.location):
+                continue
+            # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
+            if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
+                log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
+                continue
+            is_new, reason = dedup_job(raw, seen)
+            if not is_new:
+                continue
+            new_jobs.append(normalized)
+            accept_and_record(raw, normalized, seen)
+            count += 1
+        circuit.record_success(source_name)
+        log.info("[%s] found %d new jobs", source_name, len(new_jobs))
+        _verdict("ok")
+    except Exception as exc:  # noqa: BLE001 - source failure is expected
+        circuit.record_failure(source_name)
+        log.error("[%s] failed: %s", source_name, exc)
+        _verdict("failed")
+        if not dry_run:
+            dlq = DeadLetterQueue()
+            dlq.push({"source": source_name, "error": str(exc), "timestamp": utc_now().isoformat()})
+            dlq.save()
+
+    return new_jobs
+
+
+# ── Notifications ────────────────────────────────────────────────────────────
+
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _guarded_deliver(state: LoopState, notifiers: list, prefix: str, deliver) -> None:
+    """Send a notification to each channel without holding the state lock during
+    the slow network call.
+
+    Two-phase: (1) check-already-sent under a short lock, (2) send unlocked,
+    (3) re-lock and mark only if nobody else marked while we sent. This keeps
+    the lock free for scrapers during seconds of HTTP IO while still preventing
+    duplicate sends across processes.
+    """
+    today_str = _today_utc()
+    for n in notifiers:
+        key = f"{prefix}:{n.kind}"
+        with state.locked(timeout_s=cfg.lock_timeout_s()):
+            state.reload()
+            if state.notified_today(key, today_str):
+                continue
+        try:
+            ok = deliver(n)
+        except Exception as exc:  # noqa: BLE001 - a flaky channel must not kill the run
+            log.error("[notify] %s failed: %s", key, exc)
+            ok = False
+        if not ok:
+            continue
+        with state.locked(timeout_s=cfg.lock_timeout_s()):
+            state.reload()
+            if not state.notified_today(key, today_str):
+                state.mark_notified(key, today_str)
+                state.save()
+
+
+# ── Scrape pass (runs under the state lock) ─────────────────────────────────
+
+def _compute_window(args: argparse.Namespace):
+    from src.schedule import FetchWindow, FREQ_IDLE
+
+    if args.window == "idle":
+        return FetchWindow(reason=FREQ_IDLE, window_start=utc_now(), window_end=utc_now(),
+                           generate_digest=False, window_label="manual idle", day_of_week=6)
+    if args.window != "auto":
+        now = utc_now()
+        return FetchWindow(reason=args.window, window_start=now, window_end=now,
+                           generate_digest=(args.window == "weekly"),
+                           window_label=f"manual {args.window}", day_of_week=now.weekday())
+    return compute_fetch_window()
+
+
+def _run_scrape_pass(state: LoopState, circuit: CircuitManager, args: argparse.Namespace,
+                     window) -> tuple[list[NormalizedJob], tuple[dict, list[NormalizedJob]] | None, dict[str, str]]:
+    """Run scrape → save → digest (local I/O only) under the state lock.
+
+    Returns (new_jobs, digest_plan, outcomes) where digest_plan is
+    (digest, top_jobs) if a digest was written, else None, and outcomes maps
+    each scheduled source to 'ok'/'failed'/'open'/'login' (for the run's
+    outage exit-code decision). Notifications are NOT sent here — network
+    IO must not hold the lock, so the caller delivers them after release.
+    """
+    if args.source:
+        sources_to_run = [args.source]
+    else:
+        sources_to_run = list(window.sources) if window.sources else enabled_scrapers()
+
+    log.info("[sources] %d sources: %s", len(sources_to_run), ", ".join(sources_to_run))
+
+    seen = SeenStore()
+    keywords = [k.strip() for k in args.keywords.split(",")] if args.keywords else cfg.scan_keywords()
+    max_jobs = cfg.max_jobs_per_source()
+    all_new_jobs: list[NormalizedJob] = []
+    outcomes: dict[str, str] = {}
+
+    for source_name in sources_to_run:
+        new = run_source(source_name, keywords, window.window_start, seen, circuit, max_jobs,
+                         dry_run=args.dry_run, outcomes=outcomes)
+        all_new_jobs.extend(new)
+        # seen.save() only on a real run: a --dry-run must never write .slc/
+        # (rule 6) or it burns hashes into the dedup store and the next real
+        # run silently skips those jobs.
+        if not args.dry_run:
+            seen.save()
+
+    # ── save ──
+    if all_new_jobs and not args.dry_run:
+        save_jobs(all_new_jobs, cfg.OUTPUT_DIR)
+
+    # ── state update (skipped for --dry-run: pure rehearsal, no side effects) ──
+    if not args.dry_run:
+        state.ensure_week(week_key())
+        state.add_jobs_this_week(len(all_new_jobs))
+        state.mark_run()
+        state.save()
+    else:
+        log.info("[dry-run] state/output writes skipped (rehearsal only)")
+
+    # ── weekly digest (local file writes stay under the lock) ──
+    digest_plan: tuple[dict, list[NormalizedJob]] | None = None
+    if (window.generate_digest or args.digest) and not args.dry_run:
+        wk = week_key()
+        if state.digest_generated_for() != wk or args.digest:
+            log.info("generating weekly digest...")
+            week_jobs = collect_weekly_jobs()
+            digest = generate_digest(week_jobs)
+            json_path, md_path = write_digest(digest)
+            log.info("[digest] %s", json_path)
+            log.info("[digest] %s", md_path)
+            state.mark_digest(wk)
+            state.save()
+            top = [NormalizedJob.from_dict(j) for j in digest["top_jobs"][:10]]
+            digest_plan = (digest, top)
+    elif args.digest and args.dry_run:
+        log.info("[dry-run] digest generation skipped (rehearsal only)")
+
+    return all_new_jobs, digest_plan, outcomes
+
+
+# ── Main loop ────────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    cfg.load_env()
+    setup_logging()
+    cfg.ensure_dirs()
+    load_all_scrapers()
+
+    # ── utility commands ──
+    if args.linkedin_login:
+        return asyncio.run(linkedin_login())
+
+    if args.list_sources:
+        print("registered sources:")
+        for name, cls in all_scrapers().items():
+            enabled = cfg.source_enabled(name)
+            status = "enabled" if enabled else f"disabled (set SOURCE_{name.upper()}=1)"
+            print(f"  {name:25} {status}")
+        return 0
+
+    state = LoopState()
+    circuit = CircuitManager(state)
+
+    if args.stats:
+        for s in circuit.summary():
+            print(f"  {s['source']:25} {s['status']}  fails={s['consecutive_fails']}  ok={s['total_ok']}  err={s['total_fail']}")
+        return 0
+
+    if args.reset_circuit:
+        with state.locked(timeout_s=cfg.lock_timeout_s()):
+            circuit.reset_all()
+            state.save()
+        print("[reset] all circuit breakers reset")
+        return 0
+
+    # ── compute fetch window ──
+    window = _compute_window(args)
+
+    log.info("=" * 60)
+    log.info("JOB FETCHING LOOP — %s", window.window_label)
+    log.info("Window: %s -> %s", window.window_start.date(), window.window_end.date())
+    log.info("=" * 60)
+
+    if window.is_idle():
+        log.info("[schedule] today is idle — nothing to do")
+        return 0
+
+    freshness = check_last_run_freshness(state.last_run(), window)
+    log.info(freshness)
+
+    # ── scrape under the state lock (leadership election) ──
+    # Two concurrent crons: the winner scrapes, the loser waits LOCK_TIMEOUT_S
+    # then exits cleanly. This prevents double-scraping and lost writes to
+    # state.json / seen.json / output.
+    # A --dry-run is pure rehearsal: it writes nothing, so it takes NO lock —
+    # not even the empty advisory lock file — and never contends with a real
+    # cron that happens to be mid-run (rule 6).
+    if args.dry_run:
+        new_jobs, digest_plan, outcomes = _run_scrape_pass(state, circuit, args, window)
+    else:
+        try:
+            with state.locked(timeout_s=cfg.lock_timeout_s()):
+                new_jobs, digest_plan, outcomes = _run_scrape_pass(state, circuit, args, window)
+                state.save()
+        except LockTimeoutError:
+            log.warning("[lock] another run is in progress — skipping this invocation")
+            return 0
+
+    # ── notifications run AFTER the lock is released ──
+    # Telegram/WhatsApp sends take seconds of network IO; holding the state
+    # lock during them would block other cron runs. `_guarded_deliver` uses a
+    # short re-lock only to check + record, never during the actual send.
+    if not args.dry_run and new_jobs:
+        stats = {
+            "total_this_week": state.jobs_this_week(),
+            "sources": {s: sum(1 for j in new_jobs if j.source == s)
+                        for s in set(j.source for j in new_jobs)},
+        }
+        notifiers = build_notifiers()
+        _guarded_deliver(state, notifiers, "daily", lambda n: n.send_daily(new_jobs, stats))
+    elif args.dry_run:
+        log.info("[dry-run] would notify %d jobs", len(new_jobs))
+
+    if digest_plan and not args.dry_run:
+        digest, top = digest_plan
+        notifiers = build_notifiers()
+        _guarded_deliver(state, notifiers, "weekly", lambda n: n.send_weekly_digest(digest, top))
+    if not args.dry_run and new_jobs and not digest_plan:
+        log.info("[done] %d new jobs discovered", len(new_jobs))
+    elif not args.dry_run and not new_jobs:
+        log.info("[done] no new jobs found")
+
+    # ── summary (re-read; the lock may have changed circuits) ──
+    log.info("Circuit breaker status:")
+    for s in circuit.summary():
+        log.info("  %-25s %s  fails=%s  ok=%s", s["source"], s["status"],
+                 s["consecutive_fails"], s["total_ok"])
+
+    # ── outage signal for monitoring ──
+    # A real (non-rehearsal), general (non-single-source) run that fetched NOTHING
+    # and had every scheduled source skip-or-fail would otherwise exit 0 — an
+    # all-sources-down day looks identical to a good day to cron/alerting. Exit 1
+    # only on a TOTAL outage (`OK` on at least one source == healthy quiet day).
+    if not args.dry_run and not args.source and not new_jobs and outcomes and all(v != "ok" for v in outcomes.values()):
+        log.error("[outage] every scheduled source failed this run — %s",
+                  ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
+        log.error("[outage] returning exit code 1 so monitoring/downstream can alert")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
