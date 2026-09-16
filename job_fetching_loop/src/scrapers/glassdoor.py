@@ -53,7 +53,8 @@ class GlassdoorScraper(BaseScraper):
         return [j async for j in self._fetch_async(keywords, posted_after)]
 
     async def _fetch_async(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        days = max(1, min(14, int((datetime.now(timezone.utc) - posted_after).total_seconds() / 86400) + 1))
+        diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
+        days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
         async with launch_browser(self.name, persistent=True, headless=False) as context:
             page = await context.new_page()
             await warm_up(page, self._HOME, self.name)

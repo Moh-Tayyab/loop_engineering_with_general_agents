@@ -273,7 +273,25 @@ def run_source(
             dlq.save()
         return []
     if "error" in box:
-        raise box["error"]  # type: ignore[arg-type]
+        exc = box["error"]
+        log.error("[%s] scraper failed: %s — recording failure, continuing loop", source_name, exc)
+        try:
+            from src.browser import kill_child_browser_processes
+            kill_child_browser_processes()
+        except Exception:
+            pass
+        if outcomes is not None:
+            outcomes[source_name] = "failed"
+        circuit.record_failure(source_name)
+        if not dry_run:
+            dlq = DeadLetterQueue()
+            dlq.push({
+                "source": source_name,
+                "error": f"{type(exc).__name__}: {exc}",
+                "timestamp": utc_now().isoformat(),
+            })
+            dlq.save()
+        return []
     return box["value"]  # type: ignore[return-value]
 
 

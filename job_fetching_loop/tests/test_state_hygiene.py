@@ -136,3 +136,19 @@ def test_weekly_delivered_kinds_defaults_and_prunes(tmp_slc):
     state.mark_weekly_delivered("2026-W39", ["telegram"])
     assert state.weekly_delivered_kinds("2026-W38") == set()
     assert state.weekly_delivered_kinds("2026-W39") == {"telegram"}
+
+
+def test_concurrent_filelock_cross_process(tmp_path):
+    import subprocess
+    import sys
+
+    lock_file = tmp_path / "concurrent.lock"
+    with FileLock(lock_file):
+        cmd = [
+            sys.executable,
+            "-c",
+            f"from src.state import FileLock; FileLock(r'{lock_file}', timeout_s=0.2).__enter__()",
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        assert res.returncode != 0
+        assert "LockTimeoutError" in res.stderr

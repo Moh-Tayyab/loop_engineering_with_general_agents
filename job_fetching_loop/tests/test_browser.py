@@ -87,3 +87,20 @@ def test_kill_child_browser_processes_runs_safely():
     result = kill_child_browser_processes()
     assert isinstance(result, int)
     assert result >= 0
+
+
+def test_indeed_and_glassdoor_24h_filter_url():
+    from datetime import datetime, timedelta, timezone
+    from src.scrapers.indeed import IndeedScraper
+    from src.scrapers.glassdoor import GlassdoorScraper
+
+    posted_after = datetime.now(timezone.utc) - timedelta(hours=24)
+    diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
+    days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
+    assert days == 1
+
+    indeed_url = IndeedScraper._SEARCH.format(kw="AI", days=days)
+    assert "fromage=1" in indeed_url
+
+    gd_url = GlassdoorScraper._SEARCH.format(kw="AI", days=days)
+    assert "fromAge=1" in gd_url

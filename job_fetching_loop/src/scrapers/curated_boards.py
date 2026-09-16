@@ -44,6 +44,11 @@ from urllib.parse import quote_plus
 
 import requests
 
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
+
 from src.browser import USER_AGENTS, launch_browser
 from src.models import RawJob
 from . import register_scraper
@@ -254,7 +259,6 @@ class WeWorkRemotelyScraper(BaseScraper):
         return False
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        import xml.etree.ElementTree as ET
         from email.utils import parsedate_to_datetime
 
         seen_links: set[str] = set()
@@ -547,7 +551,6 @@ class NoDeskScraper(BaseScraper):
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         import html
-        import xml.etree.ElementTree as ET
         from email.utils import parsedate_to_datetime
 
         headers = {
@@ -680,7 +683,6 @@ class PythonOrgScraper(BaseScraper):
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         import html
-        import xml.etree.ElementTree as ET
         from email.utils import parsedate_to_datetime
 
         headers = {

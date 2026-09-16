@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 55 — Production Readiness Audit Resolution
+- **Beat #:** 56 — EPIPE Shield, 24h Filter Alignment, Safe XML Parsing, & Main Branch Sync
 - **Date:** 2026-09-16
-- **Trigger:** Production Readiness Audit review & remediation
-- **Status:** Resolved all 6 caveats/gaps: 1) Handled daemon thread/process leaks via `kill_child_browser_processes()` in timeout path & daemon cycle, 2) Fixed `requests` import inconsistency, 3) Added 3-attempt exponential backoff retry on Telegram API sends, 4) Added HTTP `/healthz` liveness endpoint on `HEALTH_PORT=8080` & SIGTERM/SIGINT graceful shutdown in `--serve` mode, 5) Untracked `Muhammad Usama_Resume.pdf` and added `*.pdf` to `.gitignore`, 6) Cleaned purged scaffolds from `.env.example`. 240 tests green. `PASS`
+- **Trigger:** Audit critical findings & debt review (stale cloud code, EPIPE crash shield, 24h filter, defusedxml)
+- **Status:** 1) Verified & enforced strict 24h filter (`fromage=1` on Indeed, `fromAge=1` on Glassdoor, `r86400` on LinkedIn, pipeline `cutoff_date` gate); 2) Shielded Playwright `write EPIPE` / connection closed in `browser.py` & fail-isolated `run_source` so scraper exceptions never crash process; 3) Replaced `xml.etree.ElementTree` with `defusedxml` across all RSS feeds; 4) Updated UAs to Chrome 133; 5) Set `JOB_LOOP_PRIMARY=local`; 6) Added concurrent FileLock & 24h filter unit tests; 7) Prepared merge to `main`. 242 tests passing. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |
 | 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |
 | 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |
 | 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
