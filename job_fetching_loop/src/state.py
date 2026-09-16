@@ -136,12 +136,12 @@ def lock_path_for(path: Path) -> Path:
     return path.with_name(path.name + ".lock")
 
 
-def atomic_write_text(path: Path, text: str) -> None:
+def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     """Atomically replace `path` with `text` (temp file + os.replace)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(text)
         tmp_path = Path(tmp)
         os.replace(tmp_path, path)

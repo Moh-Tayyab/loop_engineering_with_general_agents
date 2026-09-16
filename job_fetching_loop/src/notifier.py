@@ -31,6 +31,11 @@ class Notifier(ABC):
         """Send the weekly digest (delivered Monday after the 3-day backfill)."""
         ...
 
+    def send_document(self, file_path: Any, caption: str = "") -> bool:
+        """Send a document/spreadsheet attachment (optional per channel)."""
+        return False
+
+
 # ── Telegram ─────────────────────────────────────────────────────────────────
 
 class TelegramNotifier(Notifier):
@@ -43,11 +48,40 @@ class TelegramNotifier(Notifier):
 
     def send_daily(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> bool:
         text = self._format_daily(jobs, stats)
-        return self._send(text)
+        ok = self._send(text)
+        if jobs and ok:
+            today = utc_now().date().isoformat()
+            csv_file = cfg.OUTPUT_DIR / f"jobs_{today}.csv"
+            if csv_file.exists():
+                self.send_document(csv_file, caption=f"📁 Full BD Spreadsheet: {len(jobs)} jobs ({today})")
+        return ok
 
     def send_weekly_digest(self, week_stats: dict[str, Any], top_jobs: list[NormalizedJob]) -> bool:
         text = self._format_weekly(week_stats, top_jobs)
         return self._send(text)
+
+    def send_document(self, file_path: Any, caption: str = "") -> bool:
+        from pathlib import Path
+        import requests
+
+        path = Path(file_path)
+        if not path.exists() or not self.bot_token or not self.chat_id:
+            return False
+        url = f"{self.api_base}/sendDocument"
+        try:
+            with open(path, "rb") as f:
+                files = {"document": (path.name, f)}
+                data = {"chat_id": self.chat_id, "caption": caption[:1024]}
+                r = requests.post(url, data=data, files=files, timeout=30)
+                if r.status_code == 200:
+                    log.info("telegram document sent (%s)", path.name)
+                    return True
+                else:
+                    log.warning("telegram sendDocument failed %s: %s", r.status_code, r.text[:200])
+                    return False
+        except Exception as exc:
+            log.warning("telegram sendDocument error: %s", exc)
+            return False
 
     def _format_daily(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> str:
         today = utc_now().date().isoformat()

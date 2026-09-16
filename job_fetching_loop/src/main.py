@@ -173,6 +173,15 @@ def save_jobs(jobs: list[NormalizedJob], output_dir: Path) -> Path:
             seen.add(j.id)
     atomic_write_text(path, json.dumps(existing, indent=2, ensure_ascii=False))
     log.info("saved %d jobs -> %s", len(existing), path)
+
+    # Auto-export BD Spreadsheet (CSV) and sync to live Google Sheet
+    try:
+        from src.sheets import export_jobs_to_csv, sync_to_google_sheet
+        export_jobs_to_csv(jobs, output_dir)
+        sync_to_google_sheet(jobs)
+    except Exception as exc:
+        log.warning("[sheets] export/sync failed: %s", exc)
+
     return path
 
 
