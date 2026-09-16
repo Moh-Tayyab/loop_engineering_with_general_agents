@@ -76,11 +76,24 @@ async def linkedin_login() -> int:
     async with launch_browser("linkedin", headless=False, persistent=True) as context:
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto("https://www.linkedin.com/login")
-        log.info("waiting for manual sign-in (press Ctrl+C when done)...")
+        log.info("Waiting for sign-in in the browser window (will auto-detect once logged in)...")
         try:
-            await asyncio.sleep(3600)
+            for _ in range(600):
+                await asyncio.sleep(2)
+                try:
+                    if "feed" in page.url or "/in/" in page.url:
+                        log.info("Login detected via navigation to: %s", page.url)
+                        await asyncio.sleep(3)
+                        break
+                    cookies = await context.cookies()
+                    if any(c.get("name") == "li_at" for c in cookies):
+                        log.info("Login detected via li_at session cookie!")
+                        await asyncio.sleep(3)
+                        break
+                except Exception:
+                    pass
         except KeyboardInterrupt:
-            pass
+            log.info("Received interrupt — proceeding to save session marker")
         await page.close()
     # Deterministic session gate: is_available() consults this marker, not a
     # "profile dir has any file" heuristic (Chromium creates hundreds of files
