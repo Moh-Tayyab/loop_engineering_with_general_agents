@@ -68,27 +68,29 @@ UNRELATED_STACK_PATTERNS: list[str] = [
 
 # High-priority core AI roles matching Usama's CV directly (90% - 95% match)
 TIER1_AI_ROLES: list[tuple[str, str, int]] = [
-    (r"\b(generative\s+ai|genai)\b", "Generative AI", 95),
-    (r"\b(llm|large\s+language\s+model)s?\b", "LLMs / Prompting", 95),
-    (r"\b(rag|retrieval\s+augmented)\b", "RAG Systems", 95),
-    (r"\b(agentic\s+ai|ai\s+agents?|multi-agent)\b", "Agentic AI", 95),
-    (r"\b(senior\s+ai\s+engineer|lead\s+ai\s+engineer|staff\s+ai\s+engineer)\b", "Senior AI Engineer", 95),
-    (r"\bai\s+engineer\b", "AI Engineer", 90),
+    (r"\b(?:generative\s+ai|gen\s*ai)\b", "Generative AI", 95),
+    (r"\b(?:llm|large\s+language\s+model)s?\b", "LLMs / Prompting", 95),
+    (r"\b(?:rag|retrieval\s+augmented)\b", "RAG Systems", 95),
+    (r"\b(?:agentic(?:\s+ai)?|ai\s+agents?|multi-agent)\b", "Agentic AI", 95),
+    (r"\b(?:senior\s+ai\s+engineer|lead\s+ai\s+engineer|staff\s+ai\s+engineer|principal\s+ai\s+engineer)\b", "Senior AI Engineer", 95),
+    (r"\b(?:ai|artificial\s+intelligence)\s+(?:software\s+)?(?:engineer|developer|architect|specialist|lead|researcher|scientist|expert|solutions?|systems?|native)\b", "AI Engineer", 92),
+    (r"\bai\s+(?:engineer|developer|architect|specialist|lead)\b", "AI Engineer", 90),
+    (r"\b(?:head\s+of\s+ai|ai\s+lead|lead\s+ai)\b", "AI Leadership", 95),
     (r"\bmlops\b", "MLOps / Infra", 92),
-    (r"\b(machine\s+learning\s+engineer|ml\s+engineer)\b", "Machine Learning", 90),
-    (r"\b(ai\s+research|ai\s+scientist|applied\s+scientist)\b", "AI Science", 90),
-    (r"\b(computer\s+vision|cv\s+engineer)\b", "Computer Vision", 90),
-    (r"\b(deep\s+learning|nlp\s+engineer|natural\s+language)\b", "Deep Learning / NLP", 90),
-    (r"\bai\s+fde\b", "AI Forward Deployed", 90),
-    (r"\bai\s+solutions?\s+engineer\b", "AI Solutions", 88),
+    (r"\b(?:machine\s+learning|ml)\s+(?:engineer|developer|specialist|expert|lead|architect|scientist|researcher)\b", "Machine Learning", 90),
+    (r"\b(?:ai\s+research|ai\s+scientist|applied\s+scientist|applied\s+(?:ml|ai))\b", "AI Science", 90),
+    (r"\b(?:computer\s+vision|cv)\s*(?:engineer|developer|specialist|scientist)?\b", "Computer Vision", 90),
+    (r"\b(?:deep\s+learning|nlp)\s*(?:engineer|developer|specialist|scientist)?\b", "Deep Learning / NLP", 90),
+    (r"\b(?:ai\s+fde|forward\s+deployed\s+(?:ai|ml|engineer))\b", "AI Forward Deployed", 90),
+    (r"\bai\s+solutions?\s+(?:engineer|architect)\b", "AI Solutions", 90),
 ]
 
 # Secondary AI/Data roles (75% - 85% match)
 TIER2_AI_ROLES: list[tuple[str, str, int]] = [
     (r"\bdata\s+scientist\b", "Data Science", 85),
     (r"\b(python\s+ai|python\s+ml)\b", "Python AI/ML", 85),
-    (r"\bdata\s+engineer\b", "Data Engineering", 75),
-    (r"\bpython\s+(?:backend\s+)?(?:developer|engineer)\b", "Python Backend", 75),
+    (r"\bdata\s+engineer\b", "Data Engineering", 80),
+    (r"\bpython\s+(?:backend\s+)?(?:developer|engineer|software)\b", "Python Backend", 75),
 ]
 
 

@@ -239,8 +239,13 @@ def run_source(
                 log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
                 continue
             normalized = normalize_raw(raw)
-            if normalized.posted_date and normalized.posted_date < posted_after.date():
-                log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, posted_after.date(), raw.title[:50])
+            # Date window: allow curated boards a 10-day discovery window for active postings,
+            # while keeping daily fast sources within the configured posted_after window.
+            cutoff_date = (posted_after - timedelta(days=10)).date() if source_name in (
+                "himalayas", "remoteok", "remotive", "jobicy", "weworkremotely", "wellfound"
+            ) else posted_after.date()
+            if normalized.posted_date and normalized.posted_date < cutoff_date:
+                log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
                 continue
             if cfg.scrape_remote_only() and not is_remotely_workable(
                 normalized.location_type,

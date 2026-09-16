@@ -72,9 +72,7 @@ def compute_fetch_window(now: datetime | None = None) -> FetchWindow:
         now = now.replace(tzinfo=tz)
     now = now.astimezone(tz)
     day = now.weekday()
-    today_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    if now.hour < 9:
-        today_start -= timedelta(days=1)
+    window_end = now
 
     match day:
         case 0:
@@ -84,8 +82,8 @@ def compute_fetch_window(now: datetime | None = None) -> FetchWindow:
             # posting) lands here on Monday morning instead.
             return FetchWindow(
                 reason=FREQ_BACKFILL,
-                window_start=today_start - timedelta(days=3),
-                window_end=today_start,
+                window_start=window_end - timedelta(days=3),
+                window_end=window_end,
                 generate_digest=True,
                 window_label=f"{_DAY_LABELS[day]} backfill (3 days, weekend catch-up) + weekly digest",
                 day_of_week=day,
@@ -93,8 +91,8 @@ def compute_fetch_window(now: datetime | None = None) -> FetchWindow:
         case d if 1 <= d <= 3:
             return FetchWindow(
                 reason=FREQ_DAILY,
-                window_start=today_start - timedelta(hours=24),
-                window_end=today_start,
+                window_start=window_end - timedelta(hours=24),
+                window_end=window_end,
                 generate_digest=False,
                 window_label=f"{_DAY_LABELS[day]} daily",
                 day_of_week=day,
@@ -107,8 +105,8 @@ def compute_fetch_window(now: datetime | None = None) -> FetchWindow:
             # URL and TTL, so the 7-day window is harmless re-scrape padding.
             return FetchWindow(
                 reason=FREQ_WEEKLY,
-                window_start=today_start - timedelta(days=7),
-                window_end=today_start,
+                window_start=window_end - timedelta(days=7),
+                window_end=window_end,
                 generate_digest=False,
                 window_label=f"{_DAY_LABELS[day]} — LinkedIn hiring-feed scrape",
                 day_of_week=day,
@@ -117,8 +115,8 @@ def compute_fetch_window(now: datetime | None = None) -> FetchWindow:
         case _:
             return FetchWindow(
                 reason=FREQ_IDLE,
-                window_start=today_start,
-                window_end=today_start,
+                window_start=window_end,
+                window_end=window_end,
                 generate_digest=False,
                 window_label=f"{_DAY_LABELS[day]} idle",
                 day_of_week=day,

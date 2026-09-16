@@ -129,16 +129,28 @@ async def launch_browser(
         if persistent:
             user_data_dir = _profile_dir(source)
             cfg.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-            browser = await pw.chromium.launch_persistent_context(
-                user_data_dir,
-                headless=headless,
-                args=launch_args,
-                channel=channel,
-                user_agent=fp["user_agent"],
-                viewport=fp["viewport"],
-                locale="en-US",
-                timezone_id="UTC",
-            )
+            try:
+                browser = await pw.chromium.launch_persistent_context(
+                    user_data_dir,
+                    headless=headless,
+                    args=launch_args,
+                    channel=None if headless else channel,
+                    user_agent=fp["user_agent"],
+                    viewport=fp["viewport"],
+                    locale="en-US",
+                    timezone_id="UTC",
+                )
+            except Exception as e:
+                log.info("[%s] persistent launch fallback: %s", source, e)
+                browser = await pw.chromium.launch_persistent_context(
+                    user_data_dir,
+                    headless=headless,
+                    args=launch_args,
+                    user_agent=fp["user_agent"],
+                    viewport=fp["viewport"],
+                    locale="en-US",
+                    timezone_id="UTC",
+                )
             try:
                 yield browser
             finally:
