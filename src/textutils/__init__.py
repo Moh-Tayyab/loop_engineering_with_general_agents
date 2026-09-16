@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from ._validate import require_int as _require_int
 from ._validate import require_str as _require_str
 from .diff import diff, render_unified, similarity
 
@@ -26,6 +27,7 @@ def slugify(text: str, *, max_len: int = 64) -> str:
     - Raises ``ValueError`` for empty/non-string input.
     """
     _require_str(text)
+    _require_int(max_len, name="max_len")
     if max_len < 1:
         raise ValueError("max_len must be >= 1")
 
@@ -50,6 +52,7 @@ def truncate(text: str, *, max_chars: int = 80, ellipsis: str = "...") -> str:
     """
     _require_str(text)
     _require_str(ellipsis)
+    _require_int(max_chars, name="max_chars")
     if max_chars < 0:
         raise ValueError("max_chars must be >= 0")
     if len(ellipsis) > max_chars:
@@ -70,7 +73,7 @@ def count_words(text: str) -> int:
 
 
 _SECRET_PATTERNS = [
-    re.compile(r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_]{16,}\b"),
+    re.compile(r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_-]{16,}\b", re.IGNORECASE),
     re.compile(r"bearer\s+[a-z0-9._~+/=-]{20,}", re.IGNORECASE),
 ]
 

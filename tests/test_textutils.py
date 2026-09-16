@@ -48,6 +48,12 @@ def test_slugify_rejects_nonpositive_max_len():
         slugify("hello", max_len=0)
 
 
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_slugify_rejects_non_int_max_len(bad):
+    with pytest.raises(ValueError):
+        slugify("hello", max_len=bad)
+
+
 # --- truncate ----------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -81,6 +87,12 @@ def test_truncate_rejects_non_str(bad):
 def test_truncate_rejects_negative_max_chars():
     with pytest.raises(ValueError):
         truncate("abc", max_chars=-1)
+
+
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_truncate_rejects_non_int_max_chars(bad):
+    with pytest.raises(ValueError):
+        truncate("abc", max_chars=bad)
 
 
 def test_truncate_rejects_ellipsis_longer_than_max_chars():
@@ -135,6 +147,21 @@ def test_redact_secrets_plain_text_unchanged():
 
 def test_redact_secrets_custom_replacement():
     assert redact_secrets("ghp_abcdefghijklmnopqrstuvwxyz1234567890", replacement="X") == "X"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("sk-proj-9f8e7d6c5b4a3c2d1e0f", "[REDACTED]"),
+        ("GHP_abcdefghijklmnopqrstuvwxyz1234567890", "[REDACTED]"),
+        ("token SK_test_abcdefghijklmnopqrstuvwxyz123456", "token [REDACTED]"),
+        ("PK-prod-abcdefghijklmnopqrstuvwxyz123456", "[REDACTED]"),
+        ("AKIAIOSFODNN7EXAMPLE", "[REDACTED]"),
+        ("sk-proj-x" * 8, "[REDACTED]"),
+    ],
+)
+def test_redact_secrets_openai_and_uppercase(text, expected):
+    assert redact_secrets(text) == expected
 
 
 @pytest.mark.parametrize("bad", [None, 42, b"bytes"])

@@ -18,21 +18,16 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — heartbeat triage: issue #6 CLEAR FIX (redact_secrets) shipped as PR
+- **Date:** 2026-09-16
+- **Trigger:** schedule heartbeat — morning triage (open issues: #6 bug, #3/#4 duplicate wrap_text feature, #1 test issue)
+- **Status:** Issue #6 CLEAR FIX implemented on branch `opencode/heartbeat-20260916-redactsecrets`: `redact_secrets` now redacts OpenAI-style dashed (`sk-proj-…`) + uppercase (`GHP_`/`SK_`/`AKIA`) tokens (`[A-Za-z0-9_-]` body class + `re.IGNORECASE`); `slugify`/`truncate` int type-checks now raise `ValueError` (was `TypeError`); 288 root+video tests + 242 job-loop tests PASS; checker APPROVED; PR opened. #1/#3/#4 deferred to §10 (RISKY/AMBIGUOUS). `PASS`
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-09-16 | heartbeat | **Issue #6 CLEAR FIX:** redact dashed + uppercase secrets (`-` body class, IGNORECASE), `require_int` guards for slugify/truncate, 14 new tests; PR #9 opened; #1/#3/#4 deferred to §10 | PASS — 288 root+video, 242 job tests; checker APPROVED |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -66,7 +61,7 @@ maker–checker, §7 escalation). Single source of truth — do not restate here
 Cap this project's beat log at 20 rows; compress into a one-line "Legacy beats" summary when
 exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGENTS.md` §7).
 
-## 10. Next Actionable Tasks (video loop)
+## 10. Next Actionable Tasks / Open (needs a human) — video loop
 
 1. **G5 supervised live run (the last gate):** `FLOW_PLANNER=template FLOW_HEADLESS=0
    .venv/bin/python -m src.main` on a fresh day (concept-03); accept 6/6 real clips →
@@ -74,11 +69,18 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    Use `docs/PRODUCTION_RUNBOOK.md`.
 2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+3. ~~Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.~~ →
+   PRs #7/#8 superseded by new PR #9 (beat 31, 2026-09-16). Close #7/#8. PR #5
+   (wrap_text) is stale & conflicting — merge or close. **Needs human decision.**
 4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
 6. Beat 6-12 follow-ups (verify-loop-state graduation) remain available.
+
+**RISKY/AMBIGUOUS — deferred to human (heartbeat beat 31 triage):**
+- **Issue #1** (Test OpenCode agent workflow): test issue, workflow verified working in Aug 2026. No code change needed; human to decide close/keep.
+- **Issue #3** (wrap_text): duplicate of #4. Same feature as PR #5 (stale/conflicting). Needs human decision: merge #5, close duplicates, or re-implement cleanly.
+- **Issue #4** (wrap_text): PR #5 implements it (78/78 tests, Checker APPROVED at the time). PR is now CONFLICTING due to deleted root STATE.md. Human to decide: rebase + merge, or close.
 
 ## 11. Human Gate Decisions (video loop)
 
