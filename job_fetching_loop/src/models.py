@@ -20,14 +20,11 @@ SOURCE_NAMES = [
     "himalayas",
     "weworkremotely",
     "jobicy",
-    "feedcoyote",
     "justremote",
     "wellfound",
-    "jobboardsearch",
-    "flexjobs",
-    "dynamitejobs",
-    "virtual_vocations",
     "nodesk",
+    "arbeitnow",
+    "python_org",
 ]
 
 # Salary parsing units

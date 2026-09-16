@@ -365,6 +365,21 @@ class LinkedInNotifier(Notifier):
             log.warning("linkedin post failed: %s", exc)
             return False
 
+def send_ops_alert(message: str) -> bool:
+    """Ops-only Telegram ping (outage / runner skip). Never logs the token."""
+    if not cfg.notify_telegram():
+        return False
+    token = cfg.env_or("TELEGRAM_BOT_TOKEN", "")
+    chat = cfg.env_or("TELEGRAM_CHAT_ID", "")
+    if not token or not chat:
+        return False
+    try:
+        return TelegramNotifier(token, chat)._send(f"🚨 Job loop ops\n{message}")
+    except Exception as exc:
+        log.warning("ops alert failed (%s)", type(exc).__name__)
+        return False
+
+
 def build_notifiers() -> list[Notifier]:
     """Build all configured notifiers from environment."""
     notifiers: list[Notifier] = []

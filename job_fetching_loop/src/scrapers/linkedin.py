@@ -17,6 +17,7 @@ failing the whole source after the jobs board already succeeded.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import date, datetime, timezone
 from typing import Any, Iterator
 from urllib.parse import quote_plus
@@ -138,27 +139,53 @@ class LinkedInScraper(BaseScraper):
         # Primary high-reliability collector: LinkedIn public guest search (fast, zero CAPTCHA, canonical URLs)
         yield from self._fetch_guest_public(keywords, posted_after)
 
-        # Secondary: if authenticated session exists and feed is enabled, gather hiring feed posts
-        if self.has_authenticated_session() and cfg.linkedin_feed_enabled():
+        # Secondary: authenticated feed pass (only if explicitly enabled or non-cron)
+        if self.has_authenticated_session() and cfg.linkedin_feed_enabled() and os.environ.get("LINKEDIN_FEED_PASS", "0") == "1":
             try:
-                yield from asyncio.run(self._gather(keywords, posted_after))
-            except Exception as exc:
+                yield from asyncio.run(asyncio.wait_for(
+                    self._gather(keywords, posted_after),
+                    timeout=cfg.linkedin_browser_timeout_s(),
+                ))
+            except BaseException as exc:
                 log.warning("[linkedin] authenticated feed pass skipped (%s) — guest jobs preserved", exc)
 
     @classmethod
     def _fetch_guest_public(cls, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        """Scrape LinkedIn public guest endpoint (no login required, high yield)."""
+        """Scrape LinkedIn public guest endpoint (no login required, high yield).
+
+        Bounded internally: 13 keywords × 2 locations is up to 26 sequential
+        requests; if LinkedIn throttles (each request can stall up to its 15s
+        timeout) an unbounded pass can eat 390s and starve the whole source.
+        A monotonic deadline (cfg.linkedin_guest_timeout_s(), 45s) yields what
+        was already collected and stops, leaving room for the browser pass.
+        """
         import html
         import re
+        from time import monotonic
+
         import requests
 
         seen_urls: set[str] = set()
+        deadline = monotonic() + cfg.linkedin_guest_timeout_s()
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        seconds = int(max(86400, (utc_now() - posted_after).total_seconds()))
+        tpr_param = f"r{seconds}"
         for kw in keywords:
+            if monotonic() > deadline:
+                log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
+                         len(seen_urls))
+                return
             for loc_query in ("Worldwide", "Pakistan"):
-                url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={quote_plus(kw)}&location={loc_query}&f_WT=2"
+                if monotonic() > deadline:
+                    log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
+                             len(seen_urls))
+                    return
+                url = (
+                    f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
+                    f"keywords={quote_plus(kw)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
+                )
                 try:
                     r = requests.get(url, headers=headers, timeout=15)
                     if r.status_code != 200:

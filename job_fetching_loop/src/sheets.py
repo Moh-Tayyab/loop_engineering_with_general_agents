@@ -66,9 +66,12 @@ def job_to_bd_row(job: NormalizedJob) -> dict[str, str]:
             sal += f"-{job.salary_max // 1000}k"
 
     posted = str(job.posted_date or job.fetched_at.date())
-    match_str = f"{job.cv_match_score}%" if job.cv_match_score else "85%"
     if job.cv_match_label:
-        match_str = f"{job.cv_match_label}"
+        match_str = job.cv_match_label
+    elif job.cv_match_score:
+        match_str = f"{job.cv_match_score}%"
+    else:
+        match_str = "unscored"
 
     return {
         "Job ID": job.id,
@@ -124,10 +127,11 @@ def export_jobs_to_csv(jobs: list[NormalizedJob], output_dir: Path) -> Path:
     return csv_path
 
 
-def sync_to_google_sheet(jobs: list[NormalizedJob]) -> bool:
+def sync_to_google_sheet(jobs: list[NormalizedJob], action: str = "append") -> bool:
     """Push new jobs to a Google Sheet Webhook endpoint if configured.
 
     Uses zero-dependency Google Apps Script Webhook (no GCP credentials required).
+    `action`: 'append' (default) or 'replace' (resets and repopulates).
     """
     webhook_url = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL", "").strip()
     if not webhook_url:
@@ -140,7 +144,12 @@ def sync_to_google_sheet(jobs: list[NormalizedJob]) -> bool:
     try:
         r = requests.post(
             webhook_url,
-            json={"jobs": rows, "count": len(rows), "synced_at": utc_now().isoformat()},
+            json={
+                "action": action,
+                "jobs": rows,
+                "count": len(rows),
+                "synced_at": utc_now().isoformat(),
+            },
             timeout=50,
             headers={"Content-Type": "application/json"},
         )

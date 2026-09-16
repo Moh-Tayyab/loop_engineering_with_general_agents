@@ -342,12 +342,12 @@ def test_curated_fetch_deduplicates_same_url_across_keywords(monkeypatch):
     assert calls == ["AI", "ML"]
 
 
-# ── Registry: all 10 curated boards are registered ───────────────────────────
+# ── Registry: all 8 curated boards are registered ───────────────────────────
 
 CURATED_SOURCE_NAMES = [
     "remotive", "himalayas", "wellfound", "justremote",
-    "feedcoyote", "jobboardsearch",
-    "flexjobs", "dynamitejobs", "virtual_vocations", "nodesk",
+    "remoteok", "weworkremotely", "jobicy", "nodesk",
+    "arbeitnow", "python_org",
 ]
 
 @pytest.mark.parametrize("name", CURATED_SOURCE_NAMES)
@@ -396,10 +396,10 @@ def test_remoteok_missing_url():
     assert RemoteokScraper()._parse_item(item, "AI") is None
 
 
-LIVE_CURATED = ("remotive", "himalayas", "wellfound", "justremote", "remoteok", "weworkremotely", "jobicy")
-SCAFFOLDS = (
-    "feedcoyote", "jobboardsearch",
-    "flexjobs", "dynamitejobs", "virtual_vocations", "nodesk",
+LIVE_CURATED = (
+    "remotive", "himalayas", "wellfound", "justremote", "remoteok",
+    "weworkremotely", "jobicy", "nodesk",
+    "arbeitnow", "python_org",
 )
 
 @pytest.mark.parametrize("name", LIVE_CURATED)
@@ -408,32 +408,12 @@ def test_live_curated_sources_default_enabled(name):
     monkeypatch.delenv(f"SOURCE_{name.upper()}", raising=False)
     assert cfg.source_enabled(name)
 
-@pytest.mark.parametrize("name", SCAFFOLDS)
-def test_scaffold_sources_default_disabled(name):
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.delenv(f"SOURCE_{name.upper()}", raising=False)
-    assert not cfg.source_enabled(name)
-
-@pytest.mark.parametrize("name", SCAFFOLDS)
-def test_scaffold_source_optin_via_env(name):
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv(f"SOURCE_{name.upper()}", "1")
-    assert cfg.source_enabled(name)
-
 def test_live_source_can_be_disabled_via_env():
     import os
     os.environ["SOURCE_REMOTIVE"] = "0"
     assert not cfg.source_enabled("remotive")
     del os.environ["SOURCE_REMOTIVE"]
 
-
-# ── Scaffold fetch returns empty, not raise ──────────────────────────────────
-
-def test_scaffold_fetch_yields_nothing():
-    load_all_scrapers()
-    cls = all_scrapers()["feedcoyote"]
-    jobs = list(cls().fetch(["AI"], datetime.now(timezone.utc)))
-    assert jobs == []
 
 
 def test_weworkremotely_feed_parse(monkeypatch):
@@ -501,3 +481,120 @@ def test_jobicy_api_parse(monkeypatch):
     assert j.title == "Staff AI Systems Engineer"
     assert j.location == "Anywhere"
     assert j.posted_date == "2026-09-15"
+
+
+def test_nodesk_feed_parse(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import NoDeskScraper
+    import requests
+
+    sample_xml = """<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+    <rss version="2.0">
+      <channel>
+        <title>NoDesk Remote Jobs</title>
+        <item>
+          <title>Senior AI Engineer &amp; Researcher at Anthropic</title>
+          <link>https://nodesk.co/remote-jobs/anthropic-senior-ai-engineer/</link>
+          <pubDate>Sun, 14 Sep 2026 12:00:00 GMT</pubDate>
+          <description>Build alignment and foundational AI models &amp; tools.</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = sample_xml
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = NoDeskScraper()
+    jobs = list(scraper.fetch(["AI"], datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j.source == "nodesk"
+    assert j.title == "Senior AI Engineer & Researcher"
+    assert j.company == "Anthropic"
+    assert j.location == "Worldwide"
+    assert j.posted_date == "2026-09-14"
+    assert j.url == "https://nodesk.co/remote-jobs/anthropic-senior-ai-engineer/"
+    assert "alignment" in j.description
+
+
+def test_arbeitnow_api_parse(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import ArbeitnowScraper
+    import requests
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "data": [
+            {
+                "slug": "senior-ai-engineer",
+                "company_name": "DeepScale AI",
+                "title": "Senior AI &amp; MLOps Engineer",
+                "description": "Lead LLM infrastructure and fine-tuning pipelines.",
+                "remote": True,
+                "url": "https://www.arbeitnow.com/jobs/deepscale-senior-ai-engineer-101",
+                "tags": ["python", "ai", "machine-learning"],
+                "job_types": ["Full Time"],
+                "created_at": 1780000000,
+            },
+            {
+                "slug": "office-manager",
+                "company_name": "Local Corp",
+                "title": "On-site Office Manager",
+                "description": "Onsite office support",
+                "remote": False,
+                "url": "https://www.arbeitnow.com/jobs/onsite-office-manager",
+            },
+        ]
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = ArbeitnowScraper()
+    jobs = list(scraper.fetch(["AI"], datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j.source == "arbeitnow"
+    assert j.title == "Senior AI & MLOps Engineer"
+    assert j.company == "DeepScale AI"
+    assert j.location == "Worldwide"
+    assert j.url == "https://www.arbeitnow.com/jobs/deepscale-senior-ai-engineer-101"
+    assert "python" in j.tags
+
+
+def test_python_org_rss_parse(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import PythonOrgScraper
+    import requests
+
+    sample_rss = """<?xml version="1.0" encoding="utf-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Python Jobs</title>
+        <item>
+          <title>Agentic Python Engineer, Evaboot</title>
+          <link>https://www.python.org/jobs/8133/</link>
+          <pubDate>Sun, 14 Sep 2026 12:00:00 GMT</pubDate>
+          <description>Build agentic AI workflows with Python and FastAPI.</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = sample_rss
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = PythonOrgScraper()
+    jobs = list(scraper.fetch(["AI"], datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j.source == "python_org"
+    assert j.title == "Agentic Python Engineer"
+    assert j.company == "Evaboot"
+    assert j.location == "Worldwide"
+    assert j.posted_date == "2026-09-14"
+    assert "FastAPI" in j.description
+
+

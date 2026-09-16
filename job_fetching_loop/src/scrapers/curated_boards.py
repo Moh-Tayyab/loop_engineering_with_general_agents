@@ -20,15 +20,9 @@ LIVE render/embedded-data (live-verified 2026-09-15):
               (<https://justremote.co/remote-jobs/remote-*/<title>-<co>>);
               title/company are derived from the URL slug + anchor text.
 
-SCAFFOLD (registered + DEFAULT-OFF until a live run verifies the collection
-  surface): feedcoyote, jobboardsearch, flexjobs, dynamitejobs,
-  virtual_vocations, nodesk. Observed blockers (2026-09-15 probe): feedcoyote
-  has no public board route (`/jobs/` is a profile-404 bug; Angular shell);
-  jobboardsearch is a 1.1 MB meta-search needing bespoke parsing;
-  flexjobs times out / is paywalled; dynamitejobs renders only category links
-  (job hrefs appear post-login/JS state, not found in 6s render); virtual
-  vocations 403s plain requests; nodesk's board exposes no `/jobs/` hrefs
-  (jobs are email-led/external).
+LIVE RSS/XML feeds:
+  weworkremotely — https://weworkremotely.com/categories/remote-*.rss
+  nodesk         — https://nodesk.co/remote-jobs/index.xml
 
 Remote honesty: these are remote-native boards, but SCRAPE_REMOTE_ONLY must
 stay STRICT. A Himalayas job whose locationRestrictions is a country list
@@ -147,6 +141,17 @@ class RemotiveScraper(CuratedBoardScraper):
 class RemoteokScraper(CuratedBoardScraper):
     name = "remoteok"
     _API = "https://remoteok.com/api?tag={kw}"
+
+    def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        tags = ["ai", "python", "data", "engineer", "dev"]
+        seen_urls: set[str] = set()
+        for tag in tags:
+            for item in self._get(tag):
+                job = self._parse_item(item, tag)
+                if job is None or job.url in seen_urls:
+                    continue
+                seen_urls.add(job.url)
+                yield job
 
     def _get(self, kw: str) -> list[dict]:
         """Fetch RemoteOK public JSON API with human User-Agent."""
@@ -304,8 +309,9 @@ class JobicyScraper(BaseScraper):
     """Jobicy worldwide remote tech & AI jobs via official v2 public JSON API."""
     name = "jobicy"
     _APIS = [
-        "https://jobicy.com/api/v2/remote-jobs?count=50&geo=anywhere",
-        "https://jobicy.com/api/v2/remote-jobs?count=50&industry=engineering",
+        "https://jobicy.com/api/v2/remote-jobs?count=100&geo=anywhere",
+        "https://jobicy.com/api/v2/remote-jobs?count=100&industry=engineering",
+        "https://jobicy.com/api/v2/remote-jobs?count=100&industry=data-science",
     ]
 
     def is_available(self) -> bool:
@@ -525,36 +531,200 @@ class JustRemoteScraper(BaseScraper):
         return jobs
 
 
-# ── Scaffolds: registered + default-OFF until live-verified ──────────────────
+# ── NoDesk (public RSS feed) ──────────────────────────────────────────────────
 
-_SCAFFOLD_NAMES = (
-    "feedcoyote", "jobboardsearch", "flexjobs", "dynamitejobs",
-    "virtual_vocations", "nodesk",
-)
-
-
-class _ScaffoldBoard(BaseScraper):
-    """Placeholder for a curated board whose live collection isn't verified yet.
-
-    Registered so `--list-sources` shows the full roadmap; hard DEFAULT-OFF in
-    `config.source_enabled` so it never runs on a live cron (returning [] would
-    masquerade as a healthy 'ok' and could mask a real outage).
-    """
+@register_scraper
+class NoDeskScraper(BaseScraper):
+    """NoDesk remote jobs via official public RSS feed (no login, no CAPTCHA)."""
+    name = "nodesk"
+    _FEED_URL = "https://nodesk.co/remote-jobs/index.xml"
 
     def is_available(self) -> bool:
         return True
 
-    def fetch(self, keywords, posted_after) -> Iterator[RawJob]:
-        log.info("[%s] scaffold — collector not wired yet; implement + live-verify, then set SOURCE_%s=1",
-                 self.name, self.name.upper())
-        return iter(())
+    def login_required(self) -> bool:
+        return False
+
+    def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        import html
+        import xml.etree.ElementTree as ET
+        from email.utils import parsedate_to_datetime
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        try:
+            r = requests.get(self._FEED_URL, headers=headers, timeout=15)
+            if r.status_code != 200:
+                log.info("[%s] feed HTTP error %s", self.name, r.status_code)
+                return
+            clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
+            root = ET.fromstring(clean_xml)
+            seen: set[str] = set()
+            for item in root.findall(".//item"):
+                link = (item.findtext("link") or "").strip()
+                if not link or link in seen:
+                    continue
+                seen.add(link)
+                raw_title = html.unescape((item.findtext("title") or "").strip())
+                if " at " in raw_title:
+                    title, company = [p.strip() for p in raw_title.rsplit(" at ", 1)]
+                else:
+                    title, company = raw_title, "Unknown"
+                desc = html.unescape((item.findtext("description") or "").strip())
+                posted_date = None
+                raw_date = item.findtext("pubDate")
+                if raw_date:
+                    try:
+                        dt = parsedate_to_datetime(raw_date)
+                        if dt < posted_after:
+                            continue
+                        posted_date = dt.date().isoformat()
+                    except Exception:
+                        pass
+                yield RawJob(
+                    source=self.name,
+                    title=title,
+                    company=company,
+                    url=link,
+                    location="Worldwide",
+                    posted_date=posted_date,
+                    description=desc[:2000],
+                    tags=["remote"],
+                    fetched_at=datetime.now(timezone.utc),
+                )
+        except Exception as exc:
+            log.info("[%s] feed error: %s", self.name, exc)
 
 
-def _register_scaffold(name: str) -> None:
-    cls = type(name.title().replace("_", "") + "Scraper", (_ScaffoldBoard,),
-               {"name": name, "__module__": __name__})
-    register_scraper(cls)
+# ── Arbeitnow (Open JSON API — 250+ tech jobs) ───────────────────────────────
+
+@register_scraper
+class ArbeitnowScraper(BaseScraper):
+    """Arbeitnow remote jobs via official public JSON API (250+ listings per sweep)."""
+    name = "arbeitnow"
+    _API = "https://www.arbeitnow.com/api/job-board-api"
+
+    def is_available(self) -> bool:
+        return True
+
+    def login_required(self) -> bool:
+        return False
+
+    def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        import html
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        seen_urls: set[str] = set()
+        try:
+            r = requests.get(self._API, headers=headers, timeout=20)
+            if r.status_code != 200:
+                log.info("[%s] api fetch error %s", self.name, r.status_code)
+                return
+            data = r.json()
+            jobs = data.get("data", []) if isinstance(data, dict) else []
+            for it in jobs:
+                if not isinstance(it, dict):
+                    continue
+                # Only remote jobs
+                if not it.get("remote"):
+                    continue
+                url = (it.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                title = html.unescape((it.get("title") or "").strip())
+                company = html.unescape((it.get("company_name") or "Unknown").strip())
+                raw_tags = it.get("tags") or []
+                tags = [str(t).lower() for t in raw_tags if t]
+                desc = html.unescape((it.get("description") or "").strip())
+                created_at = it.get("created_at")
+                posted_date = None
+                if created_at:
+                    try:
+                        posted_date = datetime.fromtimestamp(created_at, timezone.utc).date().isoformat()
+                    except Exception:
+                        pass
+                jtypes = it.get("job_types")
+                jt = jtypes[0] if isinstance(jtypes, list) and jtypes else "full-time"
+                yield RawJob(
+                    source=self.name,
+                    title=title,
+                    company=company,
+                    url=url,
+                    location="Worldwide",
+                    posted_date=posted_date,
+                    description=desc[:2000],
+                    tags=tags or ["remote"],
+                    job_type=jt,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+        except Exception as exc:
+            log.info("[%s] api fetch failed: %s", self.name, exc)
 
 
-for _scaffold_name in _SCAFFOLD_NAMES:
-    _register_scaffold(_scaffold_name)
+# ── Python.org (Official PSF RSS feed) ───────────────────────────────────────
+
+@register_scraper
+class PythonOrgScraper(BaseScraper):
+    """Python Software Foundation official remote tech/AI jobs feed."""
+    name = "python_org"
+    _FEED = "https://www.python.org/jobs/feed/rss/"
+
+    def is_available(self) -> bool:
+        return True
+
+    def login_required(self) -> bool:
+        return False
+
+    def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        import html
+        import xml.etree.ElementTree as ET
+        from email.utils import parsedate_to_datetime
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        seen_urls: set[str] = set()
+        try:
+            r = requests.get(self._FEED, headers=headers, timeout=15)
+            if r.status_code != 200:
+                log.info("[%s] feed fetch error %s", self.name, r.status_code)
+                return
+            clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
+            root = ET.fromstring(clean_xml)
+            for item in root.findall(".//item"):
+                link = (item.findtext("link") or "").strip()
+                if not link or link in seen_urls:
+                    continue
+                seen_urls.add(link)
+                raw_title = html.unescape((item.findtext("title") or "").strip())
+                if "," in raw_title:
+                    title, company = [p.strip() for p in raw_title.rsplit(",", 1)]
+                else:
+                    title, company = raw_title, "Unknown"
+                desc = html.unescape((item.findtext("description") or "").strip())
+                posted_date = None
+                raw_date = item.findtext("pubDate")
+                if raw_date:
+                    try:
+                        dt = parsedate_to_datetime(raw_date)
+                        if dt < posted_after:
+                            continue
+                        posted_date = dt.date().isoformat()
+                    except Exception:
+                        pass
+                yield RawJob(
+                    source=self.name,
+                    title=title,
+                    company=company,
+                    url=link,
+                    location="Worldwide",
+                    posted_date=posted_date,
+                    description=desc[:2000],
+                    tags=["python", "remote"],
+                    fetched_at=datetime.now(timezone.utc),
+                )
+        except Exception as exc:
+            log.info("[%s] feed error: %s", self.name, exc)

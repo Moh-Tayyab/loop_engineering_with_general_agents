@@ -195,6 +195,69 @@ def test_run_source_failure_writes_dead_letter_unless_dry_run(tmp_slc, monkeypat
     assert outcomes == {"broken": "failed"}
 
 
+def test_run_source_times_out_records_failure(tmp_slc, monkeypatch):
+    """A hung source must be failed by the orchestrator timeout, not allowed to
+    stall the loop forever. On timeout: circuit failure recorded, empty result,
+    verdict 'timeout'."""
+    import threading
+
+    import src.main as main
+    monkeypatch.setenv("CIRCUIT_BREAKER_THRESHOLD", "1")
+
+    class Hang:
+        name = "hang"
+        def fetch(self, keywords, posted_after):
+            threading.Event().wait()  # never returns — simulated dead source
+        def is_available(self):
+            return True
+        def login_required(self):
+            return False
+
+    monkeypatch.setattr(main, "get_scraper", lambda name: Hang())
+
+    seen = SeenStore()
+    state = LoopState()
+    circuit = CircuitManager(state.state)
+    outcomes = {}
+    jobs = run_source("hang", ["AI"], datetime.now(timezone.utc), seen, circuit, 100,
+                      dry_run=True, outcomes=outcomes, timeout_s=0.05)
+
+    assert jobs == []
+    assert outcomes == {"hang": "timeout"}
+    assert circuit._get("hang").total_fails == 1
+    assert not circuit.is_available("hang")
+
+
+def test_run_source_timeout_does_not_write_dlq_on_dry_run(tmp_slc, monkeypatch):
+    """Rule 6: even a timed-out dry-run must not touch `.slc/` — the dead-letter
+    push happens only on a real run."""
+    import threading
+
+    import src.main as main
+    from src.state import DeadLetterQueue
+
+    class Hang:
+        name = "hang"
+        def fetch(self, keywords, posted_after):
+            threading.Event().wait()
+        def is_available(self):
+            return True
+        def login_required(self):
+            return False
+
+    monkeypatch.setattr(main, "get_scraper", lambda name: Hang())
+
+    before = len(DeadLetterQueue().items)
+    run_source("hang", ["AI"], datetime.now(timezone.utc), SeenStore(),
+               CircuitManager(LoopState().state), 100, dry_run=True, timeout_s=0.05)
+    assert len(DeadLetterQueue().items) == before
+
+    # Real run → the timeout lands in the dead-letter queue.
+    run_source("hang", ["AI"], datetime.now(timezone.utc), SeenStore(),
+               CircuitManager(LoopState().state), 100, timeout_s=0.05)
+    assert len(DeadLetterQueue().items) == before + 1
+
+
 def test_guarded_deliver_sends_all_channels_and_dedupes(tmp_slc):
     """The production notify path: sends happen OUTSIDE the state lock; the
     lock is only held for the check + the mark. Channels must be delivered

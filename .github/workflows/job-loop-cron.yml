@@ -2,14 +2,21 @@ name: Job Fetching Loop Cloud Runner
 
 on:
   schedule:
-    # 03:00 UTC = 08:00 AM Pakistan Standard Time (PKT), Monday to Friday
-    - cron: '0 3 * * 1-5'
+    # 04:00 UTC = 09:00 Pakistan Standard Time (PKT), Monday to Friday
+    - cron: '0 4 * * 1-5'
   workflow_dispatch:
+
+concurrency:
+  group: job-fetching-loop
+  cancel-in-progress: false
 
 jobs:
   fetch-and-notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,24 +26,71 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: job_fetching_loop/requirements.txt
 
       - name: Install dependencies
         working-directory: job_fetching_loop
-        run: |
-          pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+        run: pip install -r requirements.txt
+
+      - name: Restore durable loop state
+        uses: actions/cache@v4
+        with:
+          path: job_fetching_loop/.slc
+          key: job-loop-slc-${{ github.run_id }}
+          restore-keys: |
+            job-loop-slc-
 
       - name: Run Autonomous Job Loop
+        id: fetch
         working-directory: job_fetching_loop
         env:
+          JOB_LOOP_CLOUD: "1"
+          JOB_LOOP_PRIMARY: github
+          JOB_LOOP_ENABLED: "1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
           NOTIFY_TELEGRAM: "1"
           SCRAPE_REMOTE_ONLY: "1"
           SCRAPE_HEADLESS: "1"
+          SCRAPE_TZ: Asia/Karachi
+          CLOUD_ALLOW_BROWSER: "0"
+          SOURCE_LINKEDIN: "1"
           MAX_JOBS_PER_SOURCE: "250"
           SCRAPE_KEYWORDS: "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE,Generative AI,GenAI,Deep Learning,MLOps,AI Agent,PyTorch"
           PYTHONPATH: .
+        run: python -m src.main
+
+      - name: Upload state snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-loop-slc
+          path: job_fetching_loop/.slc
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Telegram alert on infra failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python -m src.main
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets missing — cannot alert"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json, os, urllib.request
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat = os.environ["TELEGRAM_CHAT_ID"]
+          run_url = os.environ.get("GITHUB_SERVER_URL", "") + "/" + os.environ.get("GITHUB_REPOSITORY", "") + "/actions/runs/" + os.environ.get("GITHUB_RUN_ID", "")
+          text = "🚨 Job loop cloud run failed.\n" + run_url
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=json.dumps({"chat_id": chat, "text": text, "disable_web_page_preview": True}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          urllib.request.urlopen(req, timeout=15)
+          PY

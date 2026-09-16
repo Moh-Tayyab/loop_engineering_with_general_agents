@@ -77,22 +77,57 @@ def chrome_binary() -> str | None:
 
 
 def captcha_solve_timeout() -> float:
+    # Cloud cron must fail-closed immediately — nobody is at a headed window.
+    if is_cloud_runner() and os.environ.get("CAPTCHA_SOLVE_TIMEOUT") is None:
+        return 0.0
     return env_float("CAPTCHA_SOLVE_TIMEOUT", 300.0)
 
 
-# Curated boards registered but NOT yet wired (no live-verified collection).
-# Default-OFF so an unverified fetch can't silently return nothing or mask a
-# real outage with a fake 'ok' on a live cron. Flip SOURCE_<NAME>=1 to opt in
-# only after the collector for that board is implemented & live-verified.
-# (wellfound + justremote were moved OUT of this set on 2026-09-15 — their
-# collectors are now live-verified and default ON.)
-DEFAULT_DISABLED_SOURCES = frozenset({
-    "feedcoyote", "jobboardsearch",
-    "flexjobs", "dynamitejobs", "virtual_vocations", "nodesk",
+# All registered sources are live-verified and default ON.
+DEFAULT_DISABLED_SOURCES: frozenset[str] = frozenset()
+
+# Playwright / persistent-profile sources. The GitHub Actions cron sets
+# JOB_LOOP_CLOUD=1 and cannot solve CAPTCHAs or reuse .runtime Chrome profiles.
+# They stay available on a local headed machine unless CLOUD_ALLOW_BROWSER=1.
+BROWSER_BOUND_SOURCES = frozenset({
+    "indeed", "glassdoor", "justremote",
+    "remote_rocketship", "apac_remote", "pakistan_remote",
 })
 
 
+def is_cloud_runner() -> bool:
+    """True only for the scheduled/cloud job (not pytest in Actions test-gate)."""
+    return os.environ.get("JOB_LOOP_CLOUD", "") == "1"
+
+
+def allow_browser_scrapers() -> bool:
+    if os.environ.get("CLOUD_ALLOW_BROWSER", "") == "1":
+        return True
+    return not is_cloud_runner()
+
+
+def job_loop_should_run() -> bool:
+    """Single-writer guard so local cron and GitHub cron cannot both notify.
+
+    JOB_LOOP_ENABLED=0 always skips the scrape.
+    JOB_LOOP_PRIMARY=github → only JOB_LOOP_CLOUD=1 runs
+    JOB_LOOP_PRIMARY=local  → only non-cloud runs (default)
+    JOB_LOOP_PRIMARY=both   → both (duplicate Telegram risk)
+    """
+    if os.environ.get("JOB_LOOP_ENABLED", "1") == "0":
+        return False
+    primary = os.environ.get("JOB_LOOP_PRIMARY", "local").strip().lower()
+    cloud = is_cloud_runner()
+    if primary in ("github", "github_actions", "cloud"):
+        return cloud
+    if primary == "local":
+        return not cloud
+    return True
+
+
 def source_enabled(name: str) -> bool:
+    if not allow_browser_scrapers() and name in BROWSER_BOUND_SOURCES:
+        return False
     env_key = f"SOURCE_{name.upper()}"
     raw = os.environ.get(env_key)
     if raw is not None:
@@ -151,6 +186,33 @@ def lock_timeout_s() -> float:
     When two crons race, the loser waits this long, then exits cleanly with
     'another run in progress' instead of corrupting shared state."""
     return env_float("LOCK_TIMEOUT_S", 5.0)
+
+
+def source_timeout_s() -> float:
+    """Hard per-source wall-clock cap. A hung Playwright fetch (CAPTCHA stall,
+    EPIPE, stuck SPA) must not stall the whole daily loop beyond this. The
+    orchestrator runs each source in a bounded worker; a source that exceeds
+    this is failed (circuit breaker) and the run continues with the rest.
+    150s < 15-min run budget: worst case ≈ linkedin(135) + 2 heavy browsers
+    (2×120) + 12 fast sources (~2s each) ≈ 8 min, plus digest + notifies."""
+    return env_float("SOURCE_TIMEOUT_S", 150.0)
+
+
+def linkedin_guest_timeout_s() -> float:
+    """Budget for LinkedIn's public guest pass (26 sequential requests: 13
+    keywords × Worldwide/Pakistan). Unbounded it can eat 390s of network
+    timeout and starve the whole source. Yields what it collected once the
+    budget is exhausted and stops, so the browser feed pass still has room."""
+    return env_float("LINKEDIN_GUEST_TIMEOUT_S", 45.0)
+
+
+def linkedin_browser_timeout_s() -> float:
+    """Cap for the authenticated LinkedIn browser pass (feed + board gather).
+    The public guest request pass is fast; only the Playwright SPA path needs
+    the rope so a single keyword-nav loop can't burn the whole budget.
+    45 (guest) + 90 (browser) = 135s < SOURCE_TIMEOUT_S=150 → LinkedIn yields
+    guest jobs first, then feed posts, without hitting the orchestrator cap."""
+    return env_float("LINKEDIN_BROWSER_TIMEOUT_S", 90.0)
 
 
 def lock_stale_s() -> float:

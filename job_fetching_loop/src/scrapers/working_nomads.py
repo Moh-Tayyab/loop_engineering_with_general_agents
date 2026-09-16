@@ -41,6 +41,10 @@ class WorkingNomadsScraper(BaseScraper):
                 if job:
                     yield job
             return
+        import src.config as cfg
+        if not cfg.allow_browser_scrapers():
+            log.warning("working_nomads API unreachable and browser scrapers disabled — giving up")
+            return
         log.warning("working_nomads API unreachable — falling back to HTML crawl")
         yield from asyncio.run(self._html_gather(keywords, posted_after))
 

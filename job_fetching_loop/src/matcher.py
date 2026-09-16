@@ -85,12 +85,13 @@ TIER1_AI_ROLES: list[tuple[str, str, int]] = [
     (r"\bai\s+solutions?\s+(?:engineer|architect)\b", "AI Solutions", 90),
 ]
 
-# Secondary AI/Data roles (75% - 85% match)
+# Secondary AI/Data/Tech roles (75% - 85% match)
 TIER2_AI_ROLES: list[tuple[str, str, int]] = [
     (r"\bdata\s+scientist\b", "Data Science", 85),
     (r"\b(python\s+ai|python\s+ml)\b", "Python AI/ML", 85),
     (r"\bdata\s+engineer\b", "Data Engineering", 80),
     (r"\bpython\s+(?:backend\s+)?(?:developer|engineer|software)\b", "Python Backend", 75),
+    (r"\b(?:backend|software|platform|cloud|devops)\s+(?:engineer|developer|architect)\b", "Software & Systems", 75),
 ]
 
 
@@ -122,11 +123,14 @@ def match_usama_cv(
     description: str | None = None,
     tags: list[str] | None = None,
 ) -> tuple[bool, int, str]:
-    """Evaluates whether a job matches Muhammad Usama's Senior AI Engineer CV.
+    """Evaluates job against Muhammad Usama's technical profile.
 
-    Returns (is_match, match_percentage, primary_category).
-    - Threshold: match_percentage >= 70 is considered a valid match.
+    Returns:
+        (is_match, match_percentage, label_reason)
     """
+    if not title:
+        return False, 0, "Empty title"
+
     title_clean = title.strip().lower()
     desc_clean = (description or "").strip().lower()
     tags_clean = " ".join([t.lower() for t in (tags or [])])
@@ -147,14 +151,17 @@ def match_usama_cv(
 
     for pat, label, score in TIER2_AI_ROLES:
         if re.search(pat, title_clean):
-            # For Python/Data roles, require AI/ML terms in description to qualify
-            if "python" in pat or "data" in pat:
-                has_ai_context = any(
-                    k in haystack
-                    for k in ("machine learning", "deep learning", "llm", "ai", "pytorch", "fastapi", "rag")
+            # For Python/Data/Software engineering roles, require relevant technical context
+            has_tech_context = any(
+                k in haystack
+                for k in (
+                    "machine learning", "deep learning", "llm", "ai", "pytorch",
+                    "fastapi", "rag", "python", "backend", "api", "cloud",
+                    "data", "docker", "kubernetes", "sql", "aws"
                 )
-                if not has_ai_context:
-                    return False, 0, "Rejected (Python/Data role lacking AI/ML core)"
+            )
+            if not has_tech_context:
+                return False, 0, "Rejected (Technical role lacking core stack context)"
             return True, score, f"{label} ({score}%)"
 
     # Step 3: If title is generic (e.g. "Software Engineer" / "Backend Engineer"),

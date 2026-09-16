@@ -13,6 +13,16 @@ if str(JOB_LOOP) not in sys.path:
     sys.path.insert(0, str(JOB_LOOP))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runner_env(monkeypatch):
+    """Keep pytest hermetic vs a production .env (JOB_LOOP_PRIMARY=github)."""
+    monkeypatch.setenv("JOB_LOOP_PRIMARY", "local")
+    monkeypatch.setenv("JOB_LOOP_ENABLED", "1")
+    monkeypatch.delenv("JOB_LOOP_CLOUD", raising=False)
+    monkeypatch.delenv("CLOUD_ALLOW_BROWSER", raising=False)
+    monkeypatch.setattr("src.main.send_ops_alert", lambda *_a, **_k: False, raising=False)
+
+
 @pytest.fixture
 def tmp_slc(tmp_path: Path):
     """Provide a temporary .slc dir with clean state + seen files."""

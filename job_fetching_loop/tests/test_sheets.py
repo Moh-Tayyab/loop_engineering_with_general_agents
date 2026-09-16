@@ -36,6 +36,15 @@ def test_job_to_bd_row_formatting():
     assert row["Salary"] == "$120k-160k"
     assert row["BD Status"] == "New"
     assert "AI" in row["Tags"]
+    assert row["CV Match %"] == "unscored"
+
+
+def test_job_to_bd_row_uses_real_cv_score():
+    job = _sample_job()
+    job.cv_match_score = 92
+    job.cv_match_label = "AI Engineer (92%)"
+    row = job_to_bd_row(job)
+    assert row["CV Match %"] == "AI Engineer (92%)"
 
 
 def test_export_jobs_to_csv(tmp_path):

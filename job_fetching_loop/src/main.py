@@ -18,6 +18,7 @@ import asyncio
 import json
 import re
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -43,7 +44,7 @@ from src.circuit_breaker import CircuitManager
 from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text, lock_holder, lock_path_for
 from src.dedup import accept_and_record, dedup_job
 from src.digest import collect_weekly_jobs, generate_digest, write_digest, week_key
-from src.notifier import build_notifiers
+from src.notifier import build_notifiers, send_ops_alert
 from src.scrapers import load_all_scrapers, all_scrapers, enabled_scrapers, get_scraper
 
 log = get_logger(__name__)
@@ -200,17 +201,70 @@ def run_source(
     max_jobs: int,
     dry_run: bool = False,
     outcomes: dict[str, str] | None = None,
+    timeout_s: float | None = None,
 ) -> list[NormalizedJob]:
-    """Run one source, normalize + dedup, return new jobs.
+    """Run one source, normalizing + deduping, returning new jobs — bounded.
+
+    `timeout_s`: every source runs in its own daemon worker with this hard
+    wall-clock cap (default `cfg.source_timeout_s()`, 150s). A hung Playwright
+    source (CAPTCHA stall, EPIPE, stuck SPA) can no longer stall the whole
+    loop: on timeout the source is failed (circuit breaker + verdict + dead
+    letter on a real run) and the orchestration continues with the rest.
 
     `dry_run`: rehearsal semantics — mutations stay in memory (the in-process
     `seen` set keeps cross-source dedup working) but NOTHING is written to
     `.slc/` (rule 6: a dry-run that writes state is a bug, not a feature).
 
     `outcomes`: optional tally of this source's verdict for the run report
-    ('ok' | 'failed' | 'open' | 'login'), used by the outer run to detect a
-    total-outage day for the exit code.
+    ('ok' | 'failed' | 'open' | 'login' | 'timeout'), used by the outer run to
+    detect a total-outage day for the exit code.
     """
+    if timeout_s is None:
+        timeout_s = cfg.source_timeout_s()
+
+    box: dict[str, object] = {}
+
+    def _work() -> None:
+        try:
+            box["value"] = _run_source_impl(source_name, keywords, posted_after,
+                                            seen, circuit, max_jobs, dry_run, outcomes)
+        except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
+            box["error"] = exc
+
+    worker = threading.Thread(target=_work, name=f"source-{source_name}", daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        log.error("[%s] timed out after %.0fs — recording failure, continuing loop",
+                  source_name, timeout_s)
+        if outcomes is not None:
+            outcomes[source_name] = "timeout"
+        circuit.record_failure(source_name)
+        if not dry_run:
+            dlq = DeadLetterQueue()
+            dlq.push({
+                "source": source_name,
+                "error": f"TimeoutError: exceeded {timeout_s:.0f}s",
+                "timestamp": utc_now().isoformat(),
+            })
+            dlq.save()
+        return []
+    if "error" in box:
+        raise box["error"]  # type: ignore[arg-type]
+    return box["value"]  # type: ignore[return-value]
+
+
+def _run_source_impl(
+    source_name: str,
+    keywords: list[str],
+    posted_after: datetime,
+    seen: SeenStore,
+    circuit: CircuitManager,
+    max_jobs: int,
+    dry_run: bool,
+    outcomes: dict[str, str] | None,
+) -> list[NormalizedJob]:
+    """Unbounded implementation of run_source (the worker-thread body)."""
     def _verdict(v: str) -> None:
         if outcomes is not None:
             outcomes[source_name] = v
@@ -242,7 +296,8 @@ def run_source(
             # Date window: allow curated boards a 10-day discovery window for active postings,
             # while keeping daily fast sources within the configured posted_after window.
             cutoff_date = (posted_after - timedelta(days=10)).date() if source_name in (
-                "himalayas", "remoteok", "remotive", "jobicy", "weworkremotely", "wellfound"
+                "himalayas", "remoteok", "remotive", "jobicy", "weworkremotely", "wellfound", "nodesk",
+                "arbeitnow", "python_org"
             ) else posted_after.date()
             if normalized.posted_date and normalized.posted_date < cutoff_date:
                 log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
@@ -467,6 +522,13 @@ def main(argv: list[str] | None = None) -> int:
         print("[reset] all circuit breakers reset")
         return 0
 
+    if not args.dry_run and not cfg.job_loop_should_run():
+        log.info(
+            "[config] scrape skipped (JOB_LOOP_ENABLED/JOB_LOOP_PRIMARY) — "
+            "this host is not the primary runner"
+        )
+        return 0
+
     # ── compute fetch window ──
     window = _compute_window(args)
 
@@ -592,6 +654,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error("[outage] every scheduled source failed this run — %s",
                   ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
         log.error("[outage] returning exit code 1 so monitoring/downstream can alert")
+        send_ops_alert(
+            "total source outage — every scheduled source failed. "
+            "Check loop.log / GitHub Actions."
+        )
         return 1
 
     return 0
