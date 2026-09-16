@@ -142,3 +142,22 @@ def check_last_run_freshness(state_last_run: str | None, window: FetchWindow) ->
     if gap_hours > 72 and window.reason == FREQ_DAILY:
         return f"[schedule] last run was {gap_hours:.1f}h ago — large catch-up expected"
     return f"[schedule] last run {gap_hours:.1f}h ago — OK"
+
+
+def next_fetch_start(now: datetime | None = None, tz: ZoneInfo | None = None) -> datetime:
+    """Start of the next non-idle fetch window (weekday 09:00 local).
+
+    Matches `compute_fetch_window`'s 09:00 rule: Sat/Sun are idle in the spec,
+    so the next window is the next Mon-Fri 09:00. The self-scheduling daemon
+    (`python -m src.main --serve`) sleeps until this time — no cron required."""
+    tz = tz or _get_tz()
+    now = now or datetime.now(tz)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    now = now.astimezone(tz)
+    candidate = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if now >= candidate:
+        candidate += timedelta(days=1)
+    while candidate.weekday() >= 5:  # Saturday=5, Sunday=6 → idle, skip
+        candidate += timedelta(days=1)
+    return candidate

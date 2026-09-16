@@ -358,7 +358,45 @@ def test_curated_source_is_registered(name):
 
 # ── Config default-off wiring ────────────────────────────────────────────────
 
-LIVE_CURATED = ("remotive", "himalayas", "wellfound", "justremote")
+# ── RemoteOK tests ─────────────────────────────────────────────────────────
+
+def test_remoteok_parse_item():
+    from src.scrapers.curated_boards import RemoteokScraper
+    item = {
+        "id": "1137309",
+        "position": "AI Response Analyst",
+        "company": "iMerit Technology",
+        "url": "https://remoteOK.com/remote-jobs/remote-ai-response-analyst-1137309",
+        "location": "",
+        "salary_min": 50000,
+        "salary_max": 80000,
+        "tags": ["content writing", "ai"],
+        "date": "2026-09-06T03:47:24+00:00",
+        "description": "Evaluate AI responses.",
+    }
+    job = RemoteokScraper()._parse_item(item, "AI")
+    assert job is not None
+    assert job.title == "AI Response Analyst"
+    assert job.company == "iMerit Technology"
+    assert job.location == "Worldwide"
+    assert job.salary == "$50000 - $80000"
+    assert job.posted_date == "2026-09-06"
+    assert "AI" in job.tags
+
+
+def test_remoteok_skips_legal_notice():
+    from src.scrapers.curated_boards import RemoteokScraper
+    legal = {"legal": "Please don't scrape."}
+    assert RemoteokScraper()._parse_item(legal, "AI") is None
+
+
+def test_remoteok_missing_url():
+    from src.scrapers.curated_boards import RemoteokScraper
+    item = {"id": "123", "position": "AI Dev", "url": ""}
+    assert RemoteokScraper()._parse_item(item, "AI") is None
+
+
+LIVE_CURATED = ("remotive", "himalayas", "wellfound", "justremote", "remoteok", "weworkremotely", "jobicy")
 SCAFFOLDS = (
     "feedcoyote", "jobboardsearch",
     "flexjobs", "dynamitejobs", "virtual_vocations", "nodesk",
@@ -396,3 +434,70 @@ def test_scaffold_fetch_yields_nothing():
     cls = all_scrapers()["feedcoyote"]
     jobs = list(cls().fetch(["AI"], datetime.now(timezone.utc)))
     assert jobs == []
+
+
+def test_weworkremotely_feed_parse(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import WeWorkRemotelyScraper
+    import requests
+
+    sample_rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>A.Team: Senior Independent AI Engineer</title>
+          <link>https://weworkremotely.com/remote-jobs/a-team-ai-engineer</link>
+          <region>Anywhere in the World</region>
+          <description>Build agentic AI workflows.</description>
+          <pubDate>Tue, 15 Sep 2026 12:00:00 +0000</pubDate>
+        </item>
+      </channel>
+    </rss>"""
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = sample_rss
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = WeWorkRemotelyScraper()
+    jobs = list(scraper.fetch(["AI"], datetime(2026, 9, 14, tzinfo=timezone.utc)))
+    assert len(jobs) >= 1
+    j = jobs[0]
+    assert j.source == "weworkremotely"
+    assert j.company == "A.Team"
+    assert j.title == "Senior Independent AI Engineer"
+    assert j.location == "Anywhere in the World"
+    assert j.posted_date == "2026-09-15"
+
+
+def test_jobicy_api_parse(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import JobicyScraper
+    import requests
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "jobs": [
+            {
+                "url": "https://jobicy.com/jobs/153321-postgres-engineer",
+                "jobTitle": "Staff AI Systems Engineer",
+                "companyName": "Supabase",
+                "jobGeo": "Anywhere",
+                "pubDate": "2026-09-15T14:25:05+00:00",
+                "jobExcerpt": "Design and build AI infrastructure",
+                "jobType": ["Full-Time"],
+            }
+        ]
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = JobicyScraper()
+    jobs = list(scraper.fetch(["AI"], datetime(2026, 9, 14, tzinfo=timezone.utc)))
+    assert len(jobs) >= 1
+    j = jobs[0]
+    assert j.source == "jobicy"
+    assert j.company == "Supabase"
+    assert j.title == "Staff AI Systems Engineer"
+    assert j.location == "Anywhere"
+    assert j.posted_date == "2026-09-15"

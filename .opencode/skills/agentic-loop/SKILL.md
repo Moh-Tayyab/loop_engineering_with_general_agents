@@ -113,9 +113,10 @@ Driver token handling (see `templates/driver.sh` for exact logic):
 ## Budget guard
 
 `MAX_ITERATIONS` (default 100) is the driver-level backstop against an unsatisfiable stop condition.
-Pair it with STATE.md §4: the contract's stop condition is the *goal* exit; `MAX_ITERATIONS` is the
-*safety* exit. A loop that hits `MAX_ITERATIONS` should be treated as a loop-detection event
-(AGENTS.md §6) and escalated, not silently re-run.
+Pair it with the budget in the owning loop's `STATE.md` §4 / that loop's `AGENTS.md` §3: the
+contract's stop condition is the *goal* exit; `MAX_ITERATIONS` is the *safety* exit. A loop that
+hits `MAX_ITERATIONS` should be treated as a loop-detection event (that loop's AGENTS.md §7) and
+escalated, not silently re-run.
 
 ## Constraints checklist — verify before finishing
 

@@ -79,6 +79,9 @@ class FileLock:
             _HELD_LOCKS[self._key] = (fd, 1)
         self._opened_fd = fd
         self._entered = True
+        # Watchdog sidecar: the holder's pid + acquired_at so a starved run can
+        # tell a benign two-cron overlap from a hung browser squatting the lock.
+        self._write_holder()
         return self
 
     def __exit__(self, *exc) -> None:
@@ -96,6 +99,37 @@ class FileLock:
             del _HELD_LOCKS[self._key]
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+        self._clear_holder()
+
+    def _holder_path(self) -> Path:
+        return self._path.with_name(self._path.name + ".holder")
+
+    def _write_holder(self) -> None:
+        atomic_write_text(self._holder_path(), json.dumps({
+            "pid": os.getpid(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        }))
+
+    def _clear_holder(self) -> None:
+        try:
+            os.remove(self._holder_path())
+        except FileNotFoundError:
+            pass
+
+
+def lock_holder(path: Path | str) -> dict[str, Any] | None:
+    """Read the lock-holder sidecar (pid + acquired_at), or None if absent.
+
+    Used by a lock-starved run to distinguish a brief overlap from a stale
+    (hung) holder — see `cfg.lock_stale_s()`."""
+    holder = Path(path).with_name(Path(path).name + ".holder")
+    try:
+        raw = json.loads(holder.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
 
 
 def lock_path_for(path: Path) -> Path:
@@ -176,6 +210,7 @@ class LoopState:
         self.state.setdefault("jobs_this_week", 0)
         self.state.setdefault("notifications_sent_today", {})
         self.state.setdefault("digest_generated_for", None)
+        self.state.setdefault("weekly_delivered_kinds", {})
 
     def save(self) -> None:
         self.state["schema_version"] = STATE_SCHEMA_VERSION
@@ -233,6 +268,19 @@ class LoopState:
 
     def mark_digest(self, week_key: str) -> None:
         self.state["digest_generated_for"] = week_key
+
+    # --- weekly digest DELIVERY (retry until every channel confirms) ---
+    def weekly_delivered_kinds(self, week_key: str) -> set[str]:
+        return {str(k) for k in self.state["weekly_delivered_kinds"].get(week_key, [])}
+
+    def mark_weekly_delivered(self, week_key: str, kinds) -> None:
+        """Record which channels confirmed this week's digest.
+
+        Delivery is tracked separately from generation (`mark_digest`): the
+        digest files are written once, but a channel that failed (LinkedIn API
+        hiccup, Telegram timeout) stays pending and is retried on a later run
+        until it confirms — never silently dropped for the rest of the week."""
+        self.state["weekly_delivered_kinds"] = {week_key: sorted(set(kinds))}
 
 
 class SeenStore:

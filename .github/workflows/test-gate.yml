@@ -33,9 +33,10 @@ jobs:
         run: |
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f video_generation_loop/requirements.txt ]; then pip install -r video_generation_loop/requirements.txt; fi
+          if [ -f job_fetching_loop/requirements.txt ]; then pip install -r job_fetching_loop/requirements.txt; fi
           if [ -f pyproject.toml ]; then pip install -e .; fi
           pip install pytest pytest-cov
-        if: hashFiles('pyproject.toml', 'requirements.txt', 'setup.py', 'video_generation_loop/requirements.txt') != ''
+        if: hashFiles('pyproject.toml', 'requirements.txt', 'setup.py', 'video_generation_loop/requirements.txt', 'job_fetching_loop/requirements.txt') != ''
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -48,12 +49,21 @@ jobs:
         run: npm install
         if: hashFiles('package.json') != ''
 
-      - name: Run tests
+      - name: Run tests (trainer + video loop)
         run: |
           if [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; then
-            python -m pytest -q
+            python -m pytest -q --ignore=job_fetching_loop
           elif [ -f package.json ]; then
             npm test
           else
             echo "No test suite found in this repo yet."
+          fi
+
+      - name: Run tests (job fetching loop, isolated)
+        working-directory: job_fetching_loop
+        run: |
+          if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            python -m pytest -q
+          else
+            echo "No job loop test suite found."
           fi

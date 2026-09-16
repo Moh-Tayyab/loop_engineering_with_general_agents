@@ -87,7 +87,16 @@ class IndeedScraper(BaseScraper):
             return None
         title = (await title_el.inner_text()).strip()
         href = await title_el.get_attribute("href") or ""
-        url = self._BASE + href if href.startswith("/") else href
+        jk = await card.get_attribute("data-jk") or await title_el.get_attribute("data-jk")
+        if not jk and href:
+            import re
+            m = re.search(r"[?&]jk=([a-fA-F0-9]+)", href)
+            if m:
+                jk = m.group(1)
+        if jk:
+            url = f"https://www.indeed.com/viewjob?jk={jk}"
+        else:
+            url = self._BASE + href if href.startswith("/") else href
         company_el = await card.query_selector("span[data-testid='company-name'], span.companyName")
         company = (await company_el.inner_text()).strip() if company_el else "Unknown"
         location_el = await card.query_selector("div[data-testid='text-location'], div.companyLocation")

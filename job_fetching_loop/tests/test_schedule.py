@@ -14,6 +14,7 @@ from src.schedule import (
     FetchWindow,
     check_last_run_freshness,
     compute_fetch_window,
+    next_fetch_start,
 )
 
 
@@ -120,3 +121,34 @@ def test_freshness_stale():
         window_label="x", day_of_week=1,
     ))
     assert "catch-up" in msg
+
+
+# ── next_fetch_start (self-scheduling daemon) ────────────────────────────────
+
+def test_next_fetch_start_before_9am_same_day(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    before = datetime(2026, 9, 16, 7, 30, tzinfo=timezone.utc)  # Wed
+    assert next_fetch_start(before) == datetime(2026, 9, 16, 9, 0, tzinfo=timezone.utc)
+
+
+def test_next_fetch_start_after_9am_next_weekday(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    after = datetime(2026, 9, 16, 14, 0, tzinfo=timezone.utc)  # Wed after 09:00
+    assert next_fetch_start(after) == datetime(2026, 9, 17, 9, 0, tzinfo=timezone.utc)  # Thu
+
+
+def test_next_fetch_start_friday_skips_weekend(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    fri_evening = datetime(2026, 9, 18, 20, 0, tzinfo=timezone.utc)
+    assert next_fetch_start(fri_evening) == datetime(2026, 9, 21, 9, 0, tzinfo=timezone.utc)  # Mon
+
+
+def test_next_fetch_start_saturday_skips_to_monday(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    sat = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
+    assert next_fetch_start(sat) == datetime(2026, 9, 21, 9, 0, tzinfo=timezone.utc)
+
+
+def test_next_fetch_start_is_tz_aware(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    assert next_fetch_start().tzinfo is not None

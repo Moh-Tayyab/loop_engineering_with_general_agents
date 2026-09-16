@@ -51,3 +51,31 @@ def test_normalize_roundtrip_through_dict():
     assert j2.id == j.id
     assert j2.salary_min == 120_000
     assert j2.location_type == "remote"
+
+
+def test_normalize_preserves_posted_date_iso():
+    raw = RawJob(source="linkedin", title="ML Engineer", company="OpenAI", url="u",
+                 posted_date="2026-09-11")
+    j = normalize_raw(raw)
+    assert j.posted_date.isoformat() == "2026-09-11"
+
+
+def test_normalize_preserves_posted_date_relative():
+    raw = RawJob(source="indeed", title="ML Engineer", company="OpenAI", url="u",
+                 posted_date="30+ days ago")
+    j = normalize_raw(raw)
+    assert j.posted_date is not None
+    assert j.posted_date <= j.fetched_at.date()
+
+
+def test_normalize_posted_date_none_default():
+    raw = RawJob(source="indeed", title="ML Engineer", company="OpenAI", url="u")
+    j = normalize_raw(raw)
+    assert j.posted_date is None
+
+
+def test_normalize_indeed_url_canonicalized():
+    tracking_url = "https://www.indeed.com/rc/clk?jk=096fd4aa5f21fe38&bb=xyz&xkcb=123"
+    raw = RawJob(source="indeed", title="AI Engineer", company="GoodLeap", url=tracking_url)
+    j = normalize_raw(raw)
+    assert j.url == "https://www.indeed.com/viewjob?jk=096fd4aa5f21fe38"

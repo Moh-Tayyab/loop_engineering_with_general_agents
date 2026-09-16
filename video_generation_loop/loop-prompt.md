@@ -15,16 +15,17 @@ the queue is exhausted.
 
 One loop turn = one day of production. In order:
 
-1. Read `STATE.md` (repo root) + `video_generation_loop/STATE-local.md` (if present) to
-   restore loop context. Read `video_generation_loop/course/topics.json` (the topic queue)
+1. Read `video_generation_loop/AGENTS.md` (rules — fully self-contained; no root files) +
+   `video_generation_loop/STATE.md` (project spine) to restore loop context. Read
+   `video_generation_loop/course/topics.json` (the topic queue)
    and `video_generation_loop/.slc/state.json` (durable day/topic state).
 2. Decide today's topic: if a day is `in_progress`, resume it; else pick the next pending
    topic via the state logic (first topic not done / in-progress / blocked / retry-exhausted).
    NEVER invent a topic — only topics in `topics.json`.
 3. Build the presenter-style storyboard for that topic (6 scenes, 10s each, 9:16, Veo 3.1
    Lite). Mix: presenter scenes (young man from a `references/ref_*.png` image built into a
-   Flow **Character**) + pure-visual scenes. Use the user-approved presenter prompt TEMPLATE
-   (STATE.md §11). Write to `output/day_XX/storyboard.json`.
+   Flow **Character**) + pure-visual scenes.    Use the user-approved presenter prompt TEMPLATE
+   (video_generation_loop/STATE.md §11). Write to `output/day_XX/storyboard.json`.
 4. For each of the 6 scenes, drive real Google Flow via the Playwright automation
    (`python -m src.main` `--day` etc. OR the underlying `flow_automation`): enter workspace,
    fill the scene prompt, set Video + Veo 3.1 Lite + 10s + 9:16, click Create, approve the
@@ -67,7 +68,8 @@ scheduler also force-stops at `MAX_ITERATIONS` as a safety backstop.)
   against the approved storyboard (wrong topic, model not Veo 3.1 Lite, presenter image
   wrong), STOP and reply `LOOP_FAIL` WITHOUT generating — never burn paid credits on a
   wrong probe.
-- Foot-/budget guard from STATE.md §4: max beats, cost, wall-clock. If hit → `LOOP_FAIL`.
+- Foot-/budget guard from `video_generation_loop/AGENTS.md` §3: max beats, cost, wall-clock.
+  If hit → `LOOP_FAIL`.
 
 ## Unattended
 

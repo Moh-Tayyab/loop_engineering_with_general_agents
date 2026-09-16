@@ -6,33 +6,40 @@ allowed-tools: [read, grep, edit]
 
 # Verify Loop State
 
-You are the Checker, grading the loop's own bookkeeping. Read `STATE.md` and `AGENTS.md`
-in the repo root, then confirm each rule. Report every violation as `file:line`, then fix it.
+You are the Checker, grading the loop's own bookkeeping. There is no root `STATE.md` and no
+root `AGENTS.md` — every loop is fully self-contained. For EACH loop touched by the beat
+(`video_generation_loop/`, `job_fetching_loop/`) read that loop's `STATE.md` + `AGENTS.md`
+(the `AGENTS.md` carries ALL rules: budget §3, maker-checker §2/§6, escalation §7).
+Confirm each rule for every loop spine that changed, then fix mechanical violations. Report
+every violation as `file:line`, then fix it.
 
 ## Rules
 
-1. **Current beat is truthful.** The `## 2. Current Beat` section lists a beat number,
-   a date, a trigger, a status, and a verdict (`PASS` / `FAIL` / `ESCALATED`) that match
-   the most recent row in the beat log.
-2. **Beat log has the latest row.** There is a row for the current beat with `Date`,
-   `Trigger`, `Action`, and `Result` filled in. A completed beat without a row is a
-   violation (AGENTS.md §1).
-3. **Budget and escalation sections intact.** The `Budget & Stopping Conditions` (§4) and
-   `Escalation Protocols` (§8) sections still exist with their ceilings and caps. Never
-   silently delete these when compressing (AGENTS.md §6).
-4. **Beat log not bloated.** The beat log has at most 20 rows; otherwise compress per
-   `STATE.md` §9 (keep verdicts, drop detail, never drop §4/§8) and note `compressed at <date>`.
-5. **No secrets.** In `STATE.md`, `AGENTS.md`, and any diff under review, there are no
+1. **Current beat is truthful.** Each changed loop's `## 2. Current Beat` section lists a
+   beat number, a date, a trigger, a status, and a verdict (`PASS` / `FAIL` / `ESCALATED`)
+   that match the most recent row in that loop's beat log.
+2. **Beat log has the latest row.** Each touched loop has a row in its `STATE.md` for the
+   current beat with `Date`, `Trigger`, `Action`, and `Result` filled in. A completed beat
+   without a row is a violation (that loop's AGENTS.md §2). Loop beats belong to the owner
+   loop's own spine; there is no root STATE.md to log trainer-level beats in, so record
+   them in the affected loop's STATE.md.
+3. **Budget and escalation sections intact.** The loop `STATE.md` §4 (`Budget & Stopping
+   Conditions`) and its §5–8 pointer to that loop's `AGENTS.md` escalation (§7) still exist
+   with their ceilings and caps. Never silently delete these when compressing (that loop's
+   AGENTS.md §7). Loop spines define their ceilings in their own `AGENTS.md` §3.
+4. **Beat log not bloated.** Each loop's `STATE.md` beat log has at most 20 rows; otherwise
+   compress per that spine's §9 (keep verdicts, drop detail, never drop budget/escalation)
+   and note `compressed at <date>`.
+5. **No secrets.** In any `STATE.md`, `AGENTS.md`, and any diff under review, there are no
    secret-looking strings: `sk-` / `sk-proj-`, `ghp_`, `gho_`, `AKIA`, `AIza`, `Bearer <token>`,
    or `api_key = "<value>"`. Referencing `${{ secrets.* }}` in workflows is fine; echoing or
    logging a resolved value is not.
 6. **Report the verdict.** Reply with one line `APPROVED` or `CHANGES REQUESTED`, then the
    violations as bullets with `file:line` and the fix applied.
-7. **Improvement hook (propose, never apply).** If the same failure pattern appears in ≥3 consecutive
-   beat-log rows (the same finding, test failure, or check result), propose adding a one-line durable
-   lesson to `AGENTS.md` §10. Do NOT edit `AGENTS.md` yourself — report the proposed line with the
-   evidence (which beats showed it) for the human gate. The rules file is the highest-leverage write
-   in the system; changes to it need a person.
+7. **Improvement hook (propose, never apply).** If the same failure pattern appears in ≥3
+   consecutive beat-log rows (in any spine), propose adding a one-line durable lesson to that
+   loop's `AGENTS.md` §11. Do NOT edit `AGENTS.md` yourself — report the proposed line with
+   the evidence for the human gate.
 
 ## Fixing
 

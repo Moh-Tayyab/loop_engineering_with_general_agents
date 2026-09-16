@@ -122,20 +122,75 @@ class LinkedInScraper(BaseScraper):
     _FEED = "https://www.linkedin.com/search/content/all/?origin=GLOBAL_SEARCH_HEADER&keywords={kw}"
 
     def login_required(self) -> bool:
-        return True
+        # Graceful degradation: if no authenticated session exists, fallback to
+        # public guest search instead of skipping the source entirely.
+        return False
 
-    def is_available(self) -> bool:
-        # Deterministic gate: the `--linkedin-login` gate writes this marker
-        # only after the manual sign-in window closes. Chromium creates a full
-        # profile dir before any login, so "dir has any file" is NOT a proxy
-        # for an authenticated session — using it makes an unlogged profile
-        # launch headed scrapes that silently return nothing.
+    def has_authenticated_session(self) -> bool:
         marker = cfg.RUNTIME_DIR / ".linkedin-session"
         profile = cfg.RUNTIME_DIR / "linkedin-profile"
         return marker.exists() and profile.exists() and any(profile.iterdir())
 
+    def is_available(self) -> bool:
+        return True
+
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        yield from asyncio.run(self._gather(keywords, posted_after))
+        # Primary high-reliability collector: LinkedIn public guest search (fast, zero CAPTCHA, canonical URLs)
+        yield from self._fetch_guest_public(keywords, posted_after)
+
+        # Secondary: if authenticated session exists and feed is enabled, gather hiring feed posts
+        if self.has_authenticated_session() and cfg.linkedin_feed_enabled():
+            try:
+                yield from asyncio.run(self._gather(keywords, posted_after))
+            except Exception as exc:
+                log.warning("[linkedin] authenticated feed pass skipped (%s) — guest jobs preserved", exc)
+
+    @classmethod
+    def _fetch_guest_public(cls, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        """Scrape LinkedIn public guest endpoint (no login required, high yield)."""
+        import html
+        import re
+        import requests
+
+        seen_urls: set[str] = set()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        for kw in keywords:
+            for loc_query in ("Worldwide", "Pakistan"):
+                url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={quote_plus(kw)}&location={loc_query}&f_WT=2"
+                try:
+                    r = requests.get(url, headers=headers, timeout=15)
+                    if r.status_code != 200:
+                        continue
+                    titles = re.findall(r'<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>\s*([^<]+?)\s*</h3>', r.text)
+                    companies = re.findall(r'<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>\s*<a[^>]*>([^<]+?)</a>', r.text)
+                    locations = re.findall(r'<span[^>]*class="[^"]*job-search-card__location[^"]*"[^>]*>\s*([^<]+?)\s*</span>', r.text)
+                    links = re.findall(r'<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"', r.text)
+                    dates = re.findall(r'<time[^>]*datetime="([^"]+)"', r.text)
+                    for i in range(len(titles)):
+                        title = html.unescape(titles[i].strip())
+                        comp = html.unescape(companies[i].strip()) if i < len(companies) else "Unknown"
+                        loc_raw = html.unescape(locations[i].strip()) if i < len(locations) else "Remote"
+                        loc = f"{loc_raw} (Remote)" if "remote" not in loc_raw.lower() else loc_raw
+                        raw_lnk = links[i].split("?")[0] if i < len(links) else ""
+                        if not raw_lnk or raw_lnk in seen_urls:
+                            continue
+                        seen_urls.add(raw_lnk)
+                        posted = dates[i][:10] if i < len(dates) else None
+                        yield RawJob(
+                            source="linkedin",
+                            title=title,
+                            company=comp,
+                            url=raw_lnk,
+                            location=loc,
+                            description=f"{title} at {comp} - LinkedIn Remote",
+                            posted_date=posted,
+                            tags=[kw],
+                            fetched_at=utc_now(),
+                        )
+                except Exception as exc:
+                    log.info("[linkedin] guest public search failed (kw=%r, loc=%r): %s", kw, loc_query, exc)
 
     async def _gather(self, keywords, posted_after) -> list:
         return [j async for j in self._fetch_async(keywords, posted_after)]
@@ -198,7 +253,7 @@ class LinkedInScraper(BaseScraper):
             log.warning("[linkedin] no authenticated session — run --linkedin-login first")
             return
 
-        async with launch_browser(self.name, persistent=True, headless=False) as context:
+        async with launch_browser(self.name, persistent=True, headless=cfg.scrape_headless()) as context:
             page = await context.new_page()
             for kw in keywords:
                 url = self._SEARCH.format(kw=kw.replace(" ", "+"))

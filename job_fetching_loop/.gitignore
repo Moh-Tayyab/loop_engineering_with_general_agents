@@ -8,3 +8,7 @@ __pycache__/
 .venv/
 playwright-report/
 test-results/
+loop.log
+*.jpeg
+*.jpg
+*.png

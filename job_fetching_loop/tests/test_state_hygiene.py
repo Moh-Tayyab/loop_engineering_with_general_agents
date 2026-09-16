@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from src.state import LoopState, SeenStore, atomic_write_text
+from src.state import FileLock, LoopState, SeenStore, atomic_write_text, lock_holder
 
 
 def _today() -> str:
@@ -89,3 +89,50 @@ def test_atomic_write_text_survives_partial(tmp_path):
     # no leftover temp files
     leftovers = [f.name for f in tmp_path.iterdir() if f.name.endswith(".tmp")]
     assert leftovers == []
+
+
+# ── FileLock watchdog sidecar (P2: starved run vs hung holder) ───────────────
+
+def test_lock_writes_and_clears_holder_sidecar(tmp_path):
+    """Acquiring the lock writes a {pid, acquired_at} sidecar; releasing the
+    last holder clears it — a starved run can read who holds the lock."""
+    lock_path = tmp_path / "state.json"
+    holder_path = tmp_path / "state.json.holder"
+    with FileLock(lock_path):
+        assert holder_path.exists()
+        holder = json.loads(holder_path.read_text(encoding="utf-8"))
+        assert holder["pid"] > 0
+        from datetime import datetime as _dt
+        _dt.fromisoformat(holder["acquired_at"])  # parses → valid ISO timestamp
+        assert lock_holder(lock_path) == holder
+    assert not holder_path.exists()
+    assert lock_holder(lock_path) is None
+
+
+def test_lock_holder_none_when_absent(tmp_path):
+    assert lock_holder(tmp_path / "missing.json") is None
+
+
+def test_lock_holder_survives_abrupt_crash(tmp_path):
+    """A killed process (SIGKILL) can't clear the sidecar — that's the point:
+    the stale marker keeps a hung holder detectable after flock released."""
+    lock_path = tmp_path / "state.json"
+    holder_path = tmp_path / "state.json.holder"
+    holder_path.write_text('{"pid": 99999, "acquired_at": "2026-09-01T00:00:00+00:00"}',
+                           encoding="utf-8")
+    holder = lock_holder(lock_path)
+    assert holder is not None
+    assert holder["pid"] == 99999
+
+
+# ── weekly digest delivery tracking (retry until every channel confirms) ─────
+
+def test_weekly_delivered_kinds_defaults_and_prunes(tmp_slc):
+    state = LoopState()
+    assert state.weekly_delivered_kinds("2026-W38") == set()
+    state.mark_weekly_delivered("2026-W38", ["telegram", "whatsapp"])
+    assert state.weekly_delivered_kinds("2026-W38") == {"telegram", "whatsapp"}
+    # a new week's first mark replaces the old week — no unbounded growth
+    state.mark_weekly_delivered("2026-W39", ["telegram"])
+    assert state.weekly_delivered_kinds("2026-W38") == set()
+    assert state.weekly_delivered_kinds("2026-W39") == {"telegram"}

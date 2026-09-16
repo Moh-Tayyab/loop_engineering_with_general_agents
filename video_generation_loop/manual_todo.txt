@@ -1,0 +1,60 @@
+[2026-09-14 13:34:34] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_01.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting with soft blue neon accents and subtle tech elements in the background. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Plan mode (the most underused feature) chatbots nahi hain. Woh sirf jawab nahi dete — woh aapke computer par asal kaam karte hain. Aur isi ek baat ne coding ka tareeqa badal diya.'
+----------------------------------------
+[2026-09-14 13:53:57] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_01.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting with soft blue neon accents and subtle tech elements in the background. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Plan mode (the most underused feature) chatbots nahi hain. Woh sirf jawab nahi dete — woh aapke computer par asal kaam karte hain. Aur isi ek baat ne coding ka tareeqa badal diya.'
+----------------------------------------
+[2026-09-14 14:30:23] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_01.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting with soft blue neon accents and subtle tech elements in the background. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Plan mode (the most underused feature) chatbots nahi hain. Woh sirf jawab nahi dete — woh aapke computer par asal kaam karte hain. Aur isi ek baat ne coding ka tareeqa badal diya.'
+----------------------------------------
+[2026-09-14 15:10:47] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_02.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting with a floating terminal and code panel behind the presenter, soft blue neon accents, code snippets animating. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Aap describe karte ho, woh kaam karte hain. Aap review karte ho. Sab se bada mindset shift yeh hai: sawal mat poocho, instruction do.'
+----------------------------------------
+[2026-09-14 15:13:13] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_02.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting with a floating terminal and code panel behind the presenter, soft blue neon accents, code snippets animating. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Aap describe karte ho, woh kaam karte hain. Aap review karte ho. Sab se bada mindset shift yeh hai: sawal mat poocho, instruction do.'
+----------------------------------------
+[2026-09-14 15:31:33] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_03.mp4
+PROMPT:
+Close-up animated dark terminal and code editor, glowing green-white code typed by an AI agent cursor, clean minimal aesthetic, 24fps, no human on screen. Animated clean text overlay: 'Instruction -> Action'. Scene 3/6: Showing it live on the terminal — how the agent actually behaves: the user gives one clear instruction and the AI agent acts on it.
+----------------------------------------
+[2026-09-14 15:35:03] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_03.mp4
+PROMPT:
+Close-up animated dark terminal and code editor, glowing green-white code typed by an AI agent cursor, clean minimal aesthetic, 24fps, no human on screen. Animated clean text overlay: 'Instruction -> Action'. Scene 3/6: Showing it live on the terminal — how the agent actually behaves: the user gives one clear instruction and the AI agent acts on it.
+----------------------------------------
+[2026-09-14 15:40:21] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_04.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting, soft blue neon accents with a subtle red warning accent to highlight the common mistake, animated text overlays. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Sab se aam ghalti? Inse chatbot jaisa baat karna. 'Mujhe samjhao', 'kya ho sakta hai' — aisa poochne se faida nahi milta. Order do.'
+----------------------------------------
+[2026-09-14 15:42:05] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_04.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting, soft blue neon accents with a subtle red warning accent to highlight the common mistake, animated text overlays. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Sab se aam ghalti? Inse chatbot jaisa baat karna. 'Mujhe samjhao', 'kya ho sakta hai' — aisa poochne se faida nahi milta. Order do.'
+----------------------------------------
+[2026-09-14 15:43:03] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_04.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting, soft blue neon accents with a subtle red warning accent to highlight the common mistake, animated text overlays. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Sab se aam ghalti? Inse chatbot jaisa baat karna. 'Mujhe samjhao', 'kya ho sakta hai' — aisa poochne se faida nahi milta. Order do.'
+----------------------------------------
+[2026-09-14 19:18:40] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_04.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting, soft blue neon accents with a subtle red warning accent to highlight the common mistake, animated text overlays. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Sab se aam ghalti? Inse chatbot jaisa baat karna. 'Mujhe samjhao', 'kya ho sakta hai' — aisa poochne se faida nahi milta. Order do.'
+----------------------------------------
+[2026-09-14 19:25:43] generate and save to:
+  /home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/video_generation_loop/output/day_04/clips/clip_04.mp4
+PROMPT:
+Educational explainer video featuring the young guy with glasses from the reference image as the on-screen presenter and narrator with dark hair and modern tech outfit. Clean modern dark-themed studio setting, soft blue neon accents with a subtle red warning accent to highlight the common mistake, animated text overlays. The presenter looks directly into the camera with confident, professional, and natural gestures, speaking naturally in a calm engaging youthful male voice with realistic lip-sync. Animated clean text overlays highlighting key takeaways. Narrate / Lip-Sync exactly (in clear Urdu/Hindi): 'Sab se aam ghalti? Inse chatbot jaisa baat karna. 'Mujhe samjhao', 'kya ho sakta hai' — aisa poochne se faida nahi milta. Order do.'
+----------------------------------------

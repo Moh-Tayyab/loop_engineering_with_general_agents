@@ -96,6 +96,29 @@ def test_is_worldwide_remote_worldwide():
     assert is_worldwide_remote("Worldwide")
     assert is_worldwide_remote("Work from anywhere")
     assert is_worldwide_remote("Anywhere in the world")
+    assert is_worldwide_remote("Global")
+
+
+def test_is_worldwide_remote_apac_and_multi_region():
+    """Working Nomads & remote-native boards using 'Global' and multi-region APAC strings."""
+    assert is_worldwide_remote("Europe, North America, Latin America, APAC")
+    assert is_worldwide_remote("Europe, LATAM, APAC, the U.S., Canada")
+    assert is_worldwide_remote("APAC")
+    assert is_worldwide_remote("Asia Pacific")
+    assert is_worldwide_remote("Remote (Worldwide) - Working East Coast Hours")
+    # Region-restricted that does not include Pakistan
+    assert not is_worldwide_remote("South Korea")
+    assert not is_worldwide_remote("France")
+    assert not is_worldwide_remote("Anywhere in India")
+    assert not is_worldwide_remote("USA only")
+    assert not is_worldwide_remote("Anywhere in the US")
+    assert not is_worldwide_remote("Anywhere in the USA")
+
+
+def test_classify_location_global_and_apac():
+    from src.models import classify_location, LOCATION_REMOTE
+    assert classify_location("Global") == LOCATION_REMOTE
+    assert classify_location("Europe, North America, Latin America, APAC") == LOCATION_REMOTE
 
 
 def test_is_worldwide_remote_rejects_city_restricted():
@@ -105,9 +128,66 @@ def test_is_worldwide_remote_rejects_city_restricted():
 
 
 def test_is_worldwide_remote_rejects_city_names():
-    """'Remote, Oregon' is a city name, not remote."""
+    """'Remote, Oregon' is a city name (Coos County, OR), not remote."""
     assert not is_worldwide_remote("Remote, OR")
     assert not is_worldwide_remote("Remote, Oregon")
+    assert not is_worldwide_remote("Remote OR")
+    assert not is_worldwide_remote("Remote Oregon")
+    assert not is_worldwide_remote("Remote, Coos County, OR")
+    assert not is_worldwide_remote("Remote OR 97458")
+
+
+def test_is_worldwide_remote_us_domestic_boards_reject_bare_remote():
+    """Indeed/Glassdoor bare 'Remote' is domestic US remote (e.g. GoodLeap) -> reject for Pakistan."""
+    assert not is_worldwide_remote("Remote", source="indeed")
+    assert not is_worldwide_remote("Remote", source="glassdoor")
+    assert not is_worldwide_remote("Remote", source="indeed", description="Must reside in US.")
+
+
+def test_is_worldwide_remote_us_domestic_boards_accept_worldwide_indicators():
+    """Indeed/Glassdoor jobs qualifying explicitly for worldwide/global remote -> accept."""
+    assert is_worldwide_remote("Remote (Worldwide)", source="indeed")
+    assert is_worldwide_remote("Remote - Worldwide", source="indeed")
+    assert is_worldwide_remote("Remote (Pakistan)", source="indeed")
+    assert is_worldwide_remote("Remote", source="indeed", description="Role is open to candidates anywhere in the world.")
+    assert is_worldwide_remote("Remote", source="glassdoor", description="Work from anywhere worldwide.")
+
+
+def test_is_worldwide_remote_remote_native_boards_accept_bare_remote():
+    """Remote-native boards (Remotive, Himalayas, Wellfound, JustRemote) bare 'Remote' is global."""
+    assert is_worldwide_remote("Remote", source="himalayas")
+    assert is_worldwide_remote("Remote", source="remotive")
+    assert is_worldwide_remote("Remote", source="wellfound")
+    assert is_worldwide_remote("Remote", source="justremote")
+
+
+def test_is_remotely_workable_source_aware():
+    from src.main import is_remotely_workable
+    # Indeed bare Remote (e.g. GoodLeap) -> rejected
+    assert not is_remotely_workable("remote", "Remote", source="indeed")
+    # Himalayas bare Remote -> accepted
+    assert is_remotely_workable("remote", "Remote", source="himalayas")
+    # Indeed with worldwide -> accepted
+    assert is_remotely_workable("remote", "Remote (Worldwide)", source="indeed")
+    # Remote, Oregon -> rejected regardless
+    assert not is_remotely_workable("remote", "Remote, OR", source="indeed")
+    assert not is_remotely_workable("remote", "Remote, OR", source="himalayas")
+
+
+def test_goodleap_indeed_bare_remote_rejected():
+    """Verify the real-world GoodLeap Indeed job (bare 'Remote') is rejected for Pakistan candidates."""
+    from src.main import is_remotely_workable
+    assert not is_remotely_workable(
+        location_type="remote",
+        location="Remote",
+        source="indeed",
+        description="",
+    )
+    assert not is_worldwide_remote(
+        location="Remote",
+        source="indeed",
+        description="",
+    )
 
 
 def test_is_worldwide_remote_rejects_region_restricted():
@@ -255,3 +335,39 @@ def test_remote_only_uses_location_text():
     assert is_remotely_workable("remote", "Worldwide")
     assert not is_remotely_workable("remote", "Remote in Brooklyn, NY")
     assert not is_remotely_workable("remote", "Remote, Oregon")
+
+
+# ── posted_date parsing ───────────────────────────────────────────────────────
+
+def test_parse_posted_date_iso():
+    from datetime import date
+    from src.models import parse_posted_date
+    assert parse_posted_date("2026-09-11") == date(2026, 9, 11)
+
+
+def test_parse_posted_date_iso_datetime_truncates():
+    from datetime import date
+    from src.models import parse_posted_date
+    assert parse_posted_date("2026-09-11T10:30:00+00:00") == date(2026, 9, 11)
+
+
+def test_parse_posted_date_relative_phrases():
+    from datetime import timedelta
+    from src.models import parse_posted_date, utc_now
+    today = utc_now().date()
+    assert parse_posted_date("Posted Today", today=today) == today
+    assert parse_posted_date("Today", today=today) == today
+    assert parse_posted_date("Yesterday", today=today) == today - timedelta(days=1)
+    assert parse_posted_date("Posted 3 days ago", today=today) == today - timedelta(days=3)
+    assert parse_posted_date("30+ days ago", today=today) == today - timedelta(days=30)
+    assert parse_posted_date("6d", today=today) == today - timedelta(days=6)
+    assert parse_posted_date("6 hours ago", today=today) == today
+    assert parse_posted_date("2 weeks ago", today=today) == today - timedelta(days=14)
+
+
+def test_parse_posted_date_unparseable_returns_none():
+    from src.models import parse_posted_date
+    assert parse_posted_date(None) is None
+    assert parse_posted_date("") is None
+    assert parse_posted_date("   ") is None
+    assert parse_posted_date("garbage") is None

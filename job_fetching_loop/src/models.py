@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 SOURCE_NAMES = [
@@ -16,7 +16,10 @@ SOURCE_NAMES = [
     "apac_remote",
     "pakistan_remote",
     "remotive",
+    "remoteok",
     "himalayas",
+    "weworkremotely",
+    "jobicy",
     "feedcoyote",
     "justremote",
     "wellfound",
@@ -156,6 +159,86 @@ class NormalizedJob:
         )
 
 
+_US_STATE_NAMES = frozenset({
+    # 50 states + DC, lowercase — used to detect region-restricted "Remote"
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+    "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming", "district of columbia",
+})
+
+# Two-letter postal abbreviations that are NOT also common English words, so
+# matching them alongside "Remote" is unambiguous ("Remote, OR" is a city;
+# with the abbreviation set we also catch "TX - Remote", "MD - Remote").
+_US_STATE_ABBR = frozenset({
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "dc", "fl", "ga", "hi",
+    "id", "il", "in", "ks", "ky", "la", "md", "ma", "mi", "mn", "ms", "mo",
+    "mt", "ne", "nv", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa",
+    "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy",
+})
+
+_US_RESTRICTED_RE = re.compile(
+    r"(?i)(?:remote\s*\(([^)]*)\)"          # "Remote (US Only)" / "Remote (San Francisco)"
+    r"|remote\s*[-,–]\s*([A-Za-z .]+)"  # "Remote - US Only" / "Remote - Texas"
+    r"|([A-Za-z .]+?)\s*[-,–]\s*remote)"  # "Maryland – Remote" / "TX - Remote"
+)
+
+US_DOMESTIC_BOARDS = frozenset({"indeed", "glassdoor", "ziprecruiter", "monster"})
+
+_WORLDWIDE_MARKERS = (
+    "worldwide", "work from anywhere", "anywhere in the world",
+    "global remote", "globally remote", "remote - global", "remote (global)",
+    "remote - worldwide", "remote (worldwide)", "international remote",
+    "remote international", "pakistan", "apac", "asia pacific", "south asia",
+)
+
+
+def _is_us_restricted(text: str) -> bool:
+    """True when the location ties work to a specific US state/city/region.
+
+    The word "Remote" is also a US city name (Remote, OR) and is commonly
+    paired with a US state to mean *region-restricted* remote ("Maryland –
+    Remote", "TX - Remote", "Remote (US Only)").  A bare "Remote" with no
+    such qualifier is the only form we count as worldwide/anywhere remote,
+    so this detector must trip on every restricted variant.
+    """
+    if not text:
+        return False
+    low = text.lower()
+    # Explicit disambiguation for Remote, Oregon (Coos County, OR, ZIP 97458)
+    if (re.search(r"\bremote\s*,\s*(?:or|oregon)\b", low)
+            or re.search(r"\bremote\s+(?:or|oregon)\b", low)
+            or re.search(r"\bcoos\s+county\b", low)
+            or re.search(r"\bremote\b.*\b97458\b", low)):
+        return True
+
+    for state in _US_STATE_NAMES:
+        if re.search(rf"\b{re.escape(state)}\b", low):
+            if "remote" in low or "anywhere" in low:
+                return True
+    # Postal abbreviation immediately adjacent to "Remote" (dash/comma/paren)
+    m = _US_RESTRICTED_RE.search(text)
+    if not m:
+        return False
+    for grp in m.groups():
+        if not grp:
+            continue
+        grp_low = grp.lower().strip()
+        if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.")):
+            return True
+        two_letter_words = set(re.findall(r"\b[a-z]{2}\b", grp_low))
+        if any(w in _US_STATE_ABBR for w in two_letter_words):
+            return True
+        if any(re.search(rf"\b{re.escape(name)}\b", grp_low) for name in _US_STATE_NAMES):
+            return True
+    return False
+
+
 def classify_location(location: str | None) -> str:
     """Map a free-text location to a normalized bucket.
 
@@ -172,23 +255,32 @@ def classify_location(location: str | None) -> str:
 
     # Definitive remote indicators (unambiguous)
     if ("worldwide" in text or "work from anywhere" in text or "anywhere" in text
-            or "work from home" in text or "wfh" in text):
+            or "work from home" in text or "wfh" in text
+            or "global" in text or "apac" in text or "asia pacific" in text):
         return LOCATION_REMOTE
 
     # Handle the word "Remote" — distinguish from city names
     # Patterns that are NOT remote:
-    #   "Remote, OR" / "Remote, Oregon"          -> city name
+    #   "Remote, OR" / "Remote, Oregon"          -> city name (physical town)
     #   "Remote in Brooklyn, NY"                 -> city-restricted (Indeed)
     #   "Remote in Windsor, CO 80550"            -> city-restricted
     #   "San Francisco, CA (Remote)"             -> has city, ambiguous → treat as hybrid
+    #   "Maryland – Remote" / "TX - Remote"      -> US region-restricted → NOT worldwide
     # Patterns that ARE remote:
     #   "Remote" / "REMOTE"                      -> bare token
     #   "Remote (Worldwide)" / "Remote - Worldwide" -> explicitly worldwide
     #   "Remote (US Only)"                       -> region-restricted but still remote
-    is_city_name = bool(re.search(r"remote\s+in\s+\w", text)) or bool(re.search(r"remote\s*,\s+[a-z]", text))
-    is_bare_remote = re.search(r"(?:^|[,;|\s])remote(?:$|[,\s(;\-])", text) is not None
+    is_city_name = (
+        bool(re.search(r"remote\s+in\s+\w", text))
+        or bool(re.search(r"remote\s*,\s+[a-z]", text))
+        or bool(re.search(r"\bremote\s+(?:or|oregon)\b", text))
+        or bool(re.search(r"\bcoos\s+county\b", text))
+    )
+    is_bare_remote = re.search(r"(?:^|[(,;|\s])remote(?:$|[),\s(;\-])", text) is not None
 
     if is_bare_remote and not is_city_name:
+        if _is_us_restricted(text):
+            return LOCATION_ONSITE
         return LOCATION_REMOTE
 
     if "hybrid" in text or "flexible" in text:
@@ -199,24 +291,76 @@ def classify_location(location: str | None) -> str:
     return LOCATION_ONSITE
 
 
-def is_worldwide_remote(location: str | None) -> bool:
-    """True only when the job is clearly remote *without* geographic restriction.
+def is_worldwide_remote(
+    location: str | None,
+    source: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """True only when the job is clearly remote *without* US-restriction.
 
-    Used by SCRAPE_REMOTE_ONLY: drops city/state-restricted remote jobs
-    (e.g. "Remote in Brooklyn, NY") and non-remote positions entirely.
+    Used by SCRAPE_REMOTE_ONLY: drops US state/city-restricted remote jobs
+    (e.g. "Maryland – Remote", "Remote (US Only)", "Remote, OR"), US domestic-only
+    remote jobs posted on US boards without worldwide eligibility (e.g. Indeed/Glassdoor
+    bare "Remote"), and non-remote positions.
+
+    In-scope remote (worldwide / Global / APAC / Pakistan / South-Asia neighbor remote)
+    qualifies for this Pakistan-based loop.
     """
     if not location:
         return False
     text = location.lower().strip()
-    # Definitive worldwide indicators
-    if "worldwide" in text or "work from anywhere" in text or "anywhere" in text:
+
+    # Remote, Oregon disambiguation (physical hamlet in Coos County, OR)
+    if (re.search(r"\bremote\s*,\s*(?:or|oregon)\b", text)
+            or re.search(r"\bremote\s+(?:or|oregon)\b", text)
+            or re.search(r"\bcoos\s+county\b", text)
+            or re.search(r"\bremote\b.*\b97458\b", text)):
+        return False
+
+    # Country/region-restricted anywhere (e.g. "anywhere in India", "anywhere in the US")
+    # Only "anywhere in the world" or "work from anywhere" is allowed
+    if re.search(r"anywhere\s+in\s+(?!the\s+world\b)", text):
+        return False
+
+    # US-domestic boards (Indeed, Glassdoor): bare "Remote" is domestic US remote
+    # (requires US residency / SSN / W-2). Reject unless explicitly worldwide/global
+    # in location or description.
+    if source and source.lower() in US_DOMESTIC_BOARDS:
+        combined = f"{text} {(description or '').lower()}"
+        if not any(m in combined for m in _WORLDWIDE_MARKERS):
+            return False
+
+    # Definitive worldwide or global indicators
+    if any(w in text for w in ("worldwide", "work from anywhere", "anywhere in the world", "global")):
+        if not _is_us_restricted(text) or "worldwide" in text or "global" in text:
+            return True
+
+    # In-scope regional targets (APAC, Asia Pacific, Pakistan, South Asia)
+    if any(w in text for w in ("apac", "asia pacific", "south asia", "pakistan")):
+        if not _is_us_restricted(text):
+            return True
+
+    # Standalone "anywhere"
+    if "anywhere" in text and not _is_us_restricted(text):
         return True
+
     # Bare "Remote" with no city/state qualifier = worldwide by convention
-    is_city_name = bool(re.search(r"remote\s+in\s+\w", text)) or bool(re.search(r"remote\s*,\s+[a-z]", text))
+    is_city_name = (
+        bool(re.search(r"remote\s+in\s+\w", text))
+        or bool(re.search(r"remote\s*,\s+[a-z]", text))
+        or bool(re.search(r"\bremote\s+(?:or|oregon)\b", text))
+        or bool(re.search(r"\bcoos\s+county\b", text))
+    )
     is_bare_remote = re.search(r"(?:^|[,;|\s])remote(?:$|[,\s(;\-])", text) is not None
     if is_bare_remote and not is_city_name:
-        # But reject region qualifiers like "Remote (US Only)"
-        if re.search(r"remote\s*\((?!.*worldwide)", text):
+        # But reject region qualifiers like "Remote (US Only)" and
+        # "Maryland – Remote" / "TX - Remote" (US state-restricted remote)
+        if _is_us_restricted(text):
+            return False
+        # Bare remote with a qualifier: in-scope qualifiers (worldwide,
+        # APAC / Asia Pacific, Pakistan, anywhere, and South-Asia
+        # neighbors) qualify; any other qualifier stays rejected.
+        if re.search(r"remote\s*\((?!.*(?:worldwide|apac|asia pacific|pakistan|anywhere|anytime|india|bangladesh|sri lanka|nepal))", text):
             return False
         return True
     return False
@@ -229,6 +373,7 @@ _EXPIRED_TITLE_RE = re.compile(
     r"|filled|ended|terminated|withdrawn|cancelled|canceled)\b",
     re.IGNORECASE,
 )
+
 
 def is_expired_job(raw: RawJob) -> bool:
     """Detect jobs that are closed, expired, or no longer available."""
@@ -292,6 +437,52 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+# Relative post-age units (Indeed/Glassdoor emit "Posted 3 days ago", "30+ days ago", "6d").
+_RELATIVE_UNITS = {
+    "day": 1, "days": 1, "d": 1,
+    "hr": 0, "hour": 0, "hours": 0,  # hours ago -> posted today
+    "week": 7, "weeks": 7, "w": 7,
+    "mo": 30, "month": 30, "months": 30,
+    "year": 365, "years": 365, "y": 365,
+}
+
+
+def parse_posted_date(value: str | None, today: date | None = None) -> date | None:
+    """Parse a source's `posted_date` string into a date.
+
+    Accepts ISO dates/timestamps ("2026-09-11", "2026-09-11T10:00:00+00:00"),
+    "Today"/"Yesterday", and the relative strings Indeed/Glassdoor emit
+    ("Posted 3 days ago", "30+ days ago", "6d"). Any unparseable value returns
+    None so downstream code degrades to fetched_at instead of failing."""
+    if not value:
+        return None
+    text = str(value).strip()
+    today = today or utc_now().date()
+
+    lowered = text.lower()
+    if lowered.startswith("posted "):
+        lowered = lowered[len("posted "):]
+    if lowered in ("today", "now", "just now"):
+        return today
+    if lowered == "yesterday":
+        return today - timedelta(days=1)
+
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        pass
+
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*\+?\s*(day|days|d|hr?|hours?|week|weeks|w|mo|month|months|year|years|y)\b",
+        text.lower(),
+    )
+    if m:
+        unit = m.group(2)
+        delta_days = int(round(float(m.group(1)) * _RELATIVE_UNITS[unit]))
+        return today - timedelta(days=delta_days)
+    return None
 
 
 def _parse_datetime(value: Any) -> datetime:

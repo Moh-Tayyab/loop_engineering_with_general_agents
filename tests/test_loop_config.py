@@ -197,10 +197,18 @@ def test_every_skill_frontmatter_is_wellformed():
 
 
 def test_spine_sections_in_rules_file():
-    text = (REPO / "AGENTS.md").read_text()
-    assert "Spine — State Between Runs" in text
-    assert "Lessons Learned" in text
-    assert text.index("Spine — State Between Runs") < text.index("Lessons Learned")
+    loops = [REPO / "video_generation_loop" / "AGENTS.md",
+             REPO / "job_fetching_loop" / "AGENTS.md"]
+    for rules in loops:
+        text = rules.read_text()
+        assert "Spine — State Between Runs" in text
+        assert "Lessons Learned" in text
+        assert text.index("Spine — State Between Runs") < text.index("Lessons Learned")
+
+
+def test_no_root_rules_files():
+    assert not (REPO / "STATE.md").exists()
+    assert not (REPO / "AGENTS.md").exists()
 
 
 def test_verify_skill_has_improvement_hook():

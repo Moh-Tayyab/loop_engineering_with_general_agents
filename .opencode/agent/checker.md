@@ -1,7 +1,7 @@
 ---
 description: Strict read-only code reviewer (the Checker in the maker-checker split). Grades a Maker's diff against the spec and test results, then replies APPROVED or CHANGES REQUESTED with reasons. Use after any code change the loop is about to commit.
 mode: subagent
-model: opencode/hy3-free
+model: opencode/ling-3.0-flash-fin-free
 temperature: 0
 color: error
 steps: 30

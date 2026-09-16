@@ -33,7 +33,10 @@ def load_env() -> None:
 def scan_keywords() -> list[str]:
     """Primary AI-domain keywords: a job must match at least one of these
     to qualify (Java Developer etc. without an AI term is rejected)."""
-    raw = os.environ.get("SCRAPE_KEYWORDS", "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE")
+    raw = os.environ.get(
+        "SCRAPE_KEYWORDS",
+        "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE,Generative AI,GenAI,Deep Learning,MLOps,AI Agent,PyTorch",
+    )
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
@@ -119,7 +122,7 @@ def linkedin_feed_enabled() -> bool:
 
 
 def max_jobs_per_source() -> int:
-    return int(env_float("MAX_JOBS_PER_SOURCE", 100))
+    return int(env_float("MAX_JOBS_PER_SOURCE", 250))
 
 
 def dedup_window_days() -> int:
@@ -148,6 +151,17 @@ def lock_timeout_s() -> float:
     When two crons race, the loser waits this long, then exits cleanly with
     'another run in progress' instead of corrupting shared state."""
     return env_float("LOCK_TIMEOUT_S", 5.0)
+
+
+def lock_stale_s() -> float:
+    """Age beyond which a held lock is deemed stale (holder hung).
+
+    The watchdog (main.py): a lock-starved run reads the holder's sidecar
+    (pid + acquired_at); if the lock has been held longer than this, the loop
+    exits 1 so monitoring alerts, instead of silently skipping like a benign
+    two-cron race. 2h is generous — a legit run with CAPTCHA waits is minutes,
+    never hours."""
+    return env_float("LOCK_STALE_S", 7200.0)
 
 
 def env_or(name: str, default: str) -> str:

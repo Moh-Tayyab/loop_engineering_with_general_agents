@@ -73,8 +73,12 @@ def generate_digest(jobs: list[NormalizedJob]) -> dict[str, Any]:
         by_location[j.location_type] += 1
         companies[j.company] += 1
 
-    # top jobs by recency (newest first) then by source diversity
-    top = sorted(jobs, key=lambda j: j.fetched_at, reverse=True)[:20]
+    # top jobs by recency (posted_date first, fetched_at as tiebreak) then by source diversity
+    top = sorted(
+        jobs,
+        key=lambda j: (j.posted_date or j.fetched_at.date(), j.fetched_at),
+        reverse=True,
+    )[:20]
 
     return {
         "week_key": week_key(),

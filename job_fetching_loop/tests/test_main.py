@@ -47,7 +47,7 @@ class FakeNotifier:
         return True
 
 
-def _raw(title="Machine Learning Engineer", location="Remote"):
+def _raw(title="Machine Learning Engineer", location="Remote", posted_date=None):
     from datetime import datetime, timezone
     return RawJob(
         source="fake",
@@ -55,6 +55,7 @@ def _raw(title="Machine Learning Engineer", location="Remote"):
         company="Acme",
         url=f"https://fake.example/{title.replace(' ', '-')}",
         location=location,
+        posted_date=posted_date,
         description="We build LLM systems in Python.",
         fetched_at=datetime.now(timezone.utc),
     )
@@ -75,7 +76,7 @@ def test_run_source_pipeline(tmp_slc, monkeypatch):
     circuit = CircuitManager(state.state)
     posted_after = datetime.now(timezone.utc) - timedelta(days=1)
 
-    jobs = run_source("fake", ["AI", "LLM", "Machine Learning"], posted_after, seen, circuit, 100)
+    jobs = run_source("fake", ["AI", "LLM", "Machine Learning", "FDE"], posted_after, seen, circuit, 100)
 
     assert len(jobs) == 1
     j = jobs[0]
@@ -104,6 +105,28 @@ def test_run_source_drops_onsite_when_remote_only(tmp_slc, monkeypatch):
 
     jobs = run_source("fake", ["AI", "LLM"], datetime.now(timezone.utc), seen, circuit, 100)
     assert jobs == []
+
+
+def test_run_source_skips_jobs_outside_window(tmp_slc, monkeypatch):
+    monkeypatch.setenv("SCRAPE_KEYWORDS", "AI,LLM")
+    import src.main as main
+
+    posted_after = datetime(2026, 9, 15, 9, 0, tzinfo=timezone.utc)
+    fake = FakeScraper([
+        # Outside window (older than posted_after) -> must be dropped
+        _raw(title="AI Engineer", location="Worldwide", posted_date="2026-09-10"),
+        # Inside window -> must be kept
+        _raw(title="LLM Engineer", location="Worldwide", posted_date="2026-09-15"),
+    ])
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    seen = SeenStore()
+    state = LoopState()
+    circuit = CircuitManager(state.state)
+
+    jobs = run_source("fake", ["AI", "LLM"], posted_after, seen, circuit, 100)
+    assert len(jobs) == 1
+    assert jobs[0].title == "LLM Engineer"
 
 
 def test_run_source_failure_opens_circuit(tmp_slc, monkeypatch):
@@ -308,7 +331,9 @@ def test_main_dry_run_never_writes_slc_or_output(tmp_slc, monkeypatch):
 
 def test_main_exit_code_one_on_total_outage(tmp_slc, monkeypatch):
     """A real run where every scheduled source fails must exit 1 (monitoring
-    signal); an all-sources-down day must not look identical to a good day."""
+    signal); an all-sources-down day must not look identical to a good day.
+    A total outage must ALSO suppress the daily heartbeat — exit 1 is the
+    single alert, a 'no new jobs' Telegram would be noise on a DOWN day."""
     import src.main as main
     import src.config as cfg
 
@@ -321,18 +346,33 @@ def test_main_exit_code_one_on_total_outage(tmp_slc, monkeypatch):
         def login_required(self):
             return False
 
+    delivered: list[str] = []
+
+    class SpyNotifier:
+        kind = "spy"
+        def send_daily(self, jobs, stats):
+            delivered.append("daily")
+            return True
+        def send_weekly_digest(self, stats, top_jobs):
+            delivered.append("weekly")
+            return True
+
     monkeypatch.setattr(main, "enabled_scrapers", lambda: ["broken"])
     monkeypatch.setattr(main, "get_scraper", lambda name: Broken())
+    monkeypatch.setattr(main, "build_notifiers", lambda: [SpyNotifier()])
     cfg.OUTPUT_DIR = tmp_slc / "output"
     cfg.RUNTIME_DIR = tmp_slc / ".runtime"
 
     rc = main.main(["--window", "daily"])
     assert rc == 1
+    assert delivered == [], "total outage must skip the daily heartbeat"
 
 
 def test_main_exit_code_zero_when_a_source_succeeds_empty(tmp_slc, monkeypatch):
     """Exit 0 on a healthy quiet day (a source ran OK but found nothing) —
-    the outage signal must not fire on silence alone."""
+    the outage signal must not fire on silence alone. And a healthy 0-new-job
+    day must still send the DAILY HEARTBEAT, so 'no message' is never
+    ambiguous (0 jobs ≠ loop down)."""
     import src.main as main
     import src.config as cfg
 
@@ -345,13 +385,28 @@ def test_main_exit_code_zero_when_a_source_succeeds_empty(tmp_slc, monkeypatch):
         def login_required(self):
             return False
 
+    delivered: list[tuple] = []
+
+    class SpyNotifier:
+        kind = "spy"
+        def send_daily(self, jobs, stats):
+            delivered.append((jobs, stats))
+            return True
+        def send_weekly_digest(self, stats, top_jobs):
+            delivered.append(("weekly", stats))
+            return True
+
     monkeypatch.setattr(main, "enabled_scrapers", lambda: ["quiet"])
     monkeypatch.setattr(main, "get_scraper", lambda name: Quiet())
+    monkeypatch.setattr(main, "build_notifiers", lambda: [SpyNotifier()])
     cfg.OUTPUT_DIR = tmp_slc / "output"
     cfg.RUNTIME_DIR = tmp_slc / ".runtime"
 
     rc = main.main(["--window", "daily"])
     assert rc == 0
+    assert delivered, "healthy 0-new-job day must still send the daily heartbeat"
+    jobs, stats = delivered[0]
+    assert jobs == []
 
 
 def test_seen_store_ttl_uses_utc(tmp_slc, monkeypatch):

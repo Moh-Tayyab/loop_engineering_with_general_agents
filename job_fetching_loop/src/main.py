@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,12 +34,13 @@ from src.models import (
     is_worldwide_remote,
     job_id,
     normalize_text,
+    parse_posted_date,
     parse_salary,
     utc_now,
 )
-from src.schedule import compute_fetch_window, check_last_run_freshness
+from src.schedule import compute_fetch_window, check_last_run_freshness, next_fetch_start
 from src.circuit_breaker import CircuitManager
-from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text
+from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text, lock_holder, lock_path_for
 from src.dedup import accept_and_record, dedup_job
 from src.digest import collect_weekly_jobs, generate_digest, write_digest, week_key
 from src.notifier import build_notifiers
@@ -59,6 +61,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--linkedin-login", action="store_true", help="open LinkedIn login gate")
     p.add_argument("--list-sources", action="store_true", help="print registered sources and exit")
     p.add_argument("--keywords", type=str, default=None, help="override SCRAPE_KEYWORDS (comma-sep)")
+    p.add_argument("--serve", action="store_true",
+                   help="run as a self-scheduling daemon (no cron needed)")
     return p.parse_args(argv)
 
 
@@ -91,9 +95,14 @@ async def linkedin_login() -> int:
 
 def normalize_raw(raw: RawJob) -> NormalizedJob:
     """Convert a source-specific RawJob to the standard NormalizedJob schema."""
+    url = raw.url
+    if raw.source == "indeed" and url:
+        m = re.search(r"[?&]jk=([a-fA-F0-9]+)", url)
+        if m:
+            url = f"https://www.indeed.com/viewjob?jk={m.group(1)}"
     salary_min, salary_max, salary_currency = parse_salary(raw.salary)
     location_type = classify_location(raw.location)
-    jid = job_id(raw.url, raw.title, raw.company)
+    jid = job_id(url, raw.title, raw.company)
     snippet = (raw.description or "")[:300]
     return NormalizedJob(
         id=jid,
@@ -101,7 +110,7 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
         title_normalized=normalize_text(raw.title),
         company=raw.company,
         company_normalized=normalize_text(raw.company),
-        url=raw.url,
+        url=url,
         source=raw.source,
         location=raw.location,
         location_type=location_type,
@@ -109,7 +118,7 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
         salary_max=salary_max,
         salary_currency=salary_currency,
         job_type=classify_job_type(raw.job_type),
-        posted_date=None,
+        posted_date=parse_posted_date(raw.posted_date),
         fetched_at=raw.fetched_at,
         tags=raw.tags,
         description_snippet=snippet,
@@ -117,15 +126,24 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
     )
 
 
-def is_remotely_workable(location_type: str, location: str | None = None) -> bool:
+def is_remotely_workable(
+    location_type: str,
+    location: str | None = None,
+    source: str | None = None,
+    description: str | None = None,
+) -> bool:
     """True only when the job is clearly worldwide-remote.
 
     Used by SCRAPE_REMOTE_ONLY: drops city/state-restricted remote jobs
-    (e.g. "Remote in Brooklyn, NY") and non-remote positions entirely.
+    (e.g. "Remote in Brooklyn, NY", "Remote, OR"), US domestic-only remote jobs
+    (e.g. Indeed/Glassdoor bare "Remote"), and non-remote positions entirely.
     When location text is available, uses is_worldwide_remote for precision;
-    otherwise falls back to location_type == LOCATION_REMOTE."""
+    otherwise falls back to location_type == LOCATION_REMOTE.
+    """
     if location is not None:
-        return is_worldwide_remote(location)
+        return is_worldwide_remote(location, source=source, description=description)
+    if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
+        return False
     return location_type == LOCATION_REMOTE
 
 
@@ -208,7 +226,15 @@ def run_source(
                 log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
                 continue
             normalized = normalize_raw(raw)
-            if cfg.scrape_remote_only() and not is_remotely_workable(normalized.location_type, raw.location):
+            if normalized.posted_date and normalized.posted_date < posted_after.date():
+                log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, posted_after.date(), raw.title[:50])
+                continue
+            if cfg.scrape_remote_only() and not is_remotely_workable(
+                normalized.location_type,
+                raw.location,
+                source=source_name,
+                description=raw.description,
+            ):
                 continue
             # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
             if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
@@ -241,7 +267,7 @@ def _today_utc() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _guarded_deliver(state: LoopState, notifiers: list, prefix: str, deliver) -> None:
+def _guarded_deliver(state: LoopState, notifiers: list, prefix: str, deliver) -> set[str]:
     """Send a notification to each channel without holding the state lock during
     the slow network call.
 
@@ -249,13 +275,17 @@ def _guarded_deliver(state: LoopState, notifiers: list, prefix: str, deliver) ->
     (3) re-lock and mark only if nobody else marked while we sent. This keeps
     the lock free for scrapers during seconds of HTTP IO while still preventing
     duplicate sends across processes.
-    """
+
+    Returns the set of `kind` values confirmed delivered this call (including
+    kinds already marked for today — callers use this for weekly retry)."""
     today_str = _today_utc()
+    done: set[str] = set()
     for n in notifiers:
         key = f"{prefix}:{n.kind}"
         with state.locked(timeout_s=cfg.lock_timeout_s()):
             state.reload()
             if state.notified_today(key, today_str):
+                done.add(n.kind)
                 continue
         try:
             ok = deliver(n)
@@ -264,11 +294,13 @@ def _guarded_deliver(state: LoopState, notifiers: list, prefix: str, deliver) ->
             ok = False
         if not ok:
             continue
+        done.add(n.kind)
         with state.locked(timeout_s=cfg.lock_timeout_s()):
             state.reload()
             if not state.notified_today(key, today_str):
                 state.mark_notified(key, today_str)
                 state.save()
+    return done
 
 
 # ── Scrape pass (runs under the state lock) ─────────────────────────────────
@@ -356,12 +388,39 @@ def _run_scrape_pass(state: LoopState, circuit: CircuitManager, args: argparse.N
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
+def serve_loop() -> int:
+    """Self-scheduling daemon: run without cron.
+
+    Runs one pass immediately (today's window won't be missed if the daemon
+    starts after 09:00), then sleeps until the next weekday 09:00 fetch window
+    (Sat/Sun are idle in the spec). `next_fetch_start` and `compute_fetch_window`
+    share the same 09:00 local rule, so a cron entry stays an optional
+    accelerator, never a requirement."""
+    import time
+
+    log.info("[serve] starting self-scheduled loop (no cron needed)")
+    try:
+        while True:
+            rc = main([])
+            log.info("[serve] pass finished rc=%d", rc)
+            nxt = next_fetch_start()
+            wait_s = max(0.0, (nxt - datetime.now(timezone.utc)).total_seconds())
+            log.info("[serve] next fetch window %s (in %.1fh)", nxt.isoformat(), wait_s / 3600)
+            time.sleep(wait_s)
+    except KeyboardInterrupt:
+        log.info("[serve] stopped by user")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     cfg.load_env()
     setup_logging()
     cfg.ensure_dirs()
     load_all_scrapers()
+
+    if args.serve:
+        return serve_loop()
 
     # ── utility commands ──
     if args.linkedin_login:
@@ -420,14 +479,41 @@ def main(argv: list[str] | None = None) -> int:
                 new_jobs, digest_plan, outcomes = _run_scrape_pass(state, circuit, args, window)
                 state.save()
         except LockTimeoutError:
-            log.warning("[lock] another run is in progress — skipping this invocation")
-            return 0
+            # Lock-starved: benign overlap vs stale (hung) holder? The holder
+            # sidecar (pid + acquired_at) tells the difference. A hung browser
+            # squatting the lock must NOT look like a clean skip — exit 1 so
+            # monitoring/cron catches the DOWN day (P2 watchdog).
+            holder = lock_holder(lock_path_for(state.path))
+            stale = False
+            if holder:
+                try:
+                    acquired = datetime.fromisoformat(str(holder.get("acquired_at")))
+                    age = (datetime.now(timezone.utc) - acquired).total_seconds()
+                    pid = holder.get("pid")
+                    if age > cfg.lock_stale_s():
+                        stale = True
+                        log.error("[lock] held by pid=%s for %.0fs — stale (hung?) — exiting 1 so monitoring alerts",
+                                  pid, age)
+                    else:
+                        log.warning("[lock] another run in progress (pid=%s, %.0fs) — skipping this invocation", pid, age)
+                except (TypeError, ValueError):
+                    log.warning("[lock] another run in progress (unreadable holder) — skipping this invocation")
+            else:
+                log.warning("[lock] another run is in progress — skipping this invocation")
+            return 1 if stale else 0
 
     # ── notifications run AFTER the lock is released ──
     # Telegram/WhatsApp sends take seconds of network IO; holding the state
     # lock during them would block other cron runs. `_guarded_deliver` uses a
     # short re-lock only to check + record, never during the actual send.
-    if not args.dry_run and new_jobs:
+    #
+    # A healthy quiet day (a general multi-source run that found 0 new jobs)
+    # still sends a daily heartbeat so silence is never ambiguous — "no message"
+    # from the loop MUST mean the loop is down, not "nothing was new today".
+    # Total-outage days skip the heartbeat (exit 1 alerts downstream instead).
+    outage = (not args.dry_run and not args.source and not new_jobs
+              and outcomes and all(v != "ok" for v in outcomes.values()))
+    if not args.dry_run and not outage and (new_jobs or not args.source):
         stats = {
             "total_this_week": state.jobs_this_week(),
             "sources": {s: sum(1 for j in new_jobs if j.source == s)
@@ -438,10 +524,36 @@ def main(argv: list[str] | None = None) -> int:
     elif args.dry_run:
         log.info("[dry-run] would notify %d jobs", len(new_jobs))
 
-    if digest_plan and not args.dry_run:
-        digest, top = digest_plan
+    # ── weekly digest delivery — retried until every channel confirms ──
+    # Generation (`mark_digest`) and DELIVERY are decoupled. The digest files
+    # are written once per week, but a channel that failed (LinkedIn API hiccup,
+    # Telegram timeout) stays pending in `weekly_delivered_kinds` and is retried
+    # on whichever later run raises a healthy pass — never silently dropped just
+    # because the files already exist. `_guarded_deliver` still de-dups within a
+    # day, so a healthy run never re-sends to a channel that already confirmed.
+    wk = week_key()
+    if state.digest_generated_for() == wk and not args.dry_run and not args.source:
         notifiers = build_notifiers()
-        _guarded_deliver(state, notifiers, "weekly", lambda n: n.send_weekly_digest(digest, top))
+        today = _today_utc()
+        already = state.weekly_delivered_kinds(wk)
+        # A channel that sent today (daily dedup key set) counts as delivered.
+        already |= {n.kind for n in notifiers
+                    if n.kind not in already and state.notified_today(f"weekly:{n.kind}", today)}
+        pending = [n for n in notifiers if n.kind not in already]
+        if pending:
+            week_jobs = collect_weekly_jobs()
+            digest = generate_digest(week_jobs)
+            top = [NormalizedJob.from_dict(j) for j in digest["top_jobs"][:10]]
+            delivered = _guarded_deliver(state, pending, "weekly",
+                                         lambda n: n.send_weekly_digest(digest, top))
+            already |= delivered
+            log.info("[digest] weekly delivery: confirmed=%s pending=%s",
+                     sorted(already), sorted(n.kind for n in pending if n.kind not in already))
+        if already:
+            with state.locked(timeout_s=cfg.lock_timeout_s()):
+                state.reload()
+                state.mark_weekly_delivered(wk, already)
+                state.save()
     if not args.dry_run and new_jobs and not digest_plan:
         log.info("[done] %d new jobs discovered", len(new_jobs))
     elif not args.dry_run and not new_jobs:
@@ -458,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     # and had every scheduled source skip-or-fail would otherwise exit 0 — an
     # all-sources-down day looks identical to a good day to cron/alerting. Exit 1
     # only on a TOTAL outage (`OK` on at least one source == healthy quiet day).
-    if not args.dry_run and not args.source and not new_jobs and outcomes and all(v != "ok" for v in outcomes.values()):
+    if outage:
         log.error("[outage] every scheduled source failed this run — %s",
                   ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
         log.error("[outage] returning exit code 1 so monitoring/downstream can alert")
