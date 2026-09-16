@@ -1,0 +1,40 @@
+name: Job Fetching Loop Cloud Runner
+
+on:
+  schedule:
+    # 03:00 UTC = 08:00 AM Pakistan Standard Time (PKT), Monday to Friday
+    - cron: '0 3 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  fetch-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: job_fetching_loop
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run Autonomous Job Loop
+        working-directory: job_fetching_loop
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTIFY_TELEGRAM: "1"
+          SCRAPE_REMOTE_ONLY: "1"
+          SCRAPE_HEADLESS: "1"
+          MAX_JOBS_PER_SOURCE: "250"
+          SCRAPE_KEYWORDS: "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE,Generative AI,GenAI,Deep Learning,MLOps,AI Agent,PyTorch"
+          PYTHONPATH: .
+        run: |
+          python -m src.main
