@@ -112,6 +112,8 @@ class NormalizedJob:
     fetched_at: datetime
     tags: list[str]
     description_snippet: str
+    cv_match_score: int = 0
+    cv_match_label: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,6 +135,8 @@ class NormalizedJob:
             "fetched_at": self.fetched_at.isoformat(),
             "tags": self.tags,
             "description_snippet": self.description_snippet,
+            "cv_match_score": self.cv_match_score,
+            "cv_match_label": self.cv_match_label,
         }
 
     @classmethod
@@ -155,6 +159,8 @@ class NormalizedJob:
             fetched_at=_parse_datetime(d.get("fetched_at")),
             tags=list(d.get("tags", [])),
             description_snippet=str(d.get("description_snippet", "")),
+            cv_match_score=int(d.get("cv_match_score", 0)),
+            cv_match_label=str(d.get("cv_match_label", "")),
             raw=dict(d.get("raw", {})),
         )
 
@@ -521,11 +527,10 @@ def keyword_matches(job: RawJob, keywords: list[str]) -> bool:
 
 
 def ai_keyword_matches(job: RawJob, ai_keywords: list[str], role_keywords: list[str] | None = None) -> bool:
-    """AI-domain gate: requires at least one primary AI keyword to match.
-
-    Role keywords (Engineer/Developer) alone never qualify a job — they only
-    refine within the AI domain. A 'Java Developer' with no AI term is rejected.
+    """AI-domain gate: requires candidate CV match (Muhammad Usama profile)
+    and strictly drops blacklisted non-technical roles and unrelated tech stacks.
     """
-    if any(keyword_matches(job, [kw]) for kw in ai_keywords):
-        return True
-    return False
+    from src.matcher import match_usama_cv
+    is_match, score, label = match_usama_cv(job.title, job.description, job.tags)
+    return is_match
+

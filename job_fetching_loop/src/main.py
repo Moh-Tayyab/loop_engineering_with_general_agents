@@ -104,6 +104,8 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
     location_type = classify_location(raw.location)
     jid = job_id(url, raw.title, raw.company)
     snippet = (raw.description or "")[:300]
+    from src.matcher import match_usama_cv
+    _, cv_score, cv_label = match_usama_cv(raw.title, raw.description, raw.tags)
     return NormalizedJob(
         id=jid,
         title=raw.title,
@@ -122,6 +124,8 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
         fetched_at=raw.fetched_at,
         tags=raw.tags,
         description_snippet=snippet,
+        cv_match_score=cv_score,
+        cv_match_label=cv_label,
         raw=raw.to_dict(),
     )
 

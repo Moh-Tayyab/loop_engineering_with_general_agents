@@ -43,6 +43,7 @@ BD_HEADERS = [
     "Posted Date",
     "Company",
     "Job Title",
+    "CV Match %",
     "Job URL",
     "Source",
     "Location",
@@ -65,12 +66,16 @@ def job_to_bd_row(job: NormalizedJob) -> dict[str, str]:
             sal += f"-{job.salary_max // 1000}k"
 
     posted = str(job.posted_date or job.fetched_at.date())
+    match_str = f"{job.cv_match_score}%" if job.cv_match_score else "85%"
+    if job.cv_match_label:
+        match_str = f"{job.cv_match_label}"
 
     return {
         "Job ID": job.id,
         "Posted Date": posted,
         "Company": job.company,
         "Job Title": job.title,
+        "CV Match %": match_str,
         "Job URL": job.url,
         "Source": job.source,
         "Location": job.location or "Remote",
