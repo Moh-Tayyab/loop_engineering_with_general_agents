@@ -15,17 +15,18 @@
   Five scaffolds remain default-OFF. Cloud cron skips browser-bound sources.
 - **Stack:** Python 3.12, Playwright (local headed + persistent profiles), requests, pytest.
 - **Live end-to-end since:** Beat 26 (2026-09-14) — real Telegram delivery.
-- **Runners:** GitHub Actions `job-loop-cron.yml` (weekday 09:00 PKT, `.slc/` cache) is
-  primary when `JOB_LOOP_PRIMARY=github`; local `run_loop.sh` is standby.
+- **Runners:** GitHub Actions `job-loop-cron.yml` (weekday 09:00 PKT = `0 4 * * 1-5` UTC,
+  `.slc/` cache) and local `run_loop.sh` via crontab (weekday **08:00 PKT**, `0 8 * * 1-5`).
+  Which one is primary follows `JOB_LOOP_PRIMARY`; `both` = both fire (duplicate Telegram risk).
 - **CI gate:** `.github/workflows/test-gate.yml` runs pytest in
   `working-directory: job_fetching_loop`.
 
 ## 2. Current Beat
 
-- **Beat #:** 53 — LinkedIn 24h filter (`f_TPR=r86400`) & unattended loop fix
+- **Beat #:** 54 — On-site & Expired Job Purge + Deep Verification Gate
 - **Date:** 2026-09-16
-- **Trigger:** user request — unattended loop LinkedIn fetch & 24h filter verification
-- **Status:** Fixed unattended failure: added missing `import os` in `linkedin.py` (resolved `NameError`), shielded headless Node/Playwright socket `EPIPE` crashes. Locked 24-hour filter parameter `&sortBy=DD&f_TPR=r86400` in guest scraper. Verified 100% of jobs are from past 24h (2026-09-15 / 2026-09-16). Synced 32 verified 24h remote AI/ML/Python jobs to Google Sheets (`Sync result: True`). 234 tests green. `PASS`
+- **Trigger:** user request — on-site jobs and expired links identified in feed
+- **Status:** Fixed root causes: 1) Removed fake `(Remote)` string appending in `linkedin.py`, 2) Hardened `is_worldwide_remote` in `src/models.py` to strictly reject on-site and hybrid roles across Pakistan and regional targets, 3) Added deep detail verification on LinkedIn (`jobPosting/{id}`) to drop expired links (`expired_jd_redirect`), closed posts, hybrid, and non-remote roles, 4) Query explicitly with `remote {kw}`. 234 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -33,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |
 | 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
 | 52 | 2026-09-16 | manual (volume scaling) | **High-volume platform expansion:** Added `ArbeitnowScraper` (250+ JSON API) & `PythonOrgScraper` (PSF RSS); multi-tag RemoteOK & Jobicy data-science; expanded tech context in matcher; 17 live sources; 234 tests green | PASS — 234 tests, exit 0 |
 | 51 | 2026-09-16 | manual (prod hardening) | **Per-source timeout guard:** `run_source()` daemon worker capped `SOURCE_TIMEOUT_S=150`; timeout → circuit failure + verdict + DLQ (real runs) + loop continues. LinkedIn guest pass 45s monotonic, browser pass 90s `asyncio.wait_for`. Live: linkedin 135s/4 jobs (was >180s hang), indeed capped 150s. Scaffolds 4/5 still blocked | PASS — 228 tests, exit 0; checker APPROVED |

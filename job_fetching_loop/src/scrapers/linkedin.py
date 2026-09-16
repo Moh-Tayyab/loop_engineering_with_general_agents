@@ -182,9 +182,10 @@ class LinkedInScraper(BaseScraper):
                     log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
                              len(seen_urls))
                     return
+                remote_query = f"remote {kw}" if "remote" not in kw.lower() else kw
                 url = (
                     f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
-                    f"keywords={quote_plus(kw)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
+                    f"keywords={quote_plus(remote_query)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
                 )
                 try:
                     r = requests.get(url, headers=headers, timeout=15)
@@ -196,14 +197,44 @@ class LinkedInScraper(BaseScraper):
                     links = re.findall(r'<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"', r.text)
                     dates = re.findall(r'<time[^>]*datetime="([^"]+)"', r.text)
                     for i in range(len(titles)):
+                        if monotonic() > deadline:
+                            return
                         title = html.unescape(titles[i].strip())
                         comp = html.unescape(companies[i].strip()) if i < len(companies) else "Unknown"
-                        loc_raw = html.unescape(locations[i].strip()) if i < len(locations) else "Remote"
-                        loc = f"{loc_raw} (Remote)" if "remote" not in loc_raw.lower() else loc_raw
+                        loc = html.unescape(locations[i].strip()) if i < len(locations) else "Remote"
                         raw_lnk = links[i].split("?")[0] if i < len(links) else ""
                         if not raw_lnk or raw_lnk in seen_urls:
                             continue
                         seen_urls.add(raw_lnk)
+
+                        # Deep verification: ensure job is not expired and is genuinely remote
+                        jid_m = re.search(r"-(\d+)$", raw_lnk)
+                        if not jid_m:
+                            continue
+                        detail_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid_m.group(1)}"
+                        try:
+                            r2 = requests.get(detail_url, headers=headers, timeout=4)
+                            if r2.status_code != 200 or "expired_jd_redirect" in r2.url:
+                                log.debug("[linkedin] dropping expired/redirected: %s", raw_lnk)
+                                continue
+                            desc_m = re.search(r'<div class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', r2.text, re.DOTALL)
+                            real_desc = re.sub(r"<[^>]+>", " ", desc_m.group(1)).strip() if desc_m else f"{title} at {comp}"
+                            full_check = f"{title.lower()} {loc.lower()} {real_desc.lower()}"
+                            if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
+                                log.debug("[linkedin] dropping closed posting: %s", title)
+                                continue
+                            if "hybrid" in full_check and "remote" not in full_check:
+                                log.debug("[linkedin] dropping hybrid job: %s", title)
+                                continue
+                            if "on-site" in full_check and "remote" not in full_check:
+                                log.debug("[linkedin] dropping on-site job: %s", title)
+                                continue
+                            if not any(w in full_check for w in ("remote", "work from home", "wfh", "telecommute", "anywhere")):
+                                log.debug("[linkedin] dropping job without remote marker: %s", title)
+                                continue
+                        except Exception:
+                            continue
+
                         posted = dates[i][:10] if i < len(dates) else None
                         yield RawJob(
                             source="linkedin",
@@ -211,7 +242,7 @@ class LinkedInScraper(BaseScraper):
                             company=comp,
                             url=raw_lnk,
                             location=loc,
-                            description=f"{title} at {comp} - LinkedIn Remote",
+                            description=real_desc[:2500],
                             posted_date=posted,
                             tags=[kw],
                             fetched_at=utc_now(),

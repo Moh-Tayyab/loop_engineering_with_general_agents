@@ -338,10 +338,21 @@ def is_worldwide_remote(
         if not _is_us_restricted(text) or "worldwide" in text or "global" in text:
             return True
 
-    # In-scope regional targets (APAC, Asia Pacific, Pakistan, South Asia)
-    if any(w in text for w in ("apac", "asia pacific", "south asia", "pakistan")):
+    # In-scope regional targets (APAC, Asia Pacific, South Asia)
+    if any(w in text for w in ("apac", "asia pacific", "south asia")):
         if not _is_us_restricted(text):
             return True
+
+    # Pakistan: allow if explicitly remote (e.g. "Pakistan (Remote)", "Remote in Pakistan", WFH)
+    # but strictly reject physical on-site/hybrid city postings (e.g. "Lahore, Punjab, Pakistan", "Karachi (Hybrid)")
+    if "pakistan" in text:
+        combined = f"{text} {(description or '').lower()}"
+        if any(w in combined for w in ("hybrid", "onsite", "on-site", "in-office", "office only")):
+            return False
+        if any(w in combined for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "distributed")):
+            if not _is_us_restricted(text):
+                return True
+        return False
 
     # Standalone "anywhere"
     if "anywhere" in text and not _is_us_restricted(text):
