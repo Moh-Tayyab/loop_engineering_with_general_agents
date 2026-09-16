@@ -141,7 +141,7 @@ def sync_to_google_sheet(jobs: list[NormalizedJob]) -> bool:
         r = requests.post(
             webhook_url,
             json={"jobs": rows, "count": len(rows), "synced_at": utc_now().isoformat()},
-            timeout=20,
+            timeout=50,
             headers={"Content-Type": "application/json"},
         )
         if r.status_code in (200, 201, 302):
