@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 54 — On-site & Expired Job Purge + Deep Verification Gate
+- **Beat #:** 55 — Production Readiness Audit Resolution
 - **Date:** 2026-09-16
-- **Trigger:** user request — on-site jobs and expired links identified in feed
-- **Status:** Fixed root causes: 1) Removed fake `(Remote)` string appending in `linkedin.py`, 2) Hardened `is_worldwide_remote` in `src/models.py` to strictly reject on-site and hybrid roles across Pakistan and regional targets, 3) Added deep detail verification on LinkedIn (`jobPosting/{id}`) to drop expired links (`expired_jd_redirect`), closed posts, hybrid, and non-remote roles, 4) Query explicitly with `remote {kw}`. 234 tests green. `PASS`
+- **Trigger:** Production Readiness Audit review & remediation
+- **Status:** Resolved all 6 caveats/gaps: 1) Handled daemon thread/process leaks via `kill_child_browser_processes()` in timeout path & daemon cycle, 2) Fixed `requests` import inconsistency, 3) Added 3-attempt exponential backoff retry on Telegram API sends, 4) Added HTTP `/healthz` liveness endpoint on `HEALTH_PORT=8080` & SIGTERM/SIGINT graceful shutdown in `--serve` mode, 5) Untracked `Muhammad Usama_Resume.pdf` and added `*.pdf` to `.gitignore`, 6) Cleaned purged scaffolds from `.env.example`. 240 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |
 | 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |
 | 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
 | 52 | 2026-09-16 | manual (volume scaling) | **High-volume platform expansion:** Added `ArbeitnowScraper` (250+ JSON API) & `PythonOrgScraper` (PSF RSS); multi-tag RemoteOK & Jobicy data-science; expanded tech context in matcher; 17 live sources; 234 tests green | PASS — 234 tests, exit 0 |

@@ -80,3 +80,10 @@ def test_chrome_binary_lookup():
     """System Chrome should be present on this machine."""
     result = chrome_binary()
     assert isinstance(result, str) or result is None
+
+
+def test_kill_child_browser_processes_runs_safely():
+    from src.browser import kill_child_browser_processes
+    result = kill_child_browser_processes()
+    assert isinstance(result, int)
+    assert result >= 0

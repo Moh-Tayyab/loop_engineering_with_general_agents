@@ -19,9 +19,12 @@ Human-like behavior (to stay under Cloudflare's radar):
 from __future__ import annotations
 
 import asyncio
+import os
 import random
+import signal
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 import src.config as cfg
@@ -291,3 +294,48 @@ async def warm_up(page, home_url: str, source: str) -> None:
 async def polite_delay() -> None:
     delay = cfg.delay_ms_between_requests()
     await asyncio.sleep(delay)
+
+
+def kill_child_browser_processes() -> int:
+    """Kill any orphaned child processes (Chromium, Node/Playwright driver) spawned by this process.
+
+    Safe on Linux systems by inspecting /proc. Returns number of processes terminated.
+    On non-Linux platforms without /proc, safely returns 0 without raising.
+    """
+    my_pid = os.getpid()
+    killed = 0
+    proc_path = Path("/proc")
+    if not proc_path.exists():
+        return 0
+    try:
+        for entry in proc_path.iterdir():
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid == my_pid:
+                continue
+            try:
+                status_file = entry / "status"
+                if not status_file.exists():
+                    continue
+                content = status_file.read_text(encoding="utf-8", errors="ignore")
+                ppid = None
+                for line in content.splitlines():
+                    if line.startswith("PPid:"):
+                        ppid = int(line.split()[1])
+                        break
+                if ppid == my_pid:
+                    cmdline_file = entry / "cmdline"
+                    cmdline = cmdline_file.read_text(encoding="utf-8", errors="ignore") if cmdline_file.exists() else ""
+                    cmd_lower = cmdline.lower()
+                    if any(x in cmd_lower for x in ("chromium", "chrome", "playwright", "headless_shell")):
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                            killed += 1
+                        except (ProcessLookupError, PermissionError):
+                            pass
+            except Exception:
+                continue
+    except Exception as exc:
+        log.warning("error checking child browser processes: %s", exc)
+    return killed

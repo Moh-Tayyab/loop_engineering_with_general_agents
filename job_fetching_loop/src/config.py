@@ -240,6 +240,21 @@ def env_float(name: str, default: float) -> float:
         raise SystemExit(f"[config] {name} must be a number, got '{raw!r}'") from None
 
 
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"[config] {name} must be an integer, got '{raw!r}'") from None
+
+
+def health_port() -> int:
+    """Port for daemon /healthz endpoint in --serve mode."""
+    return env_int("HEALTH_PORT", 8080)
+
+
 def die(msg: str, code: int = 1) -> None:
     print(f"[error] {msg}", file=sys.stderr)
     raise SystemExit(code)

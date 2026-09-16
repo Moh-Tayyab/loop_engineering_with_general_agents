@@ -6,9 +6,13 @@ WhatsApp is secondary (Twilio or Cloud API, requires paid account).
 from __future__ import annotations
 
 import json
+import time
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any
+
+import requests
 
 import src.config as cfg
 from src.log import get_logger
@@ -62,26 +66,27 @@ class TelegramNotifier(Notifier):
 
     def send_document(self, file_path: Any, caption: str = "") -> bool:
         from pathlib import Path
-        import requests
 
         path = Path(file_path)
         if not path.exists() or not self.bot_token or not self.chat_id:
             return False
         url = f"{self.api_base}/sendDocument"
-        try:
-            with open(path, "rb") as f:
-                files = {"document": (path.name, f)}
-                data = {"chat_id": self.chat_id, "caption": caption[:1024]}
-                r = requests.post(url, data=data, files=files, timeout=30)
-                if r.status_code == 200:
-                    log.info("telegram document sent (%s)", path.name)
-                    return True
-                else:
-                    log.warning("telegram sendDocument failed %s: %s", r.status_code, r.text[:200])
-                    return False
-        except Exception as exc:
-            log.warning("telegram sendDocument error: %s", exc)
-            return False
+        for attempt in range(1, 4):
+            try:
+                with open(path, "rb") as f:
+                    files = {"document": (path.name, f)}
+                    data = {"chat_id": self.chat_id, "caption": caption[:1024]}
+                    r = requests.post(url, data=data, files=files, timeout=30)
+                    if r.status_code == 200:
+                        log.info("telegram document sent (%s)", path.name)
+                        return True
+                    else:
+                        log.warning("telegram sendDocument failed %s (attempt %d/3): %s", r.status_code, attempt, r.text[:200])
+            except Exception as exc:
+                log.warning("telegram sendDocument error (attempt %d/3): %s", attempt, exc)
+            if attempt < 3:
+                time.sleep(2.0 * attempt)
+        return False
 
     def _format_daily(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> str:
         today = utc_now().date().isoformat()
@@ -101,21 +106,15 @@ class TelegramNotifier(Notifier):
             for i, job in enumerate(top, 1):
                 salary = ""
                 if job.salary_min:
-                    salary = f" — {job.salary_currency or ''}{job.salary_min//1000}k"
-                    if job.salary_max:
-                        salary += f"-{job.salary_max//1000}k"
-                lines.append(f"{i}. {job.title} @ {job.company} ({job.location_type}){salary}")
-                lines.append(f"   {job.url}")
+                    salary = f" ({job.salary_currency or ''}{job.salary_min//1000}k)"
+                lines.append(f"{i}. {job.title} @ {job.company}{salary}")
+                lines.append(f"   🔗 {job.url}")
             lines.append("")
 
-        sources = stats.get("sources", {})
-        if sources:
-            lines.append("📡 Sources:")
-            for name, count in sources.items():
-                lines.append(f"  {name}: {count} jobs")
-            lines.append("")
+        if len(jobs) > 5:
+            lines.append(f"... and {len(jobs) - 5} more jobs.")
+            lines.append("Check output/jobs_" + today + ".json for the full list.")
 
-        lines.append(f"📁 Full list: output/jobs_{today}.json")
         return "\n".join(lines)
 
     def _format_weekly(self, week_stats: dict[str, Any], top_jobs: list[NormalizedJob]) -> str:
@@ -157,17 +156,12 @@ class TelegramNotifier(Notifier):
         return "\n".join(lines)
 
     def _send(self, text: str) -> bool:
-        import urllib.request
-        import urllib.parse
-
         if not self.bot_token or not self.chat_id:
             log.warning("[telegram] missing BOT_TOKEN or CHAT_ID — skipped")
             return False
         # Telegram hard-caps a message at 4096 chars; trim and note the cut.
         if len(text) > 4000:
             text = text[:3990] + "\n… [truncated]"
-        # plain text (no Markdown): job titles with `*_[]()` in them would
-        # else break parse_mode=Markdown and 400 the whole send.
         url = f"{self.api_base}/sendMessage"
         payload = json.dumps({
             "chat_id": self.chat_id,
@@ -177,19 +171,21 @@ class TelegramNotifier(Notifier):
         req = urllib.request.Request(
             url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
         )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                status = resp.status
-                if status == 200:
-                    log.info("telegram sent (%d chars)", len(text))
-                    return True
-                else:
-                    body = resp.read().decode()
-                    log.warning("telegram API returned %s: %s", status, body)
-                    return False
-        except Exception as exc:
-            log.warning("telegram send failed: %s", exc)
-            return False
+        for attempt in range(1, 4):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    status = resp.status
+                    if status == 200:
+                        log.info("telegram sent (%d chars)", len(text))
+                        return True
+                    else:
+                        body = resp.read().decode()
+                        log.warning("telegram API returned %s (attempt %d/3): %s", status, attempt, body)
+            except Exception as exc:
+                log.warning("telegram send failed (attempt %d/3): %s", attempt, exc)
+            if attempt < 3:
+                time.sleep(2.0 * attempt)
+        return False
 
 # ── WhatsApp (Twilio) ───────────────────────────────────────────────────────
 

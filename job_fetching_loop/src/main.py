@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import http.server
 import json
 import re
 import sys
@@ -64,6 +65,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--keywords", type=str, default=None, help="override SCRAPE_KEYWORDS (comma-sep)")
     p.add_argument("--serve", action="store_true",
                    help="run as a self-scheduling daemon (no cron needed)")
+    p.add_argument("--health-port", type=int, default=None,
+                   help="port for HTTP health check endpoint (/healthz) in --serve mode")
     return p.parse_args(argv)
 
 
@@ -250,6 +253,13 @@ def run_source(
     if worker.is_alive():
         log.error("[%s] timed out after %.0fs — recording failure, continuing loop",
                   source_name, timeout_s)
+        try:
+            from src.browser import kill_child_browser_processes
+            cleaned = kill_child_browser_processes()
+            if cleaned:
+                log.info("[%s] cleaned up %d orphaned browser process(es)", source_name, cleaned)
+        except Exception as exc:
+            log.warning("[%s] error cleaning up browser processes: %s", source_name, exc)
         if outcomes is not None:
             outcomes[source_name] = "timeout"
         circuit.record_failure(source_name)
@@ -474,27 +484,119 @@ def _run_scrape_pass(state: LoopState, circuit: CircuitManager, args: argparse.N
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
-def serve_loop() -> int:
+class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+    """Minimal HTTP handler serving /healthz and / for liveness probes in --serve mode."""
+    daemon_state: dict[str, Any] = {}
+
+    def do_GET(self) -> None:
+        if self.path in ("/healthz", "/health"):
+            body = json.dumps(self.daemon_state, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/":
+            body = b"Job Fetching Loop Daemon OK\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+def start_health_server(port: int, state_ref: dict[str, Any]) -> tuple[Any, threading.Thread | None]:
+    from http.server import ThreadingHTTPServer
+
+    HealthCheckHandler.daemon_state = state_ref
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True, name="health-server")
+        thread.start()
+        log.info("[serve] health check server listening on http://0.0.0.0:%d/healthz", port)
+        return server, thread
+    except Exception as exc:
+        log.warning("[serve] could not bind health server on port %d: %s", port, exc)
+        return None, None
+
+
+def serve_loop(health_port: int | None = None, shutdown_event: threading.Event | None = None) -> int:
     """Self-scheduling daemon: run without cron.
 
-    Runs one pass immediately (today's window won't be missed if the daemon
-    starts after 09:00), then sleeps until the next weekday 09:00 fetch window
-    (Sat/Sun are idle in the spec). `next_fetch_start` and `compute_fetch_window`
-    share the same 09:00 local rule, so a cron entry stays an optional
-    accelerator, never a requirement."""
-    import time
+    Includes /healthz HTTP liveness endpoint, graceful SIGTERM/SIGINT signal
+    handling, responsive sleeping (interruptible shutdown), and browser process
+    cleanup after each pass.
+    """
+    import signal
+    from src.browser import kill_child_browser_processes
+
+    port = health_port if health_port is not None else cfg.health_port()
+    if shutdown_event is None:
+        shutdown_event = threading.Event()
+
+    def _sig_handler(signum: int, _frame: Any) -> None:
+        try:
+            sig_name = signal.Signals(signum).name
+        except Exception:
+            sig_name = str(signum)
+        log.info("[serve] received %s — initiating graceful shutdown", sig_name)
+        shutdown_event.set()
+
+    if threading.current_thread() is threading.main_thread():
+        try:
+            signal.signal(signal.SIGTERM, _sig_handler)
+            signal.signal(signal.SIGINT, _sig_handler)
+        except (ValueError, AttributeError):
+            pass
+
+    daemon_state: dict[str, Any] = {
+        "status": "starting",
+        "started_at": utc_now().isoformat(),
+        "passes_completed": 0,
+        "last_pass_rc": None,
+        "last_pass_finished_at": None,
+        "next_fetch_window": None,
+    }
+    server, _ = start_health_server(port, daemon_state)
 
     log.info("[serve] starting self-scheduled loop (no cron needed)")
     try:
-        while True:
+        while not shutdown_event.is_set():
+            daemon_state["status"] = "running"
             rc = main([])
+            daemon_state["last_pass_rc"] = rc
+            daemon_state["last_pass_finished_at"] = utc_now().isoformat()
+            daemon_state["passes_completed"] += 1
             log.info("[serve] pass finished rc=%d", rc)
+
+            kill_child_browser_processes()
+
             nxt = next_fetch_start()
+            daemon_state["next_fetch_window"] = nxt.isoformat()
+            daemon_state["status"] = "idle"
             wait_s = max(0.0, (nxt - datetime.now(timezone.utc)).total_seconds())
             log.info("[serve] next fetch window %s (in %.1fh)", nxt.isoformat(), wait_s / 3600)
-            time.sleep(wait_s)
+
+            if shutdown_event.wait(timeout=wait_s):
+                break
     except KeyboardInterrupt:
-        log.info("[serve] stopped by user")
+        log.info("[serve] keyboard interrupt caught")
+    finally:
+        daemon_state["status"] = "stopping"
+        if server:
+            try:
+                server.shutdown()
+                server.server_close()
+            except Exception:
+                pass
+        kill_child_browser_processes()
+        log.info("[serve] daemon stopped cleanly")
     return 0
 
 
@@ -506,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     load_all_scrapers()
 
     if args.serve:
-        return serve_loop()
+        return serve_loop(health_port=args.health_port)
 
     # ── utility commands ──
     if args.linkedin_login:

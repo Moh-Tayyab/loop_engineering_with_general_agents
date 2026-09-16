@@ -512,3 +512,50 @@ def test_run_scrape_pass_honors_window_sources(tmp_slc, monkeypatch):
     rc = main.main(["--dry-run"])
     assert rc == 0
     assert called == ["linkedin"]
+
+
+def test_health_check_server_endpoints():
+    import urllib.request
+    import urllib.error
+    import src.main as main
+
+    state = {"status": "running", "passes_completed": 3}
+    server, thread = main.start_health_server(0, state)
+    assert server is not None
+    port = server.server_address[1]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode())
+            assert data["status"] == "running"
+            assert data["passes_completed"] == 3
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as resp:
+            assert resp.status == 200
+            assert b"OK" in resp.read()
+
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/invalid", timeout=5)
+        except urllib.error.HTTPError as err:
+            assert err.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_serve_loop_graceful_shutdown(monkeypatch):
+    import threading
+    import src.main as main
+
+    shutdown_ev = threading.Event()
+    passes = []
+
+    def mock_main(args):
+        passes.append(args)
+        shutdown_ev.set()
+        return 0
+
+    monkeypatch.setattr(main, "main", mock_main)
+    rc = main.serve_loop(health_port=0, shutdown_event=shutdown_ev)
+    assert rc == 0
+    assert len(passes) == 1
