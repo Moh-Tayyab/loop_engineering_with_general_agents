@@ -334,12 +334,8 @@ def _run_source_impl(
                 log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
                 continue
             normalized = normalize_raw(raw)
-            # Date window: allow curated boards a 10-day discovery window for active postings,
-            # while keeping daily fast sources within the configured posted_after window.
-            cutoff_date = (posted_after - timedelta(days=10)).date() if source_name in (
-                "himalayas", "remoteok", "remotive", "jobicy", "weworkremotely", "wellfound", "nodesk",
-                "arbeitnow", "python_org"
-            ) else posted_after.date()
+            # Strict date window across all platforms: only accept jobs posted within the active window (24h daily).
+            cutoff_date = posted_after.date()
             if normalized.posted_date and normalized.posted_date < cutoff_date:
                 log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
                 continue

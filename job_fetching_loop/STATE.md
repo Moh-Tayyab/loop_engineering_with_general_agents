@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 56 — EPIPE Shield, 24h Filter Alignment, Safe XML Parsing, & Main Branch Sync
+- **Beat #:** 57 — Enforce Universal 24h Cutoff Across All 17 Platforms
 - **Date:** 2026-09-16
-- **Trigger:** Audit critical findings & debt review (stale cloud code, EPIPE crash shield, 24h filter, defusedxml)
-- **Status:** 1) Verified & enforced strict 24h filter (`fromage=1` on Indeed, `fromAge=1` on Glassdoor, `r86400` on LinkedIn, pipeline `cutoff_date` gate); 2) Shielded Playwright `write EPIPE` / connection closed in `browser.py` & fail-isolated `run_source` so scraper exceptions never crash process; 3) Replaced `xml.etree.ElementTree` with `defusedxml` across all RSS feeds; 4) Updated UAs to Chrome 133; 5) Set `JOB_LOOP_PRIMARY=local`; 6) Added concurrent FileLock & 24h filter unit tests; 7) Prepared merge to `main`. 242 tests passing. `PASS`
+- **Trigger:** user request — eliminate 10-day relaxation on curated boards, enforce strict 24h cutoff on every source
+- **Status:** Removed 10-day relaxation from `src/main.py` line 337. `cutoff_date = posted_after.date()` is now universal across all platforms (LinkedIn, Indeed, Glassdoor, RemoteOK, Himalayas, Remotive, Jobicy, WeWorkRemotely, Wellfound, NoDesk, Arbeitnow, PythonOrg, etc.). Added `test_run_source_strict_24h_window_on_curated_boards`. 243 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 57 | 2026-09-16 | user request (universal 24h) | **Universal 24h Cutoff:** Removed 10-day relaxation for curated boards in `src/main.py`; enforced strict `cutoff_date = posted_after.date()` for every platform; added regression test; 243 tests green | PASS — 243 tests, exit 0 |
 | 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |
 | 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |
 | 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |

@@ -129,6 +129,27 @@ def test_run_source_skips_jobs_outside_window(tmp_slc, monkeypatch):
     assert jobs[0].title == "LLM Engineer"
 
 
+def test_run_source_strict_24h_window_on_curated_boards(tmp_slc, monkeypatch):
+    """Confirm curated boards now enforce strict 24-hour cutoff (no 10-day relaxation)."""
+    monkeypatch.setenv("SCRAPE_KEYWORDS", "AI,LLM")
+    import src.main as main
+
+    posted_after = datetime(2026, 9, 15, 9, 0, tzinfo=timezone.utc)
+    fake = FakeScraper([
+        _raw(title="AI Engineer", location="Worldwide", posted_date="2026-09-12"),
+        _raw(title="Staff AI Engineer", location="Worldwide", posted_date="2026-09-15"),
+    ])
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    seen = SeenStore()
+    state = LoopState()
+    circuit = CircuitManager(state.state)
+
+    jobs = run_source("himalayas", ["AI", "LLM"], posted_after, seen, circuit, 100)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Staff AI Engineer"
+
+
 def test_run_source_failure_opens_circuit(tmp_slc, monkeypatch):
     monkeypatch.setenv("CIRCUIT_BREAKER_THRESHOLD", "1")
     import src.main as main
