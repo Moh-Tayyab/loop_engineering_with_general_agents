@@ -163,3 +163,4 @@ Durable lessons from past beats (added via the §10 habit; keep each to one line
 - `mark_notified` prunes `v < today`; keep user-date strings out — always UTC.
 - Two concurrent crons → one wins the FileLock, the loser logs `[lock]` and exits 0.
   That's correct behavior, not an error.
+- **On-site/Hybrid guard:** `is_worldwide_remote` must strictly reject physical city postings in Pakistan/foreign hubs unless an explicit remote/wfh marker is present; never fake `(Remote)` in scrapers. Drop LinkedIn redirects (`expired_jd_redirect`) as expired.

@@ -133,6 +133,28 @@ def test_is_worldwide_remote_rejects_city_names():
     assert not is_worldwide_remote("Remote, Oregon")
     assert not is_worldwide_remote("Remote OR")
     assert not is_worldwide_remote("Remote Oregon")
+
+
+def test_is_worldwide_remote_rejects_pakistan_onsite_and_hybrid():
+    """On-site and hybrid office roles in Pakistan must be strictly rejected."""
+    assert not is_worldwide_remote("Lahore, Punjab, Pakistan")
+    assert not is_worldwide_remote("Karachi Division, Sindh, Pakistan")
+    assert not is_worldwide_remote("Islamabad, Pakistan")
+    assert not is_worldwide_remote("Karachi, Pakistan", description="Work in our Clifton office")
+    assert not is_worldwide_remote("Karachi (Hybrid), Pakistan")
+    assert not is_worldwide_remote("Lahore, Pakistan", description="Hybrid working model: 3 days in office, 2 days home")
+    # But genuine remote in Pakistan is accepted:
+    assert is_worldwide_remote("Pakistan (Remote)")
+    assert is_worldwide_remote("Lahore (Remote), Pakistan")
+    assert is_worldwide_remote("Lahore, Pakistan", description="This position is 100% remote work from home.")
+
+
+def test_is_worldwide_remote_rejects_unverified_foreign_cities():
+    """Cities without remote markers must never be assumed remote."""
+    assert not is_worldwide_remote("Ümraniye, Istanbul, Türkiye")
+    assert not is_worldwide_remote("Toronto, Ontario, Canada")
+    assert not is_worldwide_remote("San Jose, CA")
+    assert not is_worldwide_remote("London, England, United Kingdom")
     assert not is_worldwide_remote("Remote, Coos County, OR")
     assert not is_worldwide_remote("Remote OR 97458")
 
