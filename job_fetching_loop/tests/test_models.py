@@ -155,8 +155,31 @@ def test_is_worldwide_remote_rejects_unverified_foreign_cities():
     assert not is_worldwide_remote("Toronto, Ontario, Canada")
     assert not is_worldwide_remote("San Jose, CA")
     assert not is_worldwide_remote("London, England, United Kingdom")
+    assert not is_worldwide_remote("Berlin, Germany")
+    assert not is_worldwide_remote("Paris, France")
+    assert not is_worldwide_remote("Tokyo, Japan")
+    assert not is_worldwide_remote("Bangalore, India")
+    assert not is_worldwide_remote("Dubai, UAE")
+    assert not is_worldwide_remote("Austin, TX")
+    assert not is_worldwide_remote("Dublin, OH")
     assert not is_worldwide_remote("Remote, Coos County, OR")
     assert not is_worldwide_remote("Remote OR 97458")
+
+
+def test_is_worldwide_remote_allowed_tags():
+    """Explicitly verify the allowed location tags: worldwide, anywhere, work from home, WFH, APAC, Pakistan remote."""
+    assert is_worldwide_remote("Worldwide")
+    assert is_worldwide_remote("Work from anywhere")
+    assert is_worldwide_remote("Anywhere in the world")
+    assert is_worldwide_remote("Anywhere")
+    assert is_worldwide_remote("Work from home")
+    assert is_worldwide_remote("WFH")
+    assert is_worldwide_remote("APAC")
+    assert is_worldwide_remote("Asia Pacific")
+    assert is_worldwide_remote("Pakistan (Remote)")
+    assert is_worldwide_remote("Remote in Pakistan")
+    assert is_worldwide_remote("Global")
+    assert is_worldwide_remote("Global Remote")
 
 
 def test_is_worldwide_remote_us_domestic_boards_reject_bare_remote():

@@ -197,7 +197,9 @@ _WORLDWIDE_MARKERS = (
     "worldwide", "work from anywhere", "anywhere in the world",
     "global remote", "globally remote", "remote - global", "remote (global)",
     "remote - worldwide", "remote (worldwide)", "international remote",
-    "remote international", "pakistan", "apac", "asia pacific", "south asia",
+    "remote international", "work from home", "wfh", "anywhere",
+    "pakistan remote", "remote in pakistan", "pakistan (remote)", "remote (pakistan)", "remote - pakistan",
+    "apac remote", "asia pacific remote", "south asia remote", "remote (apac)",
 )
 
 
@@ -333,8 +335,11 @@ def is_worldwide_remote(
         if not any(m in combined for m in _WORLDWIDE_MARKERS):
             return False
 
-    # Definitive worldwide or global indicators
-    if any(w in text for w in ("worldwide", "work from anywhere", "anywhere in the world", "global")):
+    # Definitive worldwide / anywhere / work-from-home indicators
+    if any(w in text for w in (
+        "worldwide", "work from anywhere", "anywhere in the world", "global",
+        "work from home", "wfh", "telecommute", "100% remote", "fully remote"
+    )):
         if not _is_us_restricted(text) or "worldwide" in text or "global" in text:
             return True
 
