@@ -67,7 +67,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 ## 10. Next Actionable Tasks (job loop)
 
-1. **Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/revoke`, then update `.env` and GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`.
+1. ~~**Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/revoke`~~ (Done 2026-09-16). **Next:** Update `.env` and GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` with the newly generated token.
 2. Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.
 3. Local crontab is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
 4. Indeed/Glassdoor remain local-headed only; cloud never waits on CAPTCHA.
@@ -75,6 +75,6 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 ## 11. Human Gate Decisions (job loop)
 
-- 2026-09-14 — Telegram token was pasted in chat → **MUST rotate** via BotFather `/revoke` before treating the bot as trusted. Store the new token in Actions secrets; never commit `.env`.
+- 2026-09-14 — Telegram token was pasted in chat → Rotated via BotFather `/revoke` on 2026-09-16. Store the new token in Actions secrets; never commit `.env`.
 - 2026-09-16 — Cloud production is HTTP/JSON/RSS only. Headed CAPTCHA boards are a local ops cost, not a cloud feature.
 - 2026-09-14 — Indeed/Glassdoor CAPTCHAs stay fail-closed.
