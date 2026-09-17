@@ -167,8 +167,10 @@ def is_remotely_workable(
     When location text is available, uses is_worldwide_remote for precision;
     otherwise falls back to location_type == LOCATION_REMOTE.
     """
-    from src.models import is_title_restricted
+    from src.models import is_title_restricted, is_description_restricted
     if is_title_restricted(title):
+        return False
+    if is_description_restricted(description):
         return False
     if location_type != LOCATION_REMOTE:
         return False

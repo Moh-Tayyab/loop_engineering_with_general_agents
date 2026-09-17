@@ -203,6 +203,19 @@ def test_wellfound_restricted_country_list_is_not_remote():
     assert raw.location != "Remote"  # downstream classify_location drops this
 
 
+def test_wellfound_parses_onsite_item_with_location_names():
+    item = {
+        **WELLFOUND_ITEM,
+        "remote": False,
+        "locationNames": ["Santa Clara"],
+        "acceptedRemoteLocationNames": [],
+    }
+    raw = WellfoundScraper()._parse_item(item, "AI")
+    assert raw is not None
+    assert raw.location == "Santa Clara"
+    assert raw.job_type is None
+
+
 def test_wellfound_missing_title_returns_none():
     item = {**WELLFOUND_ITEM, "title": ""}
     assert WellfoundScraper()._parse_item(item, "AI") is None

@@ -285,6 +285,43 @@ def is_title_restricted(title: str | None) -> bool:
     return False
 
 
+_DESCRIPTION_RESTRICTION_PATTERNS = [
+    # US / North America geographic or work authorization restrictions
+    r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
+    r"\bmust\s+be\s+in\s+the\s+(?:us|usa|united states)\b",
+    r"\bmust\s+be\s+located\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america)\b",
+    r"\b(?:us|usa)\s+(?:citizenship|citizen|resident|residency|based|candidates?)\s+only\b",
+    r"\b(?:us|usa|u\.s\.)\s+citizens?\s+or\s+permanent\s+residents?\b",
+    r"\b(?:must\s+be\s+)?(?:legally\s+)?authorized\s+to\s+work\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
+    r"\bwork\s+authorization\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
+    r"\b(?:us|u\.s\.)\s+work\s+permit\b",
+    r"\bwe\s+(?:are\s+unable\s+to|cannot|do\s+not)\s+(?:sponsor|hire\s+outside|hire\s+internationally)\b",
+    r"\b(?:no\s+c2c|w-?2\s+only|w2\s+candidates?)\b",
+    r"\bsecurity\s+clearance\s+required\b",
+    r"\bactive\s+secret\s+clearance\b",
+    # Specific timezone exclusions that cannot be accommodated from Pakistan (UTC+5)
+    r"\bwithin\s+\d+\s+hours\s+of\s+(?:london|uk|gmt|cet|bst)\b",
+    r"\bmust\s+be\s+based\s+in\s+(?:cet|bst|gmt)\b",
+    # Onsite or hybrid requirements
+    r"\bhybrid\b.*(?:in\s+office|days\s+(?:a|per)\s+week|in\s+the\s+office|office\s+based)",
+    r"\b(?:1|2|3|4)\s*days\s+(?:a|per)\s+week\s+(?:in|from)\s+(?:the\s+)?office",
+    r"\b(?:onsite|on-site)\b.*(?:in\s+\w+|office\b)",
+    r"\brelocation\s+(?:required|assistance\s+to)\b",
+    r"\bmust\s+be\s+able\s+to\s+commute\b",
+]
+
+
+def is_description_restricted(description: str | None) -> bool:
+    """True if description contains geographic/residency/onsite restrictions excluding Pakistan remote."""
+    if not description:
+        return False
+    low = description.lower()
+    for pattern in _DESCRIPTION_RESTRICTION_PATTERNS:
+        if re.search(pattern, low):
+            return True
+    return False
+
+
 def _is_us_restricted(text: str) -> bool:
     """True when the location ties work to a specific US state/city/region.
 
@@ -424,6 +461,8 @@ def is_worldwide_remote(
     if not location:
         return False
     if is_title_restricted(title):
+        return False
+    if is_description_restricted(description):
         return False
     text = location.lower().strip()
 

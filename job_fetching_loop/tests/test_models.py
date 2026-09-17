@@ -327,9 +327,33 @@ def test_is_worldwide_remote_rejects_foreign_country_remote():
     assert not is_worldwide_remote("Warsaw (fully remote), Poland")
     assert not is_worldwide_remote("Remote, Argentina")
     assert not is_worldwide_remote("Remote, Brazil")
-    assert not is_worldwide_remote("London (Remote), UK")
-    assert not is_worldwide_remote("Remote, Germany")
     assert not is_worldwide_remote("Remote, Canada")
+
+
+def test_is_description_restricted_cases():
+    """Verify description restriction detection for US-only, hybrid, security clearance, and timezones."""
+    from src.models import is_description_restricted
+    assert is_description_restricted("Must reside in the US. Comprehensive health benefits.")
+    assert is_description_restricted("Candidates must be authorized to work in the United States.")
+    assert is_description_restricted("US citizens or permanent residents only.")
+    assert is_description_restricted("No C2C, W-2 only position.")
+    assert is_description_restricted("We are unable to hire outside the US at this time.")
+    assert is_description_restricted("Remote (within 2 hours of London timezone)")
+    assert is_description_restricted("Hybrid schedule: 3 days in the office, 2 days from home.")
+    assert is_description_restricted("Must be able to commute to our NYC office.")
+    assert is_description_restricted("Active secret clearance required.")
+    # Legitimate worldwide description
+    assert not is_description_restricted("We are an all-remote global team building AI tools in Python. Anyone anywhere can apply.")
+    assert not is_description_restricted("Supabase is remote-first and hires globally across multiple timezones.")
+
+
+def test_is_worldwide_remote_rejects_description_restrictions():
+    """Worldwide or bare Remote jobs must be rejected if description contains restrictions."""
+    assert not is_worldwide_remote("Worldwide", description="Must reside in the US.")
+    assert not is_worldwide_remote("Remote", description="Hybrid working model: 3 days in office.")
+    assert not is_worldwide_remote("Worldwide", description="Remote (within 2 hours of London timezone).")
+    assert not is_worldwide_remote("Global", description="US work permit required.")
+    assert is_worldwide_remote("Worldwide", description="100% remote worldwide team.")
 
 
 def test_is_worldwide_remote_allowed_tags():

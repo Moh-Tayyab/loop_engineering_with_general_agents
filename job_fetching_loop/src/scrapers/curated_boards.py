@@ -471,11 +471,15 @@ class WellfoundScraper(CuratedBoardScraper):
         url = (item.get("_url") or "").strip()
         if not title or not url:
             return None
+        is_remote = bool(item.get("remote"))
         accepted = item.get("acceptedRemoteLocationNames")
+        listed = item.get("locationNames") or []
         if isinstance(accepted, list) and accepted:
             loc = ", ".join(str(x) for x in accepted)
-        else:
+        elif is_remote:
             loc = "Remote"
+        else:
+            loc = ", ".join(str(x) for x in listed) if listed else "On-site"
         role = None
         primary = item.get("primaryRole")
         if isinstance(primary, dict):
@@ -661,8 +665,13 @@ class ArbeitnowScraper(BaseScraper):
             seen_urls.add(url)
             title = html.unescape((it.get("title") or "").strip())
             company = html.unescape((it.get("company_name") or "Unknown").strip())
+            raw_loc = (it.get("location") or "").strip()
             raw_tags = it.get("tags") or []
             tags = [str(t).lower() for t in raw_tags if t]
+            if "hybrid" in tags or "hybrid work" in tags or not it.get("remote"):
+                loc = raw_loc or "Hybrid"
+            else:
+                loc = raw_loc or "Worldwide"
             desc = html.unescape((it.get("description") or "").strip())
             created_at = it.get("created_at")
             posted_date = None
@@ -678,7 +687,7 @@ class ArbeitnowScraper(BaseScraper):
                 title=title,
                 company=company,
                 url=url,
-                location="Worldwide",
+                location=loc,
                 posted_date=posted_date,
                 description=desc[:2000],
                 tags=tags or ["remote"],
