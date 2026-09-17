@@ -23,17 +23,18 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 63 — Salary Comma Parser, Strict 24h Datetime Comparison & Cron Hour Alignment
+- **Beat #:** 64 — CI Alignment, Dead Code Purge, Google Sheets Retry/DLQ & Worker Thread Join
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix salary parser comma splitting, strict 24h datetime comparison, and next_fetch_start hour alignment
-- **Status:** Resolved all 3 medium audit findings: stripped commas in `parse_salary` so `$150,000 - $200,000` parses cleanly to `(150000, 200000, "$")` and `$120,000` to `(120000, None, "$")`; added `parse_posted_datetime` and strict datetime comparison in `_run_source_impl` whenever ISO timestamps are available (preventing >24h false admissions); made `next_fetch_start` configurable via `SCRAPE_RUN_HOUR` (aligning with local 08:00 PKT or cloud 09:00 PKT); added regression tests; 263 tests green. `PASS`
+- **Trigger:** user request — fix LOW audit items (CI drift, dead code/dev deps, Sheets retry/DLQ, daemon thread join)
+- **Status:** Resolved all LOW audit findings: aligned `actions/checkout@v6` across all workflows; separated `pytest` out of `requirements.txt` into `requirements-dev.txt`; purged dead code (`_KNOWN_COMPANIES` and `_parse_company` in `apac_remote.py` & `pakistan_remote.py`); added 3-attempt exponential backoff and `DeadLetterQueue` recording to `sync_to_google_sheet`; added grace `worker.join(0.5)` on scraper timeouts in `src/main.py`; 265 tests passing. `PASS`
 
 ## 3. Beat Log
 
-compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry). Duplicate 41–44 rows dropped.
+compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 64 | 2026-09-17 | user request (low audit items) | **CI Checkout v6, Dead Code Purge, Sheets Retry/DLQ & Worker Join:** Aligned workflows to `actions/checkout@v6`; separated dev deps into `requirements-dev.txt`; deleted dead code in scrapers; added retries & DLQ recording to `sync_to_google_sheet`; added timeout worker join grace in `src/main.py`; 265 tests green | PASS — 265 tests, exit 0 |
 | 63 | 2026-09-17 | user request (salary, 24h datetime, cron hour) | **Salary Comma Parser, 24h Datetime & Cron Hour:** Stripped commas in `parse_salary`; compared ISO datetimes in `_run_source_impl`; added `SCRAPE_RUN_HOUR` to `next_fetch_start`; added regression tests; 263 tests green | PASS — 263 tests, exit 0 |
 | 62 | 2026-09-17 | user request (exact dedup mismatch) | **Canonical URL Exact-Dedup Alignment:** Canonicalized URLs in `job_id`; updated `dedup_job` to use `normalized.id` and pass `normalized` in `_run_source_impl`; added regression test; 259 tests green | PASS — 259 tests, exit 0 |
 | 61 | 2026-09-17 | user request (feed gate & timeout dedup) | **Feed Gate Unblock & Timeout Dedup Safety:** Dropped undocumented `LINKEDIN_FEED_PASS`; deferred dedup `accept_and_record` to caller thread on confirmed success (no burning jobs on timeout, no cross-thread seen race); 258 tests green | PASS — 258 tests, exit 0 |
@@ -47,16 +48,6 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 | 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
 | 52 | 2026-09-16 | manual (volume scaling) | **High-volume platform expansion:** Added `ArbeitnowScraper` (250+ JSON API) & `PythonOrgScraper` (PSF RSS); multi-tag RemoteOK & Jobicy data-science; expanded tech context in matcher; 17 live sources; 234 tests green | PASS — 234 tests, exit 0 |
 | 51 | 2026-09-16 | manual (prod hardening) | **Per-source timeout guard:** `run_source()` daemon worker capped `SOURCE_TIMEOUT_S=150`; timeout → circuit failure + verdict + DLQ (real runs) + loop continues. LinkedIn guest pass 45s monotonic, browser pass 90s `asyncio.wait_for`. Live: linkedin 135s/4 jobs (was >180s hang), indeed capped 150s. Scaffolds 4/5 still blocked | PASS — 228 tests, exit 0; checker APPROVED |
-| 50 | 2026-09-16 | manual | Local+cloud prod: Actions `.slc/` cache, concurrency, failure Telegram, JOB_LOOP_PRIMARY, cloud skip browser sources, run_loop.sh flock, unscored CV export, nodesk default-on | PASS — pytest exit 0 (maker); checker pending |
-| 49 | 2026-09-16 | manual | Google Sheets & BD CSV + Telegram document upload | PASS — 213 tests |
-| 48 | 2026-09-16 | manual | Schedule gates (Mon 3d, Tue–Thu 24h, Fri LinkedIn-only) | PASS — 209 tests |
-| 47 | 2026-09-16 | manual | Jobicy + keyword/volume expansion | PASS — 208 tests |
-| 46 | 2026-09-16 | manual | WeWorkRemotely RSS | PASS — 206 tests |
-| 45 | 2026-09-16 | manual | LinkedIn guest Worldwide+Pakistan location filter | PASS — 204 tests |
-| 44 | 2026-09-16 | manual | LinkedIn guest endpoint fallback | PASS — 204 tests |
-| 43 | 2026-09-16 | manual | RemoteOK + crontab runner | PASS — 204 tests |
-| 42 | 2026-09-16 | manual | Global/APAC remote + Indeed canonical URLs | PASS — 200 tests |
-| 41 | 2026-09-16 | manual | US-domestic / Remote OR filter hardening | PASS — 197 tests |
 
 ## 4. Budget & Stopping Conditions
 

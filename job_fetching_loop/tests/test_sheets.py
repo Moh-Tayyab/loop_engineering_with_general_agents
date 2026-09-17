@@ -73,3 +73,49 @@ def test_sync_to_google_sheet_success(monkeypatch):
     monkeypatch.setenv("GOOGLE_SHEET_WEBHOOK_URL", "https://script.google.com/macros/s/test/exec")
 
     assert sync_to_google_sheet([_sample_job()])
+
+
+def test_sync_to_google_sheet_retry_recovers(monkeypatch):
+    from unittest.mock import MagicMock
+    import requests
+
+    attempts = 0
+
+    def mock_post(*a, **k):
+        nonlocal attempts
+        attempts += 1
+        resp = MagicMock()
+        if attempts == 1:
+            resp.status_code = 500
+            resp.text = "Internal Server Error"
+        else:
+            resp.status_code = 200
+        return resp
+
+    monkeypatch.setattr(requests, "post", mock_post)
+    monkeypatch.setenv("GOOGLE_SHEET_WEBHOOK_URL", "https://script.google.com/macros/s/test/exec")
+
+    assert sync_to_google_sheet([_sample_job()], retries=2, backoff_s=0.01)
+    assert attempts == 2
+
+
+def test_sync_to_google_sheet_failure_records_in_dlq(tmp_slc, monkeypatch):
+    from unittest.mock import MagicMock
+    import requests
+    from src.state import DeadLetterQueue
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 503
+    mock_resp.text = "Service Unavailable"
+    monkeypatch.setattr(requests, "post", lambda *a, **k: mock_resp)
+    monkeypatch.setenv("GOOGLE_SHEET_WEBHOOK_URL", "https://script.google.com/macros/s/test/exec")
+
+    success = sync_to_google_sheet([_sample_job("job-dlq-test")], retries=2, backoff_s=0.01)
+    assert not success
+
+    dlq = DeadLetterQueue()
+    assert len(dlq.items) == 1
+    assert dlq.items[0]["source"] == "google_sheets"
+    assert "job-dlq-test" in dlq.items[0]["job_ids"]
+    assert "RetriesExhausted" in dlq.items[0]["error"]
+

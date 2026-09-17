@@ -10,9 +10,6 @@ from src.models import RawJob
 from . import register_scraper
 from .base import BaseScraper
 
-_KNOWN_COMPANIES = ("Netomi", "Mactores", "AlphaSense", "Speechify", "GitLab")
-
-
 @register_scraper
 class APACRemoteScraper(BaseScraper):
     name = "apac_remote"
@@ -42,10 +39,6 @@ class APACRemoteScraper(BaseScraper):
                     yield job
             await polite_delay()
             await page.close()
-
-    def _parse_company(self, card) -> str:
-        card_html_company = card.query_selector("img.company-list-img, img[src*='s3.amazonaws']")
-        return "Unknown (APAC)"
 
     async def _parse_card(self, card, keywords: list[str]) -> RawJob | None:
         # structure: company / date / type / TITLE / location / salary / tags

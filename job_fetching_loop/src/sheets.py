@@ -127,12 +127,22 @@ def export_jobs_to_csv(jobs: list[NormalizedJob], output_dir: Path) -> Path:
     return csv_path
 
 
-def sync_to_google_sheet(jobs: list[NormalizedJob], action: str = "append") -> bool:
+def sync_to_google_sheet(
+    jobs: list[NormalizedJob],
+    action: str = "append",
+    retries: int = 3,
+    backoff_s: float = 1.0,
+    timeout: float = 15.0,
+) -> bool:
     """Push new jobs to a Google Sheet Webhook endpoint if configured.
 
     Uses zero-dependency Google Apps Script Webhook (no GCP credentials required).
     `action`: 'append' (default) or 'replace' (resets and repopulates).
+    Retries up to `retries` times with exponential backoff on network/HTTP errors.
+    If all attempts fail, records the failure in DeadLetterQueue to prevent silent data loss.
     """
+    import time
+
     webhook_url = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL", "").strip()
     if not webhook_url:
         return False
@@ -141,24 +151,55 @@ def sync_to_google_sheet(jobs: list[NormalizedJob], action: str = "append") -> b
     if not rows:
         return False
 
+    payload = {
+        "action": action,
+        "jobs": rows,
+        "count": len(rows),
+        "synced_at": utc_now().isoformat(),
+    }
+
+    last_error: str = ""
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(
+                webhook_url,
+                json=payload,
+                timeout=timeout,
+                headers={"Content-Type": "application/json"},
+            )
+            if r.status_code in (200, 201, 302):
+                log.info("[sheets] successfully synced %d jobs to Google Sheet (attempt %d/%d)",
+                         len(rows), attempt, retries)
+                return True
+            else:
+                last_error = f"HTTP {r.status_code}: {r.text[:200]}"
+                log.warning("[sheets] Google Sheet webhook attempt %d/%d returned %s",
+                            attempt, retries, last_error)
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            log.warning("[sheets] Google Sheet sync attempt %d/%d failed: %s",
+                        attempt, retries, last_error)
+
+        if attempt < retries:
+            sleep_time = backoff_s * (2 ** (attempt - 1))
+            time.sleep(sleep_time)
+
+    # All retries exhausted — record in DLQ to prevent silent data loss
     try:
-        r = requests.post(
-            webhook_url,
-            json={
-                "action": action,
-                "jobs": rows,
-                "count": len(rows),
-                "synced_at": utc_now().isoformat(),
-            },
-            timeout=50,
-            headers={"Content-Type": "application/json"},
-        )
-        if r.status_code in (200, 201, 302):
-            log.info("[sheets] successfully synced %d jobs to Google Sheet", len(rows))
-            return True
-        else:
-            log.warning("[sheets] Google Sheet webhook returned %s: %s", r.status_code, r.text[:200])
-            return False
-    except Exception as exc:
-        log.warning("[sheets] Google Sheet sync failed: %s", exc)
-        return False
+        from src.state import DeadLetterQueue
+        dlq = DeadLetterQueue()
+        dlq.push({
+            "source": "google_sheets",
+            "action": action,
+            "count": len(rows),
+            "job_ids": [j.id for j in jobs[:50]],
+            "error": f"RetriesExhausted ({retries} attempts): {last_error}",
+            "timestamp": utc_now().isoformat(),
+        })
+        dlq.save()
+        log.error("[sheets] Google Sheet sync failed after %d attempts; recorded in DLQ", retries)
+    except Exception as dlq_exc:
+        log.warning("[sheets] failed to record Google Sheet sync failure in DLQ: %s", dlq_exc)
+
+    return False
+

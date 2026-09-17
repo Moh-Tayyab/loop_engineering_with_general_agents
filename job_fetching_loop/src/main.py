@@ -262,6 +262,7 @@ def run_source(
                 log.info("[%s] cleaned up %d orphaned browser process(es)", source_name, cleaned)
         except Exception as exc:
             log.warning("[%s] error cleaning up browser processes: %s", source_name, exc)
+        worker.join(0.5)
         if outcomes is not None:
             outcomes[source_name] = "timeout"
         circuit.record_failure(source_name)

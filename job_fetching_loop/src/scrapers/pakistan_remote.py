@@ -10,9 +10,6 @@ from src.models import RawJob
 from . import register_scraper
 from .base import BaseScraper
 
-_KNOWN_COMPANIES = ("Netomi", "Mactores", "AlphaSense", "Speechify", "GitLab", "Saviynt")
-
-
 @register_scraper
 class PakistanRemoteScraper(BaseScraper):
     name = "pakistan_remote"
