@@ -55,6 +55,8 @@ class GlassdoorScraper(BaseScraper):
     async def _fetch_async(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
         days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
+        any_success = False
+        errors: list[Exception] = []
         async with launch_browser(self.name, persistent=True, headless=False) as context:
             page = await context.new_page()
             await warm_up(page, self._HOME, self.name)
@@ -67,6 +69,7 @@ class GlassdoorScraper(BaseScraper):
                             raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
                         await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
                     await check_captcha(page, self.name)
+                    any_success = True
                     await human_scroll(page)
                     await human_delay(2.0, 5.0)
                     cards = await page.query_selector_all("li.JobsList_jobListItem__wjTHv, li[data-test='jobListing'], li.job-card")
@@ -78,8 +81,11 @@ class GlassdoorScraper(BaseScraper):
                 except (CaptchaDetected, CaptchaTimeout):
                     raise
                 except Exception as e:
+                    errors.append(e)
                     log.warning("[glassdoor] error scraping %r: %s", kw, e)
             await page.close()
+        if not any_success and errors:
+            raise errors[0]
 
     async def _parse_card(self, card, keyword: str) -> RawJob | None:
         title_el = await card.query_selector("a[data-test='job-title'], a.JobCard_jobTitle__GLyJ1, a.jobTitle")

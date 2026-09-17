@@ -85,29 +85,34 @@ class CuratedBoardScraper(BaseScraper):
 
     def fetch(self, keywords: list[str], posted_after) -> Iterator[RawJob]:
         seen_urls: set[str] = set()
+        errors: list[Exception] = []
+        any_success = False
         for kw in keywords:
-            for item in self._get(kw):
-                job = self._parse_item(item, kw)
-                if job is None:
-                    continue
-                if job.url in seen_urls:
-                    continue
-                seen_urls.add(job.url)
-                yield job
+            try:
+                items = self._get(kw)
+                any_success = True
+                for item in items:
+                    job = self._parse_item(item, kw)
+                    if job is None:
+                        continue
+                    if job.url in seen_urls:
+                        continue
+                    seen_urls.add(job.url)
+                    yield job
+            except (requests.RequestException, ValueError) as exc:
+                errors.append(exc)
+        if not any_success and errors:
+            raise errors[0]
 
     def _get(self, kw: str) -> list[dict]:
-        """Return parsed job objects, or [] on any failure (never raise)."""
-        try:
-            resp = requests.get(
-                self._API.format(kw=quote_plus(kw)),
-                timeout=20,
-                headers={"User-Agent": random.choice(USER_AGENTS)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except (requests.RequestException, ValueError) as exc:
-            log.info("[%s] api fetch failed (kw=%r): %s", self.name, kw, exc)
-            return []
+        """Return parsed job objects, raising on HTTP or connection failures."""
+        resp = requests.get(
+            self._API.format(kw=quote_plus(kw)),
+            timeout=20,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+        )
+        resp.raise_for_status()
+        data = resp.json()
         if isinstance(data, dict):
             data = data.get(self._JOBS_KEY) or data.get("data") or []
         return data if isinstance(data, list) else []
@@ -150,31 +155,36 @@ class RemoteokScraper(CuratedBoardScraper):
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         tags = ["ai", "python", "data", "engineer", "dev"]
         seen_urls: set[str] = set()
+        any_success = False
+        errors: list[Exception] = []
         for tag in tags:
-            for item in self._get(tag):
-                job = self._parse_item(item, tag)
-                if job is None or job.url in seen_urls:
-                    continue
-                seen_urls.add(job.url)
-                yield job
+            try:
+                items = self._get(tag)
+                any_success = True
+                for item in items:
+                    job = self._parse_item(item, tag)
+                    if job is None or job.url in seen_urls:
+                        continue
+                    seen_urls.add(job.url)
+                    yield job
+            except (requests.RequestException, ValueError) as exc:
+                errors.append(exc)
+        if not any_success and errors:
+            raise errors[0]
 
     def _get(self, kw: str) -> list[dict]:
         """Fetch RemoteOK public JSON API with human User-Agent."""
-        try:
-            resp = requests.get(
-                self._API.format(kw=quote_plus(kw.lower())),
-                timeout=20,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list):
-                # RemoteOK item 0 is a legal notice dictionary
-                return [it for it in data if isinstance(it, dict) and "id" in it]
-            return []
-        except Exception as exc:
-            log.info("[%s] api fetch failed (kw=%r): %s", self.name, kw, exc)
-            return []
+        resp = requests.get(
+            self._API.format(kw=quote_plus(kw.lower())),
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list):
+            # RemoteOK item 0 is a legal notice dictionary
+            return [it for it in data if isinstance(it, dict) and "id" in it]
+        return []
 
     def _parse_item(self, item: dict, kw: str) -> RawJob | None:
         if not isinstance(item, dict) or "id" not in item:
@@ -265,11 +275,13 @@ class WeWorkRemotelyScraper(BaseScraper):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        any_success = False
+        errors: list[Exception] = []
         for feed_url in self._FEEDS:
             try:
                 r = requests.get(feed_url, headers=headers, timeout=15)
-                if r.status_code != 200:
-                    continue
+                r.raise_for_status()
+                any_success = True
                 root = ET.fromstring(r.text)
                 for item in root.findall(".//item"):
                     link = (item.findtext("link") or "").strip()
@@ -305,7 +317,10 @@ class WeWorkRemotelyScraper(BaseScraper):
                         fetched_at=datetime.now(timezone.utc),
                     )
             except Exception as exc:
+                errors.append(exc)
                 log.info("[weworkremotely] feed error (%s): %s", feed_url, exc)
+        if not any_success and errors:
+            raise errors[0]
 
 
 @register_scraper
@@ -329,11 +344,13 @@ class JobicyScraper(BaseScraper):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        any_success = False
+        errors: list[Exception] = []
         for api_url in self._APIS:
             try:
                 r = requests.get(api_url, headers=headers, timeout=15)
-                if r.status_code != 200:
-                    continue
+                r.raise_for_status()
+                any_success = True
                 data = r.json()
                 jobs = data.get("jobs", []) if isinstance(data, dict) else []
                 for it in jobs:
@@ -361,7 +378,10 @@ class JobicyScraper(BaseScraper):
                         fetched_at=datetime.now(timezone.utc),
                     )
             except Exception as exc:
+                errors.append(exc)
                 log.info("[jobicy] fetch failed (%s): %s", api_url, exc)
+        if not any_success and errors:
+            raise errors[0]
 
 
 # ── Wellfound (requests + embedded __NEXT_DATA__ apollo state) ───────────────
@@ -409,21 +429,17 @@ class WellfoundScraper(CuratedBoardScraper):
     _URL = "https://wellfound.com/jobs"
 
     def _get(self, kw: str) -> list[dict]:
-        try:
-            resp = requests.get(
-                self._URL, timeout=25,
-                headers={"User-Agent": random.choice(USER_AGENTS)},
-            )
-            resp.raise_for_status()
-            html = resp.text
-            match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
-            if not match:
-                log.info("[%s] no __NEXT_DATA__ found (kw=%r)", self.name, kw)
-                return []
-            payload = json.loads(match.group(1))
-        except (requests.RequestException, ValueError) as exc:
-            log.info("[%s] fetch failed (kw=%r): %s", self.name, kw, exc)
+        resp = requests.get(
+            self._URL, timeout=25,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+        )
+        resp.raise_for_status()
+        html = resp.text
+        match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+        if not match:
+            log.info("[%s] no __NEXT_DATA__ found (kw=%r)", self.name, kw)
             return []
+        payload = json.loads(match.group(1))
         jobs = _extract_apollo_jobs(payload)
         hrefs = _wellfound_href_map(html)
         for job in jobs:
@@ -507,22 +523,18 @@ class JustRemoteScraper(BaseScraper):
 
     async def _gather(self, keywords: list[str]) -> list[RawJob]:
         log.info("[%s] fetching via browser render", self.name)
-        try:
-            async with launch_browser(self.name) as ctx:
-                page = await ctx.new_page()
-                await page.goto(self._URL, timeout=30000, wait_until="domcontentloaded")
-                await asyncio.sleep(4)
-                cards = await page.evaluate(
-                    """(sel) => Array.from(document.querySelectorAll(sel)).map(a => ({
-                        href: a.href,
-                        title: (a.querySelector('[class*="JobTitle"],h3') || {}).innerText || a.innerText.split('\\n')[0] || '',
-                        company: (a.querySelector('[class*="JobItemCompany"]') || {}).innerText || ''
-                      })).filter(c => c.href && c.title.trim())""",
-                    _JUSTREMOTE_CARD_SELECTOR,
-                )
-        except Exception as exc:
-            log.info("[%s] render fetch failed: %s", self.name, exc)
-            return []
+        async with launch_browser(self.name) as ctx:
+            page = await ctx.new_page()
+            await page.goto(self._URL, timeout=30000, wait_until="domcontentloaded")
+            await asyncio.sleep(4)
+            cards = await page.evaluate(
+                """(sel) => Array.from(document.querySelectorAll(sel)).map(a => ({
+                    href: a.href,
+                    title: (a.querySelector('[class*="JobTitle"],h3') || {}).innerText || a.innerText.split('\\n')[0] || '',
+                    company: (a.querySelector('[class*="JobItemCompany"]') || {}).innerText || ''
+                  })).filter(c => c.href && c.title.trim())""",
+                _JUSTREMOTE_CARD_SELECTOR,
+            )
         seen: set[str] = set()
         tag = _justremote_tag(keywords)
         jobs: list[RawJob] = []
@@ -556,48 +568,43 @@ class NoDeskScraper(BaseScraper):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        try:
-            r = requests.get(self._FEED_URL, headers=headers, timeout=15)
-            if r.status_code != 200:
-                log.info("[%s] feed HTTP error %s", self.name, r.status_code)
-                return
-            clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
-            root = ET.fromstring(clean_xml)
-            seen: set[str] = set()
-            for item in root.findall(".//item"):
-                link = (item.findtext("link") or "").strip()
-                if not link or link in seen:
-                    continue
-                seen.add(link)
-                raw_title = html.unescape((item.findtext("title") or "").strip())
-                if " at " in raw_title:
-                    title, company = [p.strip() for p in raw_title.rsplit(" at ", 1)]
-                else:
-                    title, company = raw_title, "Unknown"
-                desc = html.unescape((item.findtext("description") or "").strip())
-                posted_date = None
-                raw_date = item.findtext("pubDate")
-                if raw_date:
-                    try:
-                        dt = parsedate_to_datetime(raw_date)
-                        if dt < posted_after:
-                            continue
-                        posted_date = dt.date().isoformat()
-                    except Exception:
-                        pass
-                yield RawJob(
-                    source=self.name,
-                    title=title,
-                    company=company,
-                    url=link,
-                    location="Worldwide",
-                    posted_date=posted_date,
-                    description=desc[:2000],
-                    tags=["remote"],
-                    fetched_at=datetime.now(timezone.utc),
-                )
-        except Exception as exc:
-            log.info("[%s] feed error: %s", self.name, exc)
+        r = requests.get(self._FEED_URL, headers=headers, timeout=15)
+        r.raise_for_status()
+        clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
+        root = ET.fromstring(clean_xml)
+        seen: set[str] = set()
+        for item in root.findall(".//item"):
+            link = (item.findtext("link") or "").strip()
+            if not link or link in seen:
+                continue
+            seen.add(link)
+            raw_title = html.unescape((item.findtext("title") or "").strip())
+            if " at " in raw_title:
+                title, company = [p.strip() for p in raw_title.rsplit(" at ", 1)]
+            else:
+                title, company = raw_title, "Unknown"
+            desc = html.unescape((item.findtext("description") or "").strip())
+            posted_date = None
+            raw_date = item.findtext("pubDate")
+            if raw_date:
+                try:
+                    dt = parsedate_to_datetime(raw_date)
+                    if dt < posted_after:
+                        continue
+                    posted_date = dt.date().isoformat()
+                except Exception:
+                    pass
+            yield RawJob(
+                source=self.name,
+                title=title,
+                company=company,
+                url=link,
+                location="Worldwide",
+                posted_date=posted_date,
+                description=desc[:2000],
+                tags=["remote"],
+                fetched_at=datetime.now(timezone.utc),
+            )
 
 
 # ── Arbeitnow (Open JSON API — 250+ tech jobs) ───────────────────────────────
@@ -620,51 +627,46 @@ class ArbeitnowScraper(BaseScraper):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         seen_urls: set[str] = set()
-        try:
-            r = requests.get(self._API, headers=headers, timeout=20)
-            if r.status_code != 200:
-                log.info("[%s] api fetch error %s", self.name, r.status_code)
-                return
-            data = r.json()
-            jobs = data.get("data", []) if isinstance(data, dict) else []
-            for it in jobs:
-                if not isinstance(it, dict):
-                    continue
-                # Only remote jobs
-                if not it.get("remote"):
-                    continue
-                url = (it.get("url") or "").strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                title = html.unescape((it.get("title") or "").strip())
-                company = html.unescape((it.get("company_name") or "Unknown").strip())
-                raw_tags = it.get("tags") or []
-                tags = [str(t).lower() for t in raw_tags if t]
-                desc = html.unescape((it.get("description") or "").strip())
-                created_at = it.get("created_at")
-                posted_date = None
-                if created_at:
-                    try:
-                        posted_date = datetime.fromtimestamp(created_at, timezone.utc).date().isoformat()
-                    except Exception:
-                        pass
-                jtypes = it.get("job_types")
-                jt = jtypes[0] if isinstance(jtypes, list) and jtypes else "full-time"
-                yield RawJob(
-                    source=self.name,
-                    title=title,
-                    company=company,
-                    url=url,
-                    location="Worldwide",
-                    posted_date=posted_date,
-                    description=desc[:2000],
-                    tags=tags or ["remote"],
-                    job_type=jt,
-                    fetched_at=datetime.now(timezone.utc),
-                )
-        except Exception as exc:
-            log.info("[%s] api fetch failed: %s", self.name, exc)
+        r = requests.get(self._API, headers=headers, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        jobs = data.get("data", []) if isinstance(data, dict) else []
+        for it in jobs:
+            if not isinstance(it, dict):
+                continue
+            # Only remote jobs
+            if not it.get("remote"):
+                continue
+            url = (it.get("url") or "").strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            title = html.unescape((it.get("title") or "").strip())
+            company = html.unescape((it.get("company_name") or "Unknown").strip())
+            raw_tags = it.get("tags") or []
+            tags = [str(t).lower() for t in raw_tags if t]
+            desc = html.unescape((it.get("description") or "").strip())
+            created_at = it.get("created_at")
+            posted_date = None
+            if created_at:
+                try:
+                    posted_date = datetime.fromtimestamp(created_at, timezone.utc).date().isoformat()
+                except Exception:
+                    pass
+            jtypes = it.get("job_types")
+            jt = jtypes[0] if isinstance(jtypes, list) and jtypes else "full-time"
+            yield RawJob(
+                source=self.name,
+                title=title,
+                company=company,
+                url=url,
+                location="Worldwide",
+                posted_date=posted_date,
+                description=desc[:2000],
+                tags=tags or ["remote"],
+                job_type=jt,
+                fetched_at=datetime.now(timezone.utc),
+            )
 
 
 # ── Python.org (Official PSF RSS feed) ───────────────────────────────────────
@@ -689,44 +691,39 @@ class PythonOrgScraper(BaseScraper):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         seen_urls: set[str] = set()
-        try:
-            r = requests.get(self._FEED, headers=headers, timeout=15)
-            if r.status_code != 200:
-                log.info("[%s] feed fetch error %s", self.name, r.status_code)
-                return
-            clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
-            root = ET.fromstring(clean_xml)
-            for item in root.findall(".//item"):
-                link = (item.findtext("link") or "").strip()
-                if not link or link in seen_urls:
-                    continue
-                seen_urls.add(link)
-                raw_title = html.unescape((item.findtext("title") or "").strip())
-                if "," in raw_title:
-                    title, company = [p.strip() for p in raw_title.rsplit(",", 1)]
-                else:
-                    title, company = raw_title, "Unknown"
-                desc = html.unescape((item.findtext("description") or "").strip())
-                posted_date = None
-                raw_date = item.findtext("pubDate")
-                if raw_date:
-                    try:
-                        dt = parsedate_to_datetime(raw_date)
-                        if dt < posted_after:
-                            continue
-                        posted_date = dt.date().isoformat()
-                    except Exception:
-                        pass
-                yield RawJob(
-                    source=self.name,
-                    title=title,
-                    company=company,
-                    url=link,
-                    location="Worldwide",
-                    posted_date=posted_date,
-                    description=desc[:2000],
-                    tags=["python", "remote"],
-                    fetched_at=datetime.now(timezone.utc),
-                )
-        except Exception as exc:
-            log.info("[%s] feed error: %s", self.name, exc)
+        r = requests.get(self._FEED, headers=headers, timeout=15)
+        r.raise_for_status()
+        clean_xml = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', r.text)
+        root = ET.fromstring(clean_xml)
+        for item in root.findall(".//item"):
+            link = (item.findtext("link") or "").strip()
+            if not link or link in seen_urls:
+                continue
+            seen_urls.add(link)
+            raw_title = html.unescape((item.findtext("title") or "").strip())
+            if "," in raw_title:
+                title, company = [p.strip() for p in raw_title.rsplit(",", 1)]
+            else:
+                title, company = raw_title, "Unknown"
+            desc = html.unescape((item.findtext("description") or "").strip())
+            posted_date = None
+            raw_date = item.findtext("pubDate")
+            if raw_date:
+                try:
+                    dt = parsedate_to_datetime(raw_date)
+                    if dt < posted_after:
+                        continue
+                    posted_date = dt.date().isoformat()
+                except Exception:
+                    pass
+            yield RawJob(
+                source=self.name,
+                title=title,
+                company=company,
+                url=link,
+                location="Worldwide",
+                posted_date=posted_date,
+                description=desc[:2000],
+                tags=["python", "remote"],
+                fetched_at=datetime.now(timezone.utc),
+            )

@@ -239,11 +239,13 @@ def run_source(
         timeout_s = cfg.source_timeout_s()
 
     box: dict[str, object] = {}
+    cancel_event = threading.Event()
 
     def _work() -> None:
         try:
             box["value"] = _run_source_impl(source_name, keywords, posted_after,
-                                            seen, circuit, max_jobs, dry_run, outcomes)
+                                            seen, circuit, max_jobs, dry_run, outcomes,
+                                            cancel_event=cancel_event)
         except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
             box["error"] = exc
 
@@ -251,6 +253,7 @@ def run_source(
     worker.start()
     worker.join(timeout_s)
     if worker.is_alive():
+        cancel_event.set()
         log.error("[%s] timed out after %.0fs — recording failure, continuing loop",
                   source_name, timeout_s)
         try:
@@ -304,6 +307,7 @@ def _run_source_impl(
     max_jobs: int,
     dry_run: bool,
     outcomes: dict[str, str] | None,
+    cancel_event: threading.Event | None = None,
 ) -> list[NormalizedJob]:
     """Unbounded implementation of run_source (the worker-thread body)."""
     def _verdict(v: str) -> None:
@@ -326,6 +330,8 @@ def _run_source_impl(
     try:
         count = 0
         for raw in scraper.fetch(keywords, posted_after):
+            if cancel_event is not None and cancel_event.is_set():
+                return []
             if count >= max_jobs:
                 break
             if not ai_keyword_matches(raw, cfg.scan_keywords()):
@@ -356,10 +362,14 @@ def _run_source_impl(
             new_jobs.append(normalized)
             accept_and_record(raw, normalized, seen)
             count += 1
+        if cancel_event is not None and cancel_event.is_set():
+            return []
         circuit.record_success(source_name)
         log.info("[%s] found %d new jobs", source_name, len(new_jobs))
         _verdict("ok")
     except Exception as exc:  # noqa: BLE001 - source failure is expected
+        if cancel_event is not None and cancel_event.is_set():
+            return []
         circuit.record_failure(source_name)
         log.error("[%s] failed: %s", source_name, exc)
         _verdict("failed")

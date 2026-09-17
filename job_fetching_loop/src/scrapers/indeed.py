@@ -55,6 +55,8 @@ class IndeedScraper(BaseScraper):
     async def _fetch_async(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
         days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
+        any_success = False
+        errors: list[Exception] = []
         async with launch_browser(self.name, persistent=True, headless=False) as context:
             page = await context.new_page()
             await warm_up(page, self._HOME, self.name)
@@ -68,6 +70,7 @@ class IndeedScraper(BaseScraper):
                         # re-navigate after the solve — the search page reloads clean
                         await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
                     await check_captcha(page, self.name)
+                    any_success = True
                     await human_scroll(page)
                     await human_delay(2.0, 5.0)
                     cards = await page.query_selector_all("div.job_seen_beacon, div.jobsearch-SerpJobCard, td.resultContent")
@@ -79,8 +82,11 @@ class IndeedScraper(BaseScraper):
                 except (CaptchaDetected, CaptchaTimeout):
                     raise
                 except Exception as e:
+                    errors.append(e)
                     log.warning("[indeed] error scraping %r: %s", kw, e)
             await page.close()
+        if not any_success and errors:
+            raise errors[0]
 
     async def _parse_card(self, card, keyword: str) -> RawJob | None:
         title_el = await card.query_selector("h2.jobTitle a, a.jcs-JobTitle, h2 a")

@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 57 — Enforce Universal 24h Cutoff Across All 17 Platforms
-- **Date:** 2026-09-16
-- **Trigger:** user request — eliminate 10-day relaxation on curated boards, enforce strict 24h cutoff on every source
-- **Status:** Removed 10-day relaxation from `src/main.py` line 337. `cutoff_date = posted_after.date()` is now universal across all platforms (LinkedIn, Indeed, Glassdoor, RemoteOK, Himalayas, Remotive, Jobicy, WeWorkRemotely, Wellfound, NoDesk, Arbeitnow, PythonOrg, etc.). Added `test_run_source_strict_24h_window_on_curated_boards`. 243 tests green. `PASS`
+- **Beat #:** 58 — Operations Layer & Outage Honesty Hardening (100% Production Ready)
+- **Date:** 2026-09-17
+- **Trigger:** user request & production readiness audit remediation (Gaps a, b, c)
+- **Status:** Outage honesty enforced across all HTTP/RSS scrapers (propagating errors on all-endpoint failures so outages trigger DLQ and exit 1); single-writer topology aligned with `JOB_LOOP_PRIMARY=local`; timeout double-counting eliminated via thread-safe `cancel_event`; 249 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 58 | 2026-09-17 | user request (prod gaps) | **Outage Honesty, Timeout Double-Count Shield & Topology Alignment:** Propagated HTTP/network failures across all curated & HTTP scrapers (no swallowed outage errors); added `cancel_event` to prevent daemon threads from double-counting circuit breaker failures on timeout; aligned `JOB_LOOP_PRIMARY=local` across configs; added regression tests; 249 tests green | PASS — 249 tests, exit 0 |
 | 57 | 2026-09-16 | user request (universal 24h) | **Universal 24h Cutoff:** Removed 10-day relaxation for curated boards in `src/main.py`; enforced strict `cutoff_date = posted_after.date()` for every platform; added regression test; 243 tests green | PASS — 243 tests, exit 0 |
 | 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |
 | 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |

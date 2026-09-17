@@ -251,14 +251,16 @@ def test_wellfound_href_map_extracts_real_urls():
     assert hrefs["1"] == "https://wellfound.com/jobs/1-some-role"
 
 
-def test_wellfound_get_returns_empty_on_network_error(monkeypatch):
+def test_wellfound_get_raises_on_network_error(monkeypatch):
+    import pytest
     import requests
 
     def fail(*a, **kw):
         raise requests.ConnectionError("offline")
 
     monkeypatch.setattr(requests, "get", fail)
-    assert WellfoundScraper()._get("AI") == []
+    with pytest.raises(requests.ConnectionError):
+        WellfoundScraper()._get("AI")
 
 
 def test_extract_apollo_nullsafe_returns_empty_list():
@@ -313,14 +315,20 @@ def test_justremote_tag_is_string_always():
 
 # ── Shared _get failure path ─────────────────────────────────────────────────
 
-def test_remotive_get_returns_empty_on_network_error(monkeypatch):
+def test_remotive_get_raises_on_network_error(monkeypatch):
+    import pytest
     import requests
 
     def fail(*a, **kw):
         raise requests.ConnectionError("offline")
 
     monkeypatch.setattr(requests, "get", fail)
-    assert RemotiveScraper()._get("AI") == []
+    with pytest.raises(requests.ConnectionError):
+        RemotiveScraper()._get("AI")
+
+    # fetch() must also propagate when all keywords fail (outage honesty)
+    with pytest.raises(requests.ConnectionError):
+        list(RemotiveScraper().fetch(["AI"], datetime.now(timezone.utc)))
 
 
 # ── fetch dedup across keywords ──────────────────────────────────────────────
@@ -596,5 +604,121 @@ def test_python_org_rss_parse(monkeypatch):
     assert j.location == "Worldwide"
     assert j.posted_date == "2026-09-14"
     assert "FastAPI" in j.description
+
+
+# ── Outage honesty tests ─────────────────────────────────────────────────────
+
+def test_curated_scrapers_raise_on_all_endpoints_failing(monkeypatch):
+    import pytest
+    import requests
+    from src.scrapers.curated_boards import (
+        WeWorkRemotelyScraper,
+        JobicyScraper,
+        NoDeskScraper,
+        ArbeitnowScraper,
+        RemoteokScraper,
+    )
+
+    def fail(*a, **kw):
+        raise requests.ConnectionError("network down")
+
+    monkeypatch.setattr(requests, "get", fail)
+    now = datetime.now(timezone.utc)
+
+    with pytest.raises(requests.ConnectionError):
+        list(WeWorkRemotelyScraper().fetch(["AI"], now))
+
+    with pytest.raises(requests.ConnectionError):
+        list(JobicyScraper().fetch(["AI"], now))
+
+    with pytest.raises(requests.ConnectionError):
+        list(NoDeskScraper().fetch(["AI"], now))
+
+    with pytest.raises(requests.ConnectionError):
+        list(ArbeitnowScraper().fetch(["AI"], now))
+
+    with pytest.raises(requests.ConnectionError):
+        list(RemoteokScraper().fetch(["AI"], now))
+
+
+def test_weworkremotely_partial_success_yields_jobs(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.curated_boards import WeWorkRemotelyScraper
+    import requests
+
+    sample_rss = """<?xml version="1.0" encoding="utf-8"?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Company: AI Engineer</title>
+          <link>https://weworkremotely.com/jobs/123</link>
+          <region>Worldwide</region>
+          <pubDate>Wed, 16 Sep 2026 12:00:00 GMT</pubDate>
+          <description>AI dev</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    call_count = 0
+
+    def mock_get(url, *a, **k):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise requests.ConnectionError("first feed failed")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = sample_rss
+        return resp
+
+    monkeypatch.setattr(requests, "get", mock_get)
+    jobs = list(WeWorkRemotelyScraper().fetch(["AI"], datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    assert len(jobs) == 1
+    assert jobs[0].title == "AI Engineer"
+
+
+def test_working_nomads_api_success(monkeypatch):
+    from unittest.mock import MagicMock
+    from src.scrapers.working_nomads import WorkingNomadsScraper
+    import requests
+
+    sample_api_data = [
+        {
+            "title": "Senior AI Engineer",
+            "company_name": "NomadAI",
+            "url": "https://example.com/job/456",
+            "location": "Worldwide",
+            "date": "2026-09-16",
+            "description": "Agentic workflows and Python",
+            "tags": "ai,python",
+        }
+    ]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = sample_api_data
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    jobs = list(WorkingNomadsScraper().fetch(["AI"], datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    assert len(jobs) == 1
+    assert jobs[0].title == "Senior AI Engineer"
+    assert jobs[0].company == "NomadAI"
+
+
+def test_working_nomads_api_failure_raises_when_browser_disabled(monkeypatch):
+    import pytest
+    import requests
+    from src.scrapers.working_nomads import WorkingNomadsScraper
+    import src.config as cfg
+
+    def fail(*a, **kw):
+        raise requests.ConnectionError("api down")
+
+    monkeypatch.setattr(requests, "get", fail)
+    monkeypatch.setattr(cfg, "allow_browser_scrapers", lambda: False)
+
+    with pytest.raises(requests.ConnectionError):
+        list(WorkingNomadsScraper().fetch(["AI"], datetime.now(timezone.utc)))
+
+
 
 

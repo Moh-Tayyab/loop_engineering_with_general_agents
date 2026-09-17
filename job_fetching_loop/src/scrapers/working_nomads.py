@@ -34,7 +34,7 @@ class WorkingNomadsScraper(BaseScraper):
         return True
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        data = self._api_fetch()
+        data, exc = self._api_fetch()
         if data is not None:
             for item in data:
                 job = self._parse_json_item(item, keywords)
@@ -44,12 +44,14 @@ class WorkingNomadsScraper(BaseScraper):
         import src.config as cfg
         if not cfg.allow_browser_scrapers():
             log.warning("working_nomads API unreachable and browser scrapers disabled — giving up")
-            return
+            if exc is not None:
+                raise exc
+            raise RuntimeError("working_nomads API unreachable")
         log.warning("working_nomads API unreachable — falling back to HTML crawl")
         yield from asyncio.run(self._html_gather(keywords, posted_after))
 
-    def _api_fetch(self) -> list[dict] | None:
-        """Return the job list from the JSON API, or None on any failure."""
+    def _api_fetch(self) -> tuple[list[dict] | None, Exception | None]:
+        """Return the job list from the JSON API, or (None, exception) on failure."""
         try:
             resp = requests.get(
                 self._JOBS_URL,
@@ -60,12 +62,13 @@ class WorkingNomadsScraper(BaseScraper):
             data = resp.json()
             if isinstance(data, dict):
                 data = data.get("data", data.get("jobs", []))
-            return data if isinstance(data, list) else None
+            return (data if isinstance(data, list) else None, None)
         except (requests.RequestException, ValueError) as exc:
             log.info("working_nomads API fetch failed: %s", exc)
-            return None
+            return None, exc
 
-    async def _html_gather(self, keywords, posted_after) -> Iterator[RawJob]:
+    async def _html_gather(self, keywords, posted_after) -> list[RawJob]:
+        jobs: list[RawJob] = []
         async with launch_browser(self.name) as context:
             page = await context.new_page()
             await page.goto(self._BASE + "/jobs", timeout=30_000)
@@ -74,8 +77,9 @@ class WorkingNomadsScraper(BaseScraper):
             for card in cards:
                 job = await self._parse_html_card(card, keywords)
                 if job:
-                    yield job
+                    jobs.append(job)
             await page.close()
+        return jobs
 
     def _parse_json_item(self, item: dict, keywords: list[str]) -> RawJob | None:
         title = item.get("title", "").strip()

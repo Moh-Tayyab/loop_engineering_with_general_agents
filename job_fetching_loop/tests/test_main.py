@@ -580,3 +580,99 @@ def test_serve_loop_graceful_shutdown(monkeypatch):
     rc = main.serve_loop(health_port=0, shutdown_event=shutdown_ev)
     assert rc == 0
     assert len(passes) == 1
+
+
+# ── Timeout single-counting & outage honesty regression tests ────────────────
+
+def test_run_source_timeout_single_circuit_count(tmp_path, monkeypatch):
+    import time
+    from unittest.mock import MagicMock
+    from src.main import run_source
+    from src.circuit_breaker import CircuitManager
+    from src.dedup import SeenStore
+    from src.state import DeadLetterQueue
+    from src.scrapers import _REGISTRY, BaseScraper
+
+    class SlowScraper(BaseScraper):
+        name = "slow_test"
+        def is_available(self):
+            return True
+        def fetch(self, kw, posted_after):
+            time.sleep(0.15)
+            raise RuntimeError("delayed crash after timeout")
+
+    monkeypatch.setitem(_REGISTRY, "slow_test", SlowScraper)
+    monkeypatch.setattr("src.config.DEAD_LETTER_PATH", tmp_path / "dlq.json")
+
+    circuit = CircuitManager({})
+    seen = SeenStore(path=tmp_path / "seen.json")
+    outcomes = {}
+
+    jobs = run_source(
+        "slow_test",
+        keywords=["AI"],
+        posted_after=datetime.now(timezone.utc),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+        outcomes=outcomes,
+        timeout_s=0.05,
+    )
+
+    assert jobs == []
+    assert outcomes["slow_test"] == "timeout"
+    assert circuit._get("slow_test").consecutive_fails == 1
+
+    # Wait for the abandoned daemon worker to execute its delayed crash
+    time.sleep(0.25)
+
+    # Must STILL be 1 (never double-counted by the timed-out thread)
+    assert circuit._get("slow_test").consecutive_fails == 1
+    assert outcomes["slow_test"] == "timeout"
+
+    dlq = DeadLetterQueue()
+    assert len(dlq.items) == 1
+    assert "TimeoutError" in dlq.items[0]["error"]
+
+
+def test_run_source_scraper_failure_records_failed_outcome(tmp_path, monkeypatch):
+    import requests
+    from src.main import run_source
+    from src.circuit_breaker import CircuitManager
+    from src.dedup import SeenStore
+    from src.state import DeadLetterQueue
+    from src.scrapers import _REGISTRY, BaseScraper
+
+    class BrokenScraper(BaseScraper):
+        name = "broken_test"
+        def is_available(self):
+            return True
+        def fetch(self, kw, posted_after):
+            raise requests.ConnectionError("upstream board offline")
+
+    monkeypatch.setitem(_REGISTRY, "broken_test", BrokenScraper)
+    monkeypatch.setattr("src.config.DEAD_LETTER_PATH", tmp_path / "dlq.json")
+
+    circuit = CircuitManager({})
+    seen = SeenStore(path=tmp_path / "seen.json")
+    outcomes = {}
+
+    jobs = run_source(
+        "broken_test",
+        keywords=["AI"],
+        posted_after=datetime.now(timezone.utc),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+        outcomes=outcomes,
+        timeout_s=10.0,
+    )
+
+    assert jobs == []
+    assert outcomes["broken_test"] == "failed"
+    assert circuit._get("broken_test").consecutive_fails == 1
+    dlq = DeadLetterQueue()
+    assert len(dlq.items) == 1
+    assert "upstream board offline" in dlq.items[0]["error"]
