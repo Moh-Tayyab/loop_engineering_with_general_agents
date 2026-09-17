@@ -723,7 +723,17 @@ class PythonOrgScraper(BaseScraper):
                 title, company = [p.strip() for p in raw_title.rsplit(",", 1)]
             else:
                 title, company = raw_title, "Unknown"
-            desc = html.unescape((item.findtext("description") or "").strip())
+            raw_desc = html.unescape((item.findtext("description") or "").strip())
+            loc = "Worldwide"
+            clean_desc = raw_desc
+            if "\n" in raw_desc:
+                first_line, rest = raw_desc.split("\n", 1)
+                first_line_clean = re.sub(r"<[^>]+>", "", first_line).strip()
+                if first_line_clean and len(first_line_clean) < 150:
+                    loc = first_line_clean
+                    clean_desc = re.sub(r"<[^>]+>", " ", rest).strip()
+            else:
+                clean_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()
             posted_date = None
             raw_date = item.findtext("pubDate")
             if raw_date:
@@ -739,9 +749,9 @@ class PythonOrgScraper(BaseScraper):
                 title=title,
                 company=company,
                 url=link,
-                location="Worldwide",
+                location=loc,
                 posted_date=posted_date,
-                description=desc[:2000],
+                description=clean_desc[:2000],
                 tags=["python", "remote"],
                 fetched_at=datetime.now(timezone.utc),
             )

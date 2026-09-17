@@ -226,6 +226,65 @@ _WORLDWIDE_MARKERS = (
 )
 
 
+_FOREIGN_RESTRICTED_COUNTRIES = frozenset({
+    "poland", "ukraine", "lithuania", "argentina", "brazil", "canada",
+    "germany", "france", "spain", "italy", "netherlands", "sweden",
+    "switzerland", "ireland", "uk", "united kingdom", "great britain",
+    "england", "scotland", "wales", "australia", "new zealand", "japan",
+    "singapore", "mexico", "colombia", "chile", "russia", "turkey",
+    "türkiye", "nigeria", "kenya", "south africa", "egypt", "israel",
+    "philippines", "vietnam", "thailand", "malaysia", "indonesia",
+    "czech republic", "czechia", "romania", "hungary", "bulgaria",
+    "greece", "portugal", "austria", "belgium", "finland", "norway",
+    "denmark", "estonia", "latvia", "india",
+})
+
+
+def is_foreign_country_restricted(text: str) -> bool:
+    """True if location ties the role to a foreign country outside Pakistan/APAC/worldwide."""
+    low = text.lower()
+    if any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote", "pakistan", "apac", "asia pacific", "south asia")):
+        return False
+    return any(re.search(rf"\b{re.escape(c)}\b", low) for c in _FOREIGN_RESTRICTED_COUNTRIES)
+
+
+def is_title_restricted(title: str | None) -> bool:
+    """True if the job title contains restrictions that exclude worldwide/Pakistan candidates.
+
+    Catches titles like:
+      "(100% Remote - USA Only)"
+      "[NYC or SF]"
+      "[Full Time; 100% remote; US-only]"
+      "-Onsite in Katy, Texas"
+      "(US Candidates Only)"
+      "(Must reside in USA)"
+    """
+    if not title:
+        return False
+    t = title.lower()
+    # US-only restrictions in title
+    if re.search(r"\b(?:usa?|u\.s\.a?)\s*[-–]?\s*only\b", t):
+        return True
+    if re.search(r"\b(?:only\s+in\s+(?:the\s+)?(?:us|usa|united states))\b", t):
+        return True
+    if re.search(r"\b(?:us|usa)\s+candidates?\s+only\b", t):
+        return True
+    if re.search(r"\b(?:us|usa|u\.s\.)\s+based\b", t):
+        return True
+    if re.search(r"\[(?:[^\]]*\b)?(?:us|usa)[- ]only(?:\b[^\]]*)?\]", t):
+        return True
+    if re.search(r"\((?:[^)]*\b)?(?:us|usa)[- ]only(?:\b[^)]*)?\)", t):
+        return True
+    # Physical hub / city restrictions in title e.g. [NYC or SF], (NYC or SF), -Onsite in ...
+    if re.search(r"\[(?:[^\]]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston)(?:\b[^\]]*)?\]", t):
+        return True
+    if re.search(r"\((?:[^)]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston)(?:\b[^)]*)?\)", t):
+        return True
+    if re.search(r"\b(?:onsite|on-site)\b.*(?:in\s+\w+|\btexas\b|\bkaty\b)", t):
+        return True
+    return False
+
+
 def _is_us_restricted(text: str) -> bool:
     """True when the location ties work to a specific US state/city/region.
 
@@ -238,6 +297,9 @@ def _is_us_restricted(text: str) -> bool:
     if not text:
         return False
     low = text.lower()
+    # Explicit worldwide or in-scope markers override US mention (e.g. "Europe, LATAM, APAC, the U.S., Canada" or "Worldwide")
+    if any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote", "pakistan", "apac", "asia pacific", "south asia")):
+        return False
     # Explicit disambiguation for Remote, Oregon (Coos County, OR, ZIP 97458)
     if (re.search(r"\bremote\s*,\s*(?:or|oregon)\b", low)
             or re.search(r"\bremote\s+(?:or|oregon)\b", low)
@@ -245,27 +307,36 @@ def _is_us_restricted(text: str) -> bool:
             or re.search(r"\bremote\b.*\b97458\b", low)):
         return True
 
+    # Tokens / phrases indicating USA restriction
+    if re.search(r"\b(?:usa|united states(?:\s+of\s+america)?|u\.s\.a)\b", low):
+        return True
+    if re.search(r"\b(?:us|u\.s\.)\s*(?:only|based|resident|citizen|candidates?)\b", low):
+        return True
+
     for state in _US_STATE_NAMES:
         if re.search(rf"\b{re.escape(state)}\b", low):
-            if "remote" in low or "anywhere" in low:
-                return True
-    # Postal abbreviation immediately adjacent to "Remote" (dash/comma/paren/slash)
+            return True
+
+    # Postal abbreviation preceded by comma or in
+    m_abbr = re.search(r"(?:,\s*|\bin\s+)([a-z]{2})\b", low)
+    if m_abbr and m_abbr.group(1) in _US_STATE_ABBR:
+        return True
+
     m = _US_RESTRICTED_RE.search(text)
-    if not m:
-        return False
-    for grp in m.groups():
-        if not grp:
-            continue
-        grp_low = grp.lower().strip()
-        if re.search(r"\b(us|usa|united states|u\.s\.a?)\b", grp_low):
-            return True
-        if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
-            return True
-        two_letter_words = set(re.findall(r"\b[a-z]{2}\b", grp_low))
-        if any(w in _US_STATE_ABBR for w in two_letter_words):
-            return True
-        if any(re.search(rf"\b{re.escape(name)}\b", grp_low) for name in _US_STATE_NAMES):
-            return True
+    if m:
+        for grp in m.groups():
+            if not grp:
+                continue
+            grp_low = grp.lower().strip()
+            if re.search(r"\b(us|usa|united states|u\.s\.a?)\b", grp_low):
+                return True
+            if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
+                return True
+            two_letter_words = set(re.findall(r"\b[a-z]{2}\b", grp_low))
+            if any(w in _US_STATE_ABBR for w in two_letter_words):
+                return True
+            if any(re.search(rf"\b{re.escape(name)}\b", grp_low) for name in _US_STATE_NAMES):
+                return True
     return False
 
 
@@ -338,6 +409,7 @@ def is_worldwide_remote(
     location: str | None,
     source: str | None = None,
     description: str | None = None,
+    title: str | None = None,
 ) -> bool:
     """True only when the job is clearly remote *without* US-restriction.
 
@@ -350,6 +422,8 @@ def is_worldwide_remote(
     qualifies for this Pakistan-based loop.
     """
     if not location:
+        return False
+    if is_title_restricted(title):
         return False
     text = location.lower().strip()
 
@@ -365,6 +439,14 @@ def is_worldwide_remote(
     if re.search(r"anywhere\s+in\s+(?!the\s+world\b)", text):
         return False
 
+    # If the location is restricted to a foreign country outside Pakistan/APAC/worldwide -> reject
+    if is_foreign_country_restricted(text):
+        return False
+
+    # If the location is restricted to the US -> reject
+    if _is_us_restricted(text):
+        return False
+
     # US-domestic boards (Indeed, Glassdoor): bare "Remote" is domestic US remote
     # (requires US residency / SSN / W-2). Reject unless explicitly worldwide/global
     # in location or description.
@@ -373,18 +455,20 @@ def is_worldwide_remote(
         if not any(m in combined for m in _WORLDWIDE_MARKERS):
             return False
 
-    # Definitive worldwide / anywhere / work-from-home indicators
+    # Definitive worldwide / anywhere indicators (unambiguous)
     if any(w in text for w in (
-        "worldwide", "work from anywhere", "anywhere in the world", "global",
-        "work from home", "wfh", "telecommute", "100% remote", "fully remote"
+        "worldwide", "work from anywhere", "anywhere in the world", "global remote", "globally remote",
+        "work from home", "wfh", "anywhere"
     )):
-        if not _is_us_restricted(text) or "worldwide" in text or "global" in text:
-            return True
+        return True
+
+    # Standalone "global"
+    if re.search(r"\bglobal(?:ly)?\b", text):
+        return True
 
     # In-scope regional targets (APAC, Asia Pacific, South Asia)
     if any(w in text for w in ("apac", "asia pacific", "south asia")):
-        if not _is_us_restricted(text):
-            return True
+        return True
 
     # Pakistan: allow if explicitly remote in location text
     # (e.g. "Pakistan (Remote)", "Remote in Pakistan", "Remote, Pakistan", WFH)
@@ -404,12 +488,10 @@ def is_worldwide_remote(
         )
         if not (has_remote_in_loc or has_explicit_remote_desc):
             return False
-        if not _is_us_restricted(text):
-            return True
-        return False
+        return True
 
     # Standalone "anywhere"
-    if "anywhere" in text and not _is_us_restricted(text):
+    if "anywhere" in text:
         return True
 
     # Bare "Remote" with no city/state qualifier = worldwide by convention
@@ -421,10 +503,6 @@ def is_worldwide_remote(
     )
     is_bare_remote = re.search(r"(?:^|[,;|\s])remote(?:$|[,\s(;\-])", text) is not None
     if is_bare_remote and not is_city_name:
-        # But reject region qualifiers like "Remote (US Only)" and
-        # "Maryland – Remote" / "TX - Remote" (US state-restricted remote)
-        if _is_us_restricted(text):
-            return False
         # Bare remote with a qualifier: in-scope qualifiers (worldwide,
         # APAC / Asia Pacific, Pakistan, anywhere, and South-Asia
         # neighbors) qualify; any other qualifier stays rejected.

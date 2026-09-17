@@ -293,6 +293,45 @@ def test_is_worldwide_remote_rejects_unverified_foreign_cities():
     assert not is_worldwide_remote("Remote OR 97458")
 
 
+def test_is_title_restricted_cases():
+    """Verify title-level restriction detection for US-only, domestic-only, and physical city hubs."""
+    from src.models import is_title_restricted
+    assert is_title_restricted("Senior Python/DevOps Engineer (100% Remote - USA Only)")
+    assert is_title_restricted("Software Engineer - Backend/Infra [NYC or SF]")
+    assert is_title_restricted("Backend Software Engineer (FastAPI) -Onsite in Katy, Texas")
+    assert is_title_restricted("Junior Frontend Developer-US Based")
+    assert is_title_restricted("Python Engineer [US-Only]")
+    assert is_title_restricted("Data Scientist (US Candidates Only)")
+    assert is_title_restricted("Software Engineer - Only in the US")
+    # Legitimate non-restricted titles
+    assert not is_title_restricted("AI agent engineer")
+    assert not is_title_restricted("Senior Software Engineer")
+    assert not is_title_restricted("Lead Python Backend Engineer")
+    assert not is_title_restricted("Software Engineer: IaC Platform Experience")
+
+
+def test_is_worldwide_remote_rejects_title_restrictions():
+    """Even if location is Worldwide or Remote, title restrictions must reject the job."""
+    assert not is_worldwide_remote("Worldwide", title="Senior Python/DevOps Engineer (100% Remote - USA Only)")
+    assert not is_worldwide_remote("Remote", title="Staff Software Engineer - Backend/Infra [NYC or SF]")
+    assert not is_worldwide_remote("Worldwide", title="Backend Software Engineer (FastAPI) -Onsite in Katy, Texas")
+    assert not is_worldwide_remote("Remote", title="Junior Frontend Developer-US Based")
+
+
+def test_is_worldwide_remote_rejects_foreign_country_remote():
+    """Remote positions tied to specific foreign countries outside Pakistan/APAC must be rejected."""
+    assert not is_worldwide_remote("Remote, United States of America")
+    assert not is_worldwide_remote("Poland, Lviv, Ivano-Frankivsk, Ternopil, Uzhhorod, Chernivtsi or Kyiv, Ukraine/Poland")
+    assert not is_worldwide_remote("100% Remote, USA Only")
+    assert not is_worldwide_remote("Katy, TX, United States")
+    assert not is_worldwide_remote("Warsaw (fully remote), Poland")
+    assert not is_worldwide_remote("Remote, Argentina")
+    assert not is_worldwide_remote("Remote, Brazil")
+    assert not is_worldwide_remote("London (Remote), UK")
+    assert not is_worldwide_remote("Remote, Germany")
+    assert not is_worldwide_remote("Remote, Canada")
+
+
 def test_is_worldwide_remote_allowed_tags():
     """Explicitly verify the allowed location tags: worldwide, anywhere, work from home, WFH, APAC, Pakistan remote."""
     assert is_worldwide_remote("Worldwide")

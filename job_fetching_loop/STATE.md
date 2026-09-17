@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 73 — On-site & Hybrid Leakage Elimination (Strict Remote-Only & Pakistan Remote Hardening)
+- **Beat #:** 74 — Complete Domestic & Foreign Restriction Hardening (Strict Pakistan Remote Verification)
 - **Date:** 2026-09-17
-- **Trigger:** user report — on-site jobs (Smart Working @ Islamabad & Trellions @ Pakistan) leaked into output
-- **Status:** In `src/main.py`, `is_remotely_workable` strictly rejects `location_type != LOCATION_REMOTE` (stopping on-site/hybrid leak); in `src/models.py`, `classify_location` recognizes `Remote in Pakistan` and title remote markers, while `is_worldwide_remote` strictly rejects physical cities and bare Pakistan unless explicitly marked remote in location or 100% remote/WFH in description; in `src/scrapers/linkedin.py`, dropped postings lacking remote markers in title/loc. +3 regression tests. `PASS` — 290 green, exit 0.
+- **Trigger:** user report — US-only, domestic-restricted, and foreign country jobs (e.g. Six Feet Up US-only, Raven Tech US domestic, Eleks Poland/Ukraine, Amigo AI [NYC or SF]) leaked into output and Google Sheet
+- **Status:** In `src/models.py`, added `is_title_restricted` to drop `(100% Remote - USA Only)`, `[NYC or SF]`, and `-Onsite`; hardened `_is_us_restricted` and added `is_foreign_country_restricted`; in `src/scrapers/curated_boards.py`, fixed `PythonOrgScraper` to extract real location line from RSS description instead of hardcoding Worldwide; passed `title` into `is_remotely_workable` and `is_worldwide_remote` to verify candidate eligibility from Pakistan before saving or syncing to Google Sheets. +4 regression tests. `PASS` — 294 green, exit 0.
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 74 | 2026-09-17 | user report (US-only/foreign jobs in sheet) | **Strict Pakistan Remote Verification & Domestic Purge:** `is_title_restricted` catches US-only/hub titles; `_is_us_restricted` and `is_foreign_country_restricted` filter non-APAC foreign remote; `PythonOrgScraper` parses real location line instead of faking Worldwide; +4 regression tests | PASS — 294 tests, exit 0 |
 | 73 | 2026-09-17 | user report (on-site jobs in output) | **Strict Remote Gate & Pakistan Onsite Elimination:** `is_remotely_workable` rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical Pakistan cities & bare country without explicit remote markers; LinkedIn drops non-remote title/loc; +3 regression tests | PASS — 290 tests, exit 0 |
 | 72 | 2026-09-17 | user request (in-depth audit fix) | **Deep Salary Scale & Indicator Hardening:** added bidirectional range suffix propagation (`$150K-200`) and annual context scaling (`$150 - $200 / yr` -> 150k-200k, `/hr` preserved); +2 regression tests | PASS — 287 tests, exit 0 |
 | 71 | 2026-09-17 | user request (fix audit findings) | **Salary Scale Fix & Scraper Hardening:** propagated multiplier suffix to range min when omitted in `parse_salary` (`$150-200K` -> 150k); added `wait_until="domcontentloaded"` to `remote_rocketship`; diagnosed GitHub Actions schedule default-branch requirement; +1 regression test | PASS — 285 tests, exit 0 |

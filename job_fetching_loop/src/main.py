@@ -121,7 +121,7 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
     salary_min, salary_max, salary_currency = parse_salary(raw.salary)
     location_type = classify_location(raw.location, title=raw.title)
     if location_type != LOCATION_REMOTE and raw.location:
-        if is_worldwide_remote(raw.location, source=raw.source, description=raw.description):
+        if is_worldwide_remote(raw.location, source=raw.source, description=raw.description, title=raw.title):
             location_type = LOCATION_REMOTE
     jid = job_id(url, raw.title, raw.company, source=raw.source)
     snippet = (raw.description or "")[:300]
@@ -156,6 +156,7 @@ def is_remotely_workable(
     location: str | None = None,
     source: str | None = None,
     description: str | None = None,
+    title: str | None = None,
 ) -> bool:
     """True only when the job is clearly worldwide-remote.
 
@@ -166,10 +167,13 @@ def is_remotely_workable(
     When location text is available, uses is_worldwide_remote for precision;
     otherwise falls back to location_type == LOCATION_REMOTE.
     """
+    from src.models import is_title_restricted
+    if is_title_restricted(title):
+        return False
     if location_type != LOCATION_REMOTE:
         return False
     if location is not None:
-        return is_worldwide_remote(location, source=source, description=description)
+        return is_worldwide_remote(location, source=source, description=description, title=title)
     if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
         return False
     return True
@@ -380,6 +384,7 @@ def _run_source_impl(
             raw.location,
             source=source_name,
             description=raw.description,
+            title=raw.title,
         ):
             continue
         # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)

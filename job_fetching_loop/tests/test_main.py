@@ -1043,3 +1043,118 @@ def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
     assert jobs[0].company == "Acme Corp"
     assert jobs[0].location_type == "remote"
     assert jobs[0].location == "Pakistan (Remote)"
+
+
+def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
+    """Ensure US-only, domestic-restricted, physical city-hub, and foreign-restricted jobs are dropped."""
+    import src.main as main
+    from src.models import RawJob, utc_now
+    from src.scrapers import _REGISTRY, BaseScraper
+    from src.state import SeenStore
+    from src.circuit_breaker import CircuitManager
+
+    # US-only in title with Worldwide location
+    j_sixfeet = RawJob(
+        source="python_org",
+        title="Senior Python/DevOps Engineer (100% Remote - USA Only)",
+        company="Six Feet Up",
+        url="https://www.python.org/jobs/8113/",
+        location="Worldwide",
+        description="Must reside in the USA.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    # US domestic remote in location
+    j_raven = RawJob(
+        source="python_org",
+        title="Software Engineer",
+        company="Raven Technologies Group LLC",
+        url="https://www.python.org/jobs/8132/",
+        location="Remote, United States of America",
+        description="Looking for remote US engineer.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    # Foreign country restricted (Poland/Ukraine)
+    j_eleks = RawJob(
+        source="python_org",
+        title="Python developer",
+        company="Eleks",
+        url="https://www.python.org/jobs/8129/",
+        location="Poland, Lviv, Ivano-Frankivsk, Ternopil, Uzhhorod, Chernivtsi or Kyiv, Ukraine/Poland",
+        description="Python developer in Poland or Ukraine.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    # Hub-restricted in title
+    j_amigo = RawJob(
+        source="wellfound",
+        title="Staff Software Engineer - Backend/Infra [NYC or SF]",
+        company="Amigo AI",
+        url="https://wellfound.com/jobs/4523599-staff-software-engineer-backend-infra-nyc-or-sf",
+        location="Remote",
+        description="Join our team in NYC or SF.",
+        posted_date="2026-09-16",
+        fetched_at=utc_now(),
+    )
+    # Onsite in title
+    j_offduty = RawJob(
+        source="python_org",
+        title="Backend Software Engineer (FastAPI) -Onsite in Katy, Texas",
+        company="Off Duty Management",
+        url="https://www.python.org/jobs/8123/",
+        location="Worldwide",
+        description="Onsite position.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    # Legitimate worldwide remote (Sticker Mule)
+    j_stickermule = RawJob(
+        source="weworkremotely",
+        title="AI agent engineer",
+        company="Sticker Mule",
+        url="https://weworkremotely.com/remote-jobs/sticker-mule-ai-agent-engineer",
+        location="Anywhere in the World",
+        description="We are 100% remote and hire worldwide.",
+        posted_date="2026-09-16",
+        fetched_at=utc_now(),
+    )
+    # Legitimate worldwide remote (Evaboot)
+    j_evaboot = RawJob(
+        source="python_org",
+        title="Agentic Python Engineer",
+        company="Evaboot",
+        url="https://www.python.org/jobs/8133/",
+        location="Worldwide",
+        description="Build agentic AI workflows with Python and FastAPI.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+
+    class TestScraper(BaseScraper):
+        name = "test_drop_us_only"
+        def is_available(self):
+            return True
+        def fetch(self, keywords, posted_after):
+            return iter([j_sixfeet, j_raven, j_eleks, j_amigo, j_offduty, j_stickermule, j_evaboot])
+
+    monkeypatch.setitem(_REGISTRY, "test_drop_us_only", TestScraper)
+    monkeypatch.setenv("SCRAPE_REMOTE_ONLY", "1")
+
+    seen = SeenStore(path=tmp_path / "seen.json")
+    circuit = CircuitManager({})
+
+    jobs = main.run_source(
+        "test_drop_us_only",
+        keywords=["AI"],
+        posted_after=utc_now() - timedelta(days=2),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+    )
+
+    # Only Sticker Mule and Evaboot must pass
+    assert len(jobs) == 2
+    companies = {j.company for j in jobs}
+    assert companies == {"Sticker Mule", "Evaboot"}
