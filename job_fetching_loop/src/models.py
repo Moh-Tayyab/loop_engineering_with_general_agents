@@ -456,6 +456,21 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
     if not nums:
         return None, None, currency
 
+    # Propagate multiplier suffix to first number in ranges like "$150-200K", "25-30L", "1-1.5M"
+    if len(nums) >= 2:
+        val0, suf0 = nums[0]
+        val1, suf1 = nums[1]
+        if not suf0 and suf1:
+            mult1 = _SALARY_MULTIPLIERS.get(suf1.lower())
+            if mult1:
+                try:
+                    f0 = float(val0)
+                    f1 = float(val1)
+                    if f0 <= f1 or f0 < 1000:
+                        nums[0] = (val0, suf1)
+                except ValueError:
+                    pass
+
     parsed = []
     for val, suffix in nums:
         multiplier = _SALARY_MULTIPLIERS.get(suffix.lower())

@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 70 — Clarify `--list-sources` output for browser-bound sources on cloud runner
+- **Beat #:** 71 — Salary Scale Multiplier Fix & Remote Rocketship Navigation Hardening
 - **Date:** 2026-09-17
-- **Trigger:** user request — clarify cloud sources listing
-- **Status:** Updated `src/main.py:658` so `--list-sources` clearly reports `disabled (browser-bound; skipped on cloud runner)` for the 6 browser-bound scrapers in cloud mode, preventing false impressions that `SOURCE_<NAME>=1` is missing. Added regression test in `tests/test_main.py`. `PASS` — 284 green, exit 0.
+- **Trigger:** user request — fix findings blocking 100% (salary scale bug, remote_rocketship flakiness, scheduled cron diagnosis)
+- **Status:** Fixed `parse_salary` scale bug where min omitted multiplier in ranges (`$150-200K` now parses to min=150,000, not 150); added `wait_until="domcontentloaded"` to `remote_rocketship` navigation to eliminate timeouts on external scripts; verified GitHub Actions scheduled cron requirement (runs only on default branch `main`); added regression tests. `PASS` — 285 green, exit 0.
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 71 | 2026-09-17 | user request (fix audit findings) | **Salary Scale Fix & Scraper Hardening:** propagated multiplier suffix to range min when omitted in `parse_salary` (`$150-200K` -> 150k); added `wait_until="domcontentloaded"` to `remote_rocketship`; diagnosed GitHub Actions schedule default-branch requirement; +1 regression test | PASS — 285 tests, exit 0 |
 | 70 | 2026-09-17 | user request (clarify cloud sources) | **Clarify `--list-sources` for browser scrapers:** in `src/main.py:658`, report `disabled (browser-bound; skipped on cloud runner)` instead of confusing `(set SOURCE_XYZ=1)` for browser sources on cloud; +1 regression test | PASS — 284 tests, exit 0 |
 | 69 | 2026-09-17 | user: "fix it" on workflow cron | **Cloud cron moved to 08:00 PKT:** `job-loop-cron.yml` schedule `0 4 * * 1-5` (09:00 PKT) → `0 3 * * 1-5` (03:00 UTC = 08:00 PKT); comment + README + STATE.md refs synced, no stale refs | PASS — config-only, 283 tests unaffected |
 | 68 | 2026-09-17 | user request (remediate Beat 67 audit findings) | **Audit Findings Remediation & Hardening:** outage ops-alert gated on `not cfg.is_cloud_runner()` (`src/main.py:846`, ends cloud duplex pings); cold-start empty digest renders a notice instead of a bare 0-job summary; WhatsApp status confirmed (Telegram-only in both runner envs is intended); docs synced (AGENTS.md 283 tests, schedule.py run_hour docstring). +4 regression tests | PASS — 283 green, exit 0 |

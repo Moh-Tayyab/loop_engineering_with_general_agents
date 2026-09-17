@@ -19,6 +19,30 @@ def test_parse_salary_full_range():
     assert cur == "$"
 
 
+def test_parse_salary_range_omitted_first_suffix():
+    """Ranges where the first value omits the multiplier (e.g. $150-200K)
+    must propagate the multiplier to min, not parse min as $150."""
+    mn, mx, cur = parse_salary("$150-200K")
+    assert mn == 150_000
+    assert mx == 200_000
+    assert cur == "$"
+
+    mn2, mx2, cur2 = parse_salary("150 - 200k")
+    assert mn2 == 150_000
+    assert mx2 == 200_000
+    assert cur2 is None
+
+    mn3, mx3, cur3 = parse_salary("₹25-30L")
+    assert mn3 == 2_500_000
+    assert mx3 == 3_000_000
+    assert cur3 == "₹"
+
+    mn4, mx4, cur4 = parse_salary("$1 - 1.5M")
+    assert mn4 == 1_000_000
+    assert mx4 == 1_500_000
+    assert cur4 == "$"
+
+
 def test_parse_salary_single():
     mn, mx, cur = parse_salary("£120k")
     assert mn == 120_000

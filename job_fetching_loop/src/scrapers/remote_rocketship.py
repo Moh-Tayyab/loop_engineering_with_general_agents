@@ -38,7 +38,7 @@ class RemoteRocketshipScraper(BaseScraper):
     async def _fetch_async(self, keywords: list[str], posted_after: datetime):
         async with launch_browser(self.name) as context:
             page = await context.new_page()
-            await page.goto(self._JOBS_URL, timeout=30_000)
+            await page.goto(self._JOBS_URL, wait_until="domcontentloaded", timeout=30_000)
             await check_captcha(page, self.name)
             await polite_delay()
 
