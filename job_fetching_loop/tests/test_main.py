@@ -676,3 +676,70 @@ def test_run_source_scraper_failure_records_failed_outcome(tmp_path, monkeypatch
     dlq = DeadLetterQueue()
     assert len(dlq.items) == 1
     assert "upstream board offline" in dlq.items[0]["error"]
+
+
+def test_main_dlq_flags(tmp_path, monkeypatch, capsys):
+    from src.main import main
+    from src.state import DeadLetterQueue
+
+    dlq_file = tmp_path / "dlq.json"
+    monkeypatch.setattr("src.config.DEAD_LETTER_PATH", dlq_file)
+
+    # Empty DLQ display
+    ret = main(["--dlq"])
+    assert ret == 0
+    assert "dead-letter queue is empty" in capsys.readouterr().out
+
+    # Push an item
+    dlq = DeadLetterQueue()
+    dlq.push({"source": "unit_test", "error": "dummy error", "timestamp": "2026-09-17T12:00:00Z"})
+    dlq.save()
+
+    # Non-empty DLQ display
+    ret = main(["--dlq"])
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "dead-letter queue (1 items):" in out
+    assert "unit_test: dummy error" in out
+
+    # Clear DLQ
+    ret = main(["--clear-dlq"])
+    assert ret == 0
+    assert "[dlq] cleared 1 item(s)" in capsys.readouterr().out
+    assert len(DeadLetterQueue().items) == 0
+
+
+def test_main_stats_shows_dlq_count(tmp_path, monkeypatch, capsys):
+    from src.main import main
+    from src.state import DeadLetterQueue
+
+    dlq_file = tmp_path / "dlq.json"
+    monkeypatch.setattr("src.config.DEAD_LETTER_PATH", dlq_file)
+
+    dlq = DeadLetterQueue()
+    dlq.push({"source": "stats_test", "error": "err", "timestamp": "2026-09-17T12:00:00Z"})
+    dlq.save()
+
+    ret = main(["--stats"])
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "dead_letter_queue" in out
+    assert "items=1" in out
+
+
+def test_start_health_server_binds_localhost(monkeypatch):
+    import socket
+    from src.main import start_health_server
+
+    # Find an open port on localhost
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    server, thread = start_health_server(port, {"status": "ok"})
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+        assert server.server_address[1] == port
+    finally:
+        server.shutdown()
+        server.server_close()

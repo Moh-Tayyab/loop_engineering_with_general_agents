@@ -152,3 +152,27 @@ def test_concurrent_filelock_cross_process(tmp_path):
         res = subprocess.run(cmd, capture_output=True, text=True)
         assert res.returncode != 0
         assert "LockTimeoutError" in res.stderr
+
+
+def test_dead_letter_queue_peek_and_clear(tmp_slc):
+    from src.state import DeadLetterQueue
+
+    dlq = DeadLetterQueue()
+    assert dlq.items == []
+    assert dlq.peek() == []
+
+    dlq.push({"source": "test_src_1", "error": "timeout", "timestamp": "2026-09-17T00:00:00Z"})
+    dlq.push({"source": "test_src_2", "error": "conn_error", "timestamp": "2026-09-17T00:01:00Z"})
+    dlq.save()
+
+    reloaded = DeadLetterQueue()
+    assert len(reloaded.items) == 2
+    peeked = reloaded.peek(limit=1)
+    assert len(peeked) == 1
+    assert peeked[0]["source"] == "test_src_2"
+
+    reloaded.clear()
+    assert len(reloaded.items) == 0
+
+    reloaded_again = DeadLetterQueue()
+    assert len(reloaded_again.items) == 0

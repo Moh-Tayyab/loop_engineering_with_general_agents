@@ -385,3 +385,12 @@ class DeadLetterQueue:
 
     def save(self) -> None:
         atomic_write_json(self.path, {"items": self.items})
+
+    def clear(self) -> None:
+        """Clear all entries from the dead-letter queue and persist."""
+        self.items = []
+        self.save()
+
+    def peek(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return the most recent entries in the dead-letter queue."""
+        return self.items[-limit:]

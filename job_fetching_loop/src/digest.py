@@ -40,7 +40,7 @@ def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
     all_jobs: list[NormalizedJob] = []
     seen_ids: set[str] = set()
 
-    for delta in range(8):
+    for delta in range(7):
         day = today - timedelta(days=delta)
         day_file = output_dir / f"jobs_{day.isoformat()}.json"
         if not day_file.exists():

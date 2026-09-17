@@ -124,3 +124,36 @@ def test_feed_url_uses_quote_plus_for_hiring_phrase():
         assert " " not in url
         if '"we are hiring"' in q:
             assert "%22" in url  # double-quote encoded
+
+
+# ── Outage honesty tests ─────────────────────────────────────────────────────
+
+def test_linkedin_guest_public_outage_raises_on_failure(monkeypatch):
+    import pytest
+    import requests
+    from datetime import datetime, timezone
+    from src.scrapers.linkedin import LinkedInScraper
+
+    def fail(*a, **kw):
+        raise requests.ConnectionError("LinkedIn blocked or offline")
+
+    monkeypatch.setattr(requests, "get", fail)
+    scraper = LinkedInScraper()
+    with pytest.raises(requests.ConnectionError):
+        list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+
+
+def test_linkedin_guest_public_http_error_raises_when_all_fail(monkeypatch):
+    import pytest
+    import requests
+    from unittest.mock import MagicMock
+    from datetime import datetime, timezone
+    from src.scrapers.linkedin import LinkedInScraper
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    monkeypatch.setattr(requests, "get", lambda *a, **k: mock_resp)
+
+    scraper = LinkedInScraper()
+    with pytest.raises(requests.HTTPError):
+        list(scraper.fetch(["AI"], datetime.now(timezone.utc)))

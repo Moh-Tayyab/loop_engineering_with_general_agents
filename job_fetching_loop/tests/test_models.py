@@ -113,6 +113,13 @@ def test_is_worldwide_remote_apac_and_multi_region():
     assert not is_worldwide_remote("USA only")
     assert not is_worldwide_remote("Anywhere in the US")
     assert not is_worldwide_remote("Anywhere in the USA")
+    assert not is_worldwide_remote("Remote - US")
+    assert not is_worldwide_remote("Remote - USA")
+    assert not is_worldwide_remote("Remote - United States")
+    assert not is_worldwide_remote("US - Remote")
+    assert not is_worldwide_remote("USA - Remote")
+    assert not is_worldwide_remote("United States - Remote")
+    assert not is_worldwide_remote("Remote / US")
 
 
 def test_classify_location_global_and_apac():

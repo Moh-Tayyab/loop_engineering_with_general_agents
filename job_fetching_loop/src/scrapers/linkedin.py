@@ -172,16 +172,18 @@ class LinkedInScraper(BaseScraper):
         }
         seconds = int(max(86400, (utc_now() - posted_after).total_seconds()))
         tpr_param = f"r{seconds}"
+        any_success = False
+        errors: list[Exception] = []
         for kw in keywords:
             if monotonic() > deadline:
                 log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
                          len(seen_urls))
-                return
+                break
             for loc_query in ("Worldwide", "Pakistan"):
                 if monotonic() > deadline:
                     log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
                              len(seen_urls))
-                    return
+                    break
                 remote_query = f"remote {kw}" if "remote" not in kw.lower() else kw
                 url = (
                     f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
@@ -190,7 +192,9 @@ class LinkedInScraper(BaseScraper):
                 try:
                     r = requests.get(url, headers=headers, timeout=15)
                     if r.status_code != 200:
+                        errors.append(requests.HTTPError(f"HTTP {r.status_code} from LinkedIn guest search", response=r))
                         continue
+                    any_success = True
                     titles = re.findall(r'<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>\s*([^<]+?)\s*</h3>', r.text)
                     companies = re.findall(r'<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>\s*<a[^>]*>([^<]+?)</a>', r.text)
                     locations = re.findall(r'<span[^>]*class="[^"]*job-search-card__location[^"]*"[^>]*>\s*([^<]+?)\s*</span>', r.text)
@@ -198,7 +202,7 @@ class LinkedInScraper(BaseScraper):
                     dates = re.findall(r'<time[^>]*datetime="([^"]+)"', r.text)
                     for i in range(len(titles)):
                         if monotonic() > deadline:
-                            return
+                            break
                         title = html.unescape(titles[i].strip())
                         comp = html.unescape(companies[i].strip()) if i < len(companies) else "Unknown"
                         loc = html.unescape(locations[i].strip()) if i < len(locations) else "Remote"
@@ -248,7 +252,10 @@ class LinkedInScraper(BaseScraper):
                             fetched_at=utc_now(),
                         )
                 except Exception as exc:
+                    errors.append(exc)
                     log.info("[linkedin] guest public search failed (kw=%r, loc=%r): %s", kw, loc_query, exc)
+        if not any_success and errors:
+            raise errors[0]
 
     async def _gather(self, keywords, posted_after) -> list:
         return [j async for j in self._fetch_async(keywords, posted_after)]

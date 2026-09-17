@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 58 — Operations Layer & Outage Honesty Hardening (100% Production Ready)
+- **Beat #:** 60 — Full Production Audit Remediation (In-Depth Correctness Gaps)
 - **Date:** 2026-09-17
-- **Trigger:** user request & production readiness audit remediation (Gaps a, b, c)
-- **Status:** Outage honesty enforced across all HTTP/RSS scrapers (propagating errors on all-endpoint failures so outages trigger DLQ and exit 1); single-writer topology aligned with `JOB_LOOP_PRIMARY=local`; timeout double-counting eliminated via thread-safe `cancel_event`; 249 tests green. `PASS`
+- **Trigger:** user request — fix production audit findings in-depth one by one
+- **Status:** Resolved all 5 critical/high audit gaps and medium/low hygiene debt: dual Telegram standby topology aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest search outage honesty with exception propagation; Google Sheets sync decoupled from state lock; circuit breaker & DLQ state mutations made strictly single-threaded; DLQ visibility and management (`--dlq`, `--clear-dlq`, `--stats`); localhost health server binding; `chmod 600 .env`; weekly 7-day range fix; 255 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,8 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 60 | 2026-09-17 | user request (prod audit gaps) | **Full Production Audit Remediation:** Single-writer standby aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest outage honesty; Google Sheets decoupled from lock; single-threaded circuit & DLQ ops; DLQ CLI tools; localhost health server; 255 tests green | PASS — 255 tests, exit 0 |
+| 59 | 2026-09-17 | user request (source & regex filter) | **Source Exclusion & US Regex Hardening:** Confirmed zero reliance/inclusion of AI-Jobs, Upwork, Toptal; updated `_is_us_restricted` and `_US_RESTRICTED_RE` to strictly drop `Remote - US/USA/United States` variants; 249 tests green | PASS — 249 tests, exit 0 |
 | 58 | 2026-09-17 | user request (prod gaps) | **Outage Honesty, Timeout Double-Count Shield & Topology Alignment:** Propagated HTTP/network failures across all curated & HTTP scrapers (no swallowed outage errors); added `cancel_event` to prevent daemon threads from double-counting circuit breaker failures on timeout; aligned `JOB_LOOP_PRIMARY=local` across configs; added regression tests; 249 tests green | PASS — 249 tests, exit 0 |
 | 57 | 2026-09-16 | user request (universal 24h) | **Universal 24h Cutoff:** Removed 10-day relaxation for curated boards in `src/main.py`; enforced strict `cutoff_date = posted_after.date()` for every platform; added regression test; 243 tests green | PASS — 243 tests, exit 0 |
 | 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |

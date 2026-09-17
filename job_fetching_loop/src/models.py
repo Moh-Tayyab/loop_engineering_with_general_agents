@@ -187,8 +187,8 @@ _US_STATE_ABBR = frozenset({
 
 _US_RESTRICTED_RE = re.compile(
     r"(?i)(?:remote\s*\(([^)]*)\)"          # "Remote (US Only)" / "Remote (San Francisco)"
-    r"|remote\s*[-,–]\s*([A-Za-z .]+)"  # "Remote - US Only" / "Remote - Texas"
-    r"|([A-Za-z .]+?)\s*[-,–]\s*remote)"  # "Maryland – Remote" / "TX - Remote"
+    r"|remote\s*[-,–/]\s*([A-Za-z .]+)"  # "Remote - US Only" / "Remote - Texas" / "Remote / US"
+    r"|([A-Za-z .]+?)\s*[-,–/]\s*remote)"  # "Maryland – Remote" / "TX - Remote" / "US - Remote"
 )
 
 US_DOMESTIC_BOARDS = frozenset({"indeed", "glassdoor", "ziprecruiter", "monster"})
@@ -226,7 +226,7 @@ def _is_us_restricted(text: str) -> bool:
         if re.search(rf"\b{re.escape(state)}\b", low):
             if "remote" in low or "anywhere" in low:
                 return True
-    # Postal abbreviation immediately adjacent to "Remote" (dash/comma/paren)
+    # Postal abbreviation immediately adjacent to "Remote" (dash/comma/paren/slash)
     m = _US_RESTRICTED_RE.search(text)
     if not m:
         return False
@@ -234,7 +234,9 @@ def _is_us_restricted(text: str) -> bool:
         if not grp:
             continue
         grp_low = grp.lower().strip()
-        if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.")):
+        if re.search(r"\b(us|usa|united states|u\.s\.a?)\b", grp_low):
+            return True
+        if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
             return True
         two_letter_words = set(re.findall(r"\b[a-z]{2}\b", grp_low))
         if any(w in _US_STATE_ABBR for w in two_letter_words):
@@ -284,7 +286,7 @@ def classify_location(location: str | None) -> str:
     is_bare_remote = re.search(r"(?:^|[(,;|\s])remote(?:$|[),\s(;\-])", text) is not None
 
     if is_bare_remote and not is_city_name:
-        if _is_us_restricted(text):
+        if _is_us_restricted(text) and not re.search(r"remote\s*\(", text):
             return LOCATION_ONSITE
         return LOCATION_REMOTE
 

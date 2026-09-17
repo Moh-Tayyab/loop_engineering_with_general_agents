@@ -59,6 +59,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="override schedule logic")
     p.add_argument("--digest", action="store_true", help="force weekly digest generation")
     p.add_argument("--stats", action="store_true", help="print per-source circuit breaker stats")
+    p.add_argument("--dlq", action="store_true", help="inspect unresolved dead-letter queue items")
+    p.add_argument("--clear-dlq", action="store_true", help="clear dead-letter queue items")
     p.add_argument("--reset-circuit", action="store_true", help="reset all circuit breakers")
     p.add_argument("--linkedin-login", action="store_true", help="open LinkedIn login gate")
     p.add_argument("--list-sources", action="store_true", help="print registered sources and exit")
@@ -195,13 +197,12 @@ def save_jobs(jobs: list[NormalizedJob], output_dir: Path) -> Path:
     atomic_write_text(path, json.dumps(existing, indent=2, ensure_ascii=False))
     log.info("saved %d jobs -> %s", len(existing), path)
 
-    # Auto-export BD Spreadsheet (CSV) and sync to live Google Sheet
+    # Auto-export BD Spreadsheet (CSV) - local atomic file write
     try:
-        from src.sheets import export_jobs_to_csv, sync_to_google_sheet
+        from src.sheets import export_jobs_to_csv
         export_jobs_to_csv(jobs, output_dir)
-        sync_to_google_sheet(jobs)
     except Exception as exc:
-        log.warning("[sheets] export/sync failed: %s", exc)
+        log.warning("[sheets] CSV export failed: %s", exc)
 
     return path
 
@@ -243,9 +244,10 @@ def run_source(
 
     def _work() -> None:
         try:
-            box["value"] = _run_source_impl(source_name, keywords, posted_after,
-                                            seen, circuit, max_jobs, dry_run, outcomes,
-                                            cancel_event=cancel_event)
+            verdict, jobs = _run_source_impl(source_name, keywords, posted_after,
+                                            seen, circuit, max_jobs, cancel_event=cancel_event)
+            box["verdict"] = verdict
+            box["jobs"] = jobs
         except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
             box["error"] = exc
 
@@ -275,6 +277,7 @@ def run_source(
             })
             dlq.save()
         return []
+
     if "error" in box:
         exc = box["error"]
         log.error("[%s] scraper failed: %s — recording failure, continuing loop", source_name, exc)
@@ -295,7 +298,16 @@ def run_source(
             })
             dlq.save()
         return []
-    return box["value"]  # type: ignore[return-value]
+
+    verdict = str(box.get("verdict", "ok"))
+    jobs = box.get("jobs", [])
+    if outcomes is not None:
+        outcomes[source_name] = verdict
+
+    if verdict == "ok":
+        circuit.record_success(source_name)
+        log.info("[%s] found %d new jobs", source_name, len(jobs))
+    return jobs  # type: ignore[return-value]
 
 
 def _run_source_impl(
@@ -305,80 +317,63 @@ def _run_source_impl(
     seen: SeenStore,
     circuit: CircuitManager,
     max_jobs: int,
-    dry_run: bool,
-    outcomes: dict[str, str] | None,
     cancel_event: threading.Event | None = None,
-) -> list[NormalizedJob]:
-    """Unbounded implementation of run_source (the worker-thread body)."""
-    def _verdict(v: str) -> None:
-        if outcomes is not None:
-            outcomes[source_name] = v
+) -> tuple[str, list[NormalizedJob]]:
+    """Unbounded implementation of run_source (the worker-thread body).
 
+    Pure execution: never mutates circuit, outcomes, or DeadLetterQueue directly,
+    eliminating concurrent mutation and TOCTOU races between worker and main thread.
+    """
     if not circuit.is_available(source_name):
         log.info("[%s] circuit OPEN — skipping", source_name)
-        _verdict("open")
-        return []
+        return "open", []
 
     log.info("[%s] fetching (after=%s)", source_name, posted_after.date())
     scraper = get_scraper(source_name)
     if scraper.login_required() and not scraper.is_available():
         log.warning("[%s] login required but no session — skipping (run --linkedin-login)", source_name)
-        _verdict("login")
-        return []
+        return "login", []
 
     new_jobs: list[NormalizedJob] = []
-    try:
-        count = 0
-        for raw in scraper.fetch(keywords, posted_after):
-            if cancel_event is not None and cancel_event.is_set():
-                return []
-            if count >= max_jobs:
-                break
-            if not ai_keyword_matches(raw, cfg.scan_keywords()):
-                continue
-            if is_expired_job(raw):
-                log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
-                continue
-            normalized = normalize_raw(raw)
-            # Strict date window across all platforms: only accept jobs posted within the active window (24h daily).
-            cutoff_date = posted_after.date()
-            if normalized.posted_date and normalized.posted_date < cutoff_date:
-                log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
-                continue
-            if cfg.scrape_remote_only() and not is_remotely_workable(
-                normalized.location_type,
-                raw.location,
-                source=source_name,
-                description=raw.description,
-            ):
-                continue
-            # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
-            if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
-                log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
-                continue
-            is_new, reason = dedup_job(raw, seen)
-            if not is_new:
-                continue
-            new_jobs.append(normalized)
-            accept_and_record(raw, normalized, seen)
-            count += 1
+    count = 0
+    for raw in scraper.fetch(keywords, posted_after):
         if cancel_event is not None and cancel_event.is_set():
-            return []
-        circuit.record_success(source_name)
-        log.info("[%s] found %d new jobs", source_name, len(new_jobs))
-        _verdict("ok")
-    except Exception as exc:  # noqa: BLE001 - source failure is expected
-        if cancel_event is not None and cancel_event.is_set():
-            return []
-        circuit.record_failure(source_name)
-        log.error("[%s] failed: %s", source_name, exc)
-        _verdict("failed")
-        if not dry_run:
-            dlq = DeadLetterQueue()
-            dlq.push({"source": source_name, "error": str(exc), "timestamp": utc_now().isoformat()})
-            dlq.save()
+            return "cancelled", []
+        if count >= max_jobs:
+            break
+        if not ai_keyword_matches(raw, cfg.scan_keywords()):
+            continue
+        if is_expired_job(raw):
+            log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
+            continue
+        normalized = normalize_raw(raw)
+        # Strict date window across all platforms: only accept jobs posted within the active window (24h daily).
+        cutoff_date = posted_after.date()
+        if normalized.posted_date and normalized.posted_date < cutoff_date:
+            log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
+            continue
+        if cfg.scrape_remote_only() and not is_remotely_workable(
+            normalized.location_type,
+            raw.location,
+            source=source_name,
+            description=raw.description,
+        ):
+            continue
+        # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
+        if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
+            log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
+            continue
+        is_new, reason = dedup_job(raw, seen)
+        if not is_new:
+            continue
+        new_jobs.append(normalized)
+        accept_and_record(raw, normalized, seen)
+        count += 1
 
-    return new_jobs
+    if cancel_event is not None and cancel_event.is_set():
+        return "cancelled", []
+
+    return "ok", new_jobs
 
 
 # ── Notifications ────────────────────────────────────────────────────────────
@@ -540,10 +535,10 @@ def start_health_server(port: int, state_ref: dict[str, Any]) -> tuple[Any, thre
 
     HealthCheckHandler.daemon_state = state_ref
     try:
-        server = ThreadingHTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server = ThreadingHTTPServer(("127.0.0.1", port), HealthCheckHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True, name="health-server")
         thread.start()
-        log.info("[serve] health check server listening on http://0.0.0.0:%d/healthz", port)
+        log.info("[serve] health check server listening on http://127.0.0.1:%d/healthz", port)
         return server, thread
     except Exception as exc:
         log.warning("[serve] could not bind health server on port %d: %s", port, exc)
@@ -649,9 +644,28 @@ def main(argv: list[str] | None = None) -> int:
     state = LoopState()
     circuit = CircuitManager(state)
 
+    if args.dlq:
+        dlq = DeadLetterQueue()
+        if not dlq.items:
+            print("dead-letter queue is empty")
+        else:
+            print(f"dead-letter queue ({len(dlq.items)} items):")
+            for it in dlq.items:
+                print(f"  [{it.get('timestamp')}] {it.get('source')}: {it.get('error')}")
+        return 0
+
+    if args.clear_dlq:
+        dlq = DeadLetterQueue()
+        count = len(dlq.items)
+        dlq.clear()
+        print(f"[dlq] cleared {count} item(s)")
+        return 0
+
     if args.stats:
         for s in circuit.summary():
             print(f"  {s['source']:25} {s['status']}  fails={s['consecutive_fails']}  ok={s['total_ok']}  err={s['total_fail']}")
+        dlq_count = len(DeadLetterQueue().items)
+        print(f"  dead_letter_queue         items={dlq_count}")
         return 0
 
     if args.reset_circuit:
@@ -720,6 +734,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 log.warning("[lock] another run is in progress — skipping this invocation")
             return 1 if stale else 0
+
+    # ── Google Sheets webhook sync (runs OUTSIDE lock, best-effort) ──
+    if new_jobs and not args.dry_run:
+        try:
+            from src.sheets import sync_to_google_sheet
+            sync_to_google_sheet(new_jobs)
+        except Exception as exc:
+            log.warning("[sheets] Google Sheets sync failed: %s", exc)
 
     # ── notifications run AFTER the lock is released ──
     # Telegram/WhatsApp sends take seconds of network IO; holding the state
