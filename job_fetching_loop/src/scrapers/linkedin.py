@@ -227,11 +227,17 @@ class LinkedInScraper(BaseScraper):
                             if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
                                 log.debug("[linkedin] dropping closed posting: %s", title)
                                 continue
-                            if "hybrid" in full_check and "remote" not in full_check:
-                                log.debug("[linkedin] dropping hybrid job: %s", title)
+                            if any(w in full_check for w in ("hybrid", "on-site", "onsite", "in-office", "office-based", "office only")):
+                                log.debug("[linkedin] dropping hybrid/onsite posting: %s (%s)", title, loc)
                                 continue
-                            if "on-site" in full_check and "remote" not in full_check:
-                                log.debug("[linkedin] dropping on-site job: %s", title)
+                            loc_lower = loc.lower()
+                            title_lower = title.lower()
+                            has_loc_title_remote = any(
+                                w in loc_lower or w in title_lower
+                                for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual")
+                            )
+                            if not has_loc_title_remote:
+                                log.debug("[linkedin] dropping on-site posting lacking remote marker in title/loc: %s (%s)", title, loc)
                                 continue
                             if not any(w in full_check for w in ("remote", "work from home", "wfh", "telecommute", "anywhere")):
                                 log.debug("[linkedin] dropping job without remote marker: %s", title)

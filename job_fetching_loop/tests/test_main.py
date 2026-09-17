@@ -974,3 +974,72 @@ def test_list_sources_cloud_indicates_browser_bound(capsys, monkeypatch):
     assert "disabled (browser-bound; skipped on cloud runner)" in out
     assert "remotive" in out
     assert "enabled" in out
+
+
+def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
+    """Ensure Smart Working and Trellions Pakistan on-site postings are dropped under SCRAPE_REMOTE_ONLY=1."""
+    import src.main as main
+    from src.models import RawJob, utc_now
+    from src.scrapers import _REGISTRY, BaseScraper
+    from src.state import SeenStore
+    from src.circuit_breaker import CircuitManager
+
+    j1 = RawJob(
+        source="linkedin",
+        title="Senior Data Engineer (Contract, Full-Time) [HR208] (PK)",
+        company="Smart Working",
+        url="https://pk.linkedin.com/jobs/view/senior-data-engineer-contract-full-time-hr208-pk-at-smart-working-4467172677",
+        location="Islamabad, Islāmābād, Pakistan",
+        description="Join one of the highest-rated workplaces and thrive in a truly remote-first world.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    j2 = RawJob(
+        source="linkedin",
+        title="Senior Software Engineer",
+        company="Trellions",
+        url="https://pk.linkedin.com/jobs/view/senior-software-engineer-at-trellions-4467121181",
+        location="Pakistan",
+        description="We are looking for experienced software engineers to join our team and work remotely.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+    j3 = RawJob(
+        source="linkedin",
+        title="Senior AI Engineer",
+        company="Acme Corp",
+        url="https://pk.linkedin.com/jobs/view/acme-remote-12345",
+        location="Pakistan (Remote)",
+        description="100% remote work from home position.",
+        posted_date="2026-09-17",
+        fetched_at=utc_now(),
+    )
+
+    class TestScraper(BaseScraper):
+        name = "test_drop_onsite"
+        def is_available(self):
+            return True
+        def fetch(self, keywords, posted_after):
+            return iter([j1, j2, j3])
+
+    monkeypatch.setitem(_REGISTRY, "test_drop_onsite", TestScraper)
+    monkeypatch.setenv("SCRAPE_REMOTE_ONLY", "1")
+
+    seen = SeenStore(path=tmp_path / "seen.json")
+    circuit = CircuitManager({})
+
+    jobs = main.run_source(
+        "test_drop_onsite",
+        keywords=["AI"],
+        posted_after=utc_now() - timedelta(days=2),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+    )
+
+    # Only j3 (Pakistan (Remote)) must be kept
+    assert len(jobs) == 1
+    assert jobs[0].company == "Acme Corp"
+    assert jobs[0].location_type == "remote"
+    assert jobs[0].location == "Pakistan (Remote)"

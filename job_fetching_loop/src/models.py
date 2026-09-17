@@ -269,25 +269,36 @@ def _is_us_restricted(text: str) -> bool:
     return False
 
 
-def classify_location(location: str | None) -> str:
-    """Map a free-text location to a normalized bucket.
+def classify_location(location: str | None, title: str | None = None) -> str:
+    """Classify a location string into LOCATION_REMOTE, LOCATION_HYBRID, or LOCATION_ONSITE.
 
-    CONTEXT-AWARE: the word "Remote" appears in both work-mode descriptions
-    ("Remote", "Remote (Worldwide)") and US city names ("Remote, OR",
-    "Remote, Oregon").  The classifier checks for *definitive* remote
-    indicators first, then only treats bare "Remote" as remote when it's
-    clearly a standalone location token — NOT when followed by a city/state
-    or preceded by a comma (e.g. "San Francisco, Remote" is ambiguous).
+    Distinguishes bare "Remote" from city-restricted remote like "Remote, OR"
+    (the hamlet of Remote in Coos County, Oregon) and "Remote in Brooklyn, NY"
+    (Indeed city-restricted).
     """
-    if not location:
+    loc_text = (location or "").lower().strip()
+    title_text = (title or "").lower().strip()
+
+    title_has_remote = any(
+        w in title_text
+        for w in ("(remote)", "- remote", "[remote]", "remote)", "(wfh)", "- wfh", "work from home")
+    )
+
+    if not loc_text:
+        if title_has_remote:
+            return LOCATION_REMOTE
         return LOCATION_UNKNOWN
-    text = location.lower().strip()
+
+    text = loc_text
 
     # Definitive remote indicators (unambiguous)
     if ("worldwide" in text or "work from anywhere" in text or "anywhere" in text
             or "work from home" in text or "wfh" in text
-            or "global" in text or "apac" in text or "asia pacific" in text):
-        return LOCATION_REMOTE
+            or "global" in text or "apac" in text or "asia pacific" in text
+            or re.search(r"\bremote\s+in\s+pakistan\b", text)
+            or re.search(r"\bremote\s*,\s*pakistan\b", text)):
+        if not any(w in text for w in ("on-site", "onsite", "on site", "in-office", "hybrid")):
+            return LOCATION_REMOTE
 
     # Handle the word "Remote" — distinguish from city names
     # Patterns that are NOT remote:
@@ -301,16 +312,18 @@ def classify_location(location: str | None) -> str:
     #   "Remote (Worldwide)" / "Remote - Worldwide" -> explicitly worldwide
     #   "Remote (US Only)"                       -> region-restricted but still remote
     is_city_name = (
-        bool(re.search(r"remote\s+in\s+\w", text))
-        or bool(re.search(r"remote\s*,\s+[a-z]", text))
+        bool(re.search(r"remote\s+in\s+\w", text) and "pakistan" not in text)
+        or bool(re.search(r"remote\s*,\s+[a-z]{2}\b", text))
         or bool(re.search(r"\bremote\s+(?:or|oregon)\b", text))
         or bool(re.search(r"\bcoos\s+county\b", text))
     )
     is_bare_remote = re.search(r"(?:^|[(,;|\s])remote(?:$|[),\s(;\-])", text) is not None
 
-    if is_bare_remote and not is_city_name:
+    if (is_bare_remote and not is_city_name) or title_has_remote:
         if _is_us_restricted(text) and not re.search(r"remote\s*\(", text):
             return LOCATION_ONSITE
+        if any(w in text for w in ("on-site", "onsite", "on site", "in-office", "hybrid")):
+            return LOCATION_HYBRID if "hybrid" in text else LOCATION_ONSITE
         return LOCATION_REMOTE
 
     if "hybrid" in text or "flexible" in text:
@@ -373,15 +386,26 @@ def is_worldwide_remote(
         if not _is_us_restricted(text):
             return True
 
-    # Pakistan: allow if explicitly remote (e.g. "Pakistan (Remote)", "Remote in Pakistan", WFH)
-    # but strictly reject physical on-site/hybrid city postings (e.g. "Lahore, Punjab, Pakistan", "Karachi (Hybrid)")
+    # Pakistan: allow if explicitly remote in location text
+    # (e.g. "Pakistan (Remote)", "Remote in Pakistan", "Remote, Pakistan", WFH)
+    # OR if description explicitly declares 100% remote / fully remote / work from home / wfh.
+    # Strictly reject physical on-site/hybrid city postings
+    # (e.g. "Lahore, Punjab, Pakistan", "Karachi (Hybrid)", "Islamabad, Islāmābād, Pakistan")
+    # and bare country postings ("Pakistan") without explicit remote/wfh markers.
     if "pakistan" in text:
-        combined = f"{text} {(description or '').lower()}"
-        if any(w in combined for w in ("hybrid", "onsite", "on-site", "in-office", "office only")):
+        if any(w in text for w in ("hybrid", "onsite", "on-site", "in-office", "office only", "office-based")):
             return False
-        if any(w in combined for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "distributed")):
-            if not _is_us_restricted(text):
-                return True
+        desc_lower = (description or "").lower()
+        if any(w in desc_lower for w in ("hybrid", "onsite", "on-site", "in-office", "office only", "office-based")):
+            return False
+        has_remote_in_loc = any(w in text for w in ("remote", "work from home", "wfh", "anywhere", "telecommute"))
+        has_explicit_remote_desc = any(
+            w in desc_lower for w in ("100% remote", "fully remote", "work from home", "wfh", "100% work from home")
+        )
+        if not (has_remote_in_loc or has_explicit_remote_desc):
+            return False
+        if not _is_us_restricted(text):
+            return True
         return False
 
     # Standalone "anywhere"
@@ -404,7 +428,7 @@ def is_worldwide_remote(
         # Bare remote with a qualifier: in-scope qualifiers (worldwide,
         # APAC / Asia Pacific, Pakistan, anywhere, and South-Asia
         # neighbors) qualify; any other qualifier stays rejected.
-        if re.search(r"remote\s*\((?!.*(?:worldwide|apac|asia pacific|pakistan|anywhere|anytime|india|bangladesh|sri lanka|nepal))", text):
+        if re.search(r"remote\s*\((?!.*(?:worldwide|apac|asia pacific|pakistan|anywhere|anytime|india|bangladesh|sri lanka|nepal|islamabad|lahore|karachi|rawalpindi))", text):
             return False
         return True
     return False

@@ -260,11 +260,18 @@ def test_is_worldwide_remote_rejects_pakistan_onsite_and_hybrid():
     assert not is_worldwide_remote("Lahore, Punjab, Pakistan")
     assert not is_worldwide_remote("Karachi Division, Sindh, Pakistan")
     assert not is_worldwide_remote("Islamabad, Pakistan")
+    assert not is_worldwide_remote("Islamabad, Islāmābād, Pakistan")
+    assert not is_worldwide_remote("Pakistan")
+    # Generic mentions of remote in description must NOT override physical city or bare country
+    assert not is_worldwide_remote("Islamabad, Islāmābād, Pakistan", description="This is not just another remote opportunity")
+    assert not is_worldwide_remote("Pakistan", description="Work remotely on meaningful engagements with US clients")
     assert not is_worldwide_remote("Karachi, Pakistan", description="Work in our Clifton office")
     assert not is_worldwide_remote("Karachi (Hybrid), Pakistan")
     assert not is_worldwide_remote("Lahore, Pakistan", description="Hybrid working model: 3 days in office, 2 days home")
     # But genuine remote in Pakistan is accepted:
     assert is_worldwide_remote("Pakistan (Remote)")
+    assert is_worldwide_remote("Remote in Pakistan")
+    assert is_worldwide_remote("Remote, Pakistan")
     assert is_worldwide_remote("Lahore (Remote), Pakistan")
     assert is_worldwide_remote("Lahore, Pakistan", description="This position is 100% remote work from home.")
 
@@ -500,6 +507,26 @@ def test_remote_only_uses_location_text():
     assert is_remotely_workable("remote", "Worldwide")
     assert not is_remotely_workable("remote", "Remote in Brooklyn, NY")
     assert not is_remotely_workable("remote", "Remote, Oregon")
+    # On-site and hybrid must ALWAYS be rejected even if location is provided
+    assert not is_remotely_workable("onsite", "Islamabad, Islāmābād, Pakistan")
+    assert not is_remotely_workable("onsite", "Pakistan")
+    assert not is_remotely_workable("hybrid", "Karachi, Pakistan")
+    assert not is_remotely_workable("onsite", "Islamabad, Islāmābād, Pakistan", description="remote opportunity")
+    assert not is_remotely_workable("onsite", "Pakistan", description="work remotely with US clients")
+
+
+def test_classify_location_pakistan_and_title_remote():
+    from src.models import classify_location
+    assert classify_location("Pakistan (Remote)") == "remote"
+    assert classify_location("Remote in Pakistan") == "remote"
+    assert classify_location("Remote, Pakistan") == "remote"
+    assert classify_location("Islamabad, Islāmābād, Pakistan") == "onsite"
+    assert classify_location("Pakistan") == "onsite"
+    assert classify_location("Lahore, Punjab, Pakistan") == "onsite"
+    assert classify_location("Karachi (Hybrid)") == "hybrid"
+    # Title remote overrides bare physical location
+    assert classify_location("Islamabad, Islāmābād, Pakistan", title="Senior AI Engineer (Remote)") == "remote"
+    assert classify_location("Pakistan", title="Senior Software Engineer") == "onsite"
 
 
 # ── posted_date parsing ───────────────────────────────────────────────────────

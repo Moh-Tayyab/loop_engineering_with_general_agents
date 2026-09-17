@@ -214,3 +214,60 @@ def test_linkedin_feed_pass_skipped_when_disabled_or_no_session(monkeypatch):
     monkeypatch.setattr(scraper, "has_authenticated_session", lambda: True)
     list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
     assert gather_called is False
+
+
+def test_linkedin_guest_search_drops_onsite_and_keeps_remote(monkeypatch):
+    """Verify that LinkedIn search drops physical city postings without remote marker in title/loc."""
+    from src.scrapers.linkedin import LinkedInScraper
+    import requests
+
+    search_html = """
+    <div class="base-card">
+      <h3 class="base-search-card__title">Senior Data Engineer</h3>
+      <h4 class="base-search-card__subtitle"><a href="#">Smart Working</a></h4>
+      <span class="job-search-card__location">Islamabad, Islāmābād, Pakistan</span>
+      <a class="base-card__full-link" href="https://pk.linkedin.com/jobs/view/smart-working-4467172677"></a>
+      <time datetime="2026-09-17"></time>
+    </div>
+    <div class="base-card">
+      <h3 class="base-search-card__title">Senior Software Engineer</h3>
+      <h4 class="base-search-card__subtitle"><a href="#">Trellions</a></h4>
+      <span class="job-search-card__location">Pakistan</span>
+      <a class="base-card__full-link" href="https://pk.linkedin.com/jobs/view/trellions-4467121181"></a>
+      <time datetime="2026-09-17"></time>
+    </div>
+    <div class="base-card">
+      <h3 class="base-search-card__title">Senior AI Engineer (Remote)</h3>
+      <h4 class="base-search-card__subtitle"><a href="#">Acme AI</a></h4>
+      <span class="job-search-card__location">Pakistan</span>
+      <a class="base-card__full-link" href="https://pk.linkedin.com/jobs/view/acme-4467999999"></a>
+      <time datetime="2026-09-17"></time>
+    </div>
+    """
+
+    class MockResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+            self.url = "https://linkedin.com"
+
+    def mock_get(url, **kwargs):
+        if "seeMoreJobPostings" in url:
+            return MockResponse(search_html)
+        if "4467172677" in url:
+            return MockResponse('<div class="show-more-less-html__markup">Work in our team in a remote-first world</div>')
+        if "4467121181" in url:
+            return MockResponse('<div class="show-more-less-html__markup">Work remotely with US clients</div>')
+        if "4467999999" in url:
+            return MockResponse('<div class="show-more-less-html__markup">100% remote work from home</div>')
+        return MockResponse("", status_code=404)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+    scraper = LinkedInScraper()
+    jobs = list(scraper._fetch_guest_public(["AI"], datetime(2026, 9, 1, tzinfo=timezone.utc)))
+
+    # Only the genuine remote job (with (Remote) in title) must be yielded
+    titles = [j.title for j in jobs]
+    assert "Senior Data Engineer" not in titles
+    assert "Senior Software Engineer" not in titles
+    assert "Senior AI Engineer (Remote)" in titles

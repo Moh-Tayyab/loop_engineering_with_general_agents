@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 72 — Deep Salary Unit Scale Hardening (Bidirectional Range & Annual Suffix Scaling)
+- **Beat #:** 73 — On-site & Hybrid Leakage Elimination (Strict Remote-Only & Pakistan Remote Hardening)
 - **Date:** 2026-09-17
-- **Trigger:** user request — in-depth analysis and fix of audit findings
-- **Status:** Upgraded `parse_salary` to handle bidirectional range suffix propagation (e.g. `$150K-200` and `₹25L-30` both propagate multiplier) and annual indicator scaling (e.g. `$150 - $200 / year` scales to thousands, preserving hourly rates like `$100 - $150 / hr`). Diagnosed and documented release gate status for scheduled cron runs. Added 2 regression tests. `PASS` — 287 green, exit 0.
+- **Trigger:** user report — on-site jobs (Smart Working @ Islamabad & Trellions @ Pakistan) leaked into output
+- **Status:** In `src/main.py`, `is_remotely_workable` strictly rejects `location_type != LOCATION_REMOTE` (stopping on-site/hybrid leak); in `src/models.py`, `classify_location` recognizes `Remote in Pakistan` and title remote markers, while `is_worldwide_remote` strictly rejects physical cities and bare Pakistan unless explicitly marked remote in location or 100% remote/WFH in description; in `src/scrapers/linkedin.py`, dropped postings lacking remote markers in title/loc. +3 regression tests. `PASS` — 290 green, exit 0.
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 73 | 2026-09-17 | user report (on-site jobs in output) | **Strict Remote Gate & Pakistan Onsite Elimination:** `is_remotely_workable` rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical Pakistan cities & bare country without explicit remote markers; LinkedIn drops non-remote title/loc; +3 regression tests | PASS — 290 tests, exit 0 |
 | 72 | 2026-09-17 | user request (in-depth audit fix) | **Deep Salary Scale & Indicator Hardening:** added bidirectional range suffix propagation (`$150K-200`) and annual context scaling (`$150 - $200 / yr` -> 150k-200k, `/hr` preserved); +2 regression tests | PASS — 287 tests, exit 0 |
 | 71 | 2026-09-17 | user request (fix audit findings) | **Salary Scale Fix & Scraper Hardening:** propagated multiplier suffix to range min when omitted in `parse_salary` (`$150-200K` -> 150k); added `wait_until="domcontentloaded"` to `remote_rocketship`; diagnosed GitHub Actions schedule default-branch requirement; +1 regression test | PASS — 285 tests, exit 0 |
 | 70 | 2026-09-17 | user request (clarify cloud sources) | **Clarify `--list-sources` for browser scrapers:** in `src/main.py:658`, report `disabled (browser-bound; skipped on cloud runner)` instead of confusing `(set SOURCE_XYZ=1)` for browser sources on cloud; +1 regression test | PASS — 284 tests, exit 0 |

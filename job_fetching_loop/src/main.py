@@ -119,7 +119,10 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
     from src.models import canonical_job_url
     url = canonical_job_url(raw.url, source=raw.source)
     salary_min, salary_max, salary_currency = parse_salary(raw.salary)
-    location_type = classify_location(raw.location)
+    location_type = classify_location(raw.location, title=raw.title)
+    if location_type != LOCATION_REMOTE and raw.location:
+        if is_worldwide_remote(raw.location, source=raw.source, description=raw.description):
+            location_type = LOCATION_REMOTE
     jid = job_id(url, raw.title, raw.company, source=raw.source)
     snippet = (raw.description or "")[:300]
     from src.matcher import match_usama_cv
@@ -159,14 +162,17 @@ def is_remotely_workable(
     Used by SCRAPE_REMOTE_ONLY: drops city/state-restricted remote jobs
     (e.g. "Remote in Brooklyn, NY", "Remote, OR"), US domestic-only remote jobs
     (e.g. Indeed/Glassdoor bare "Remote"), and non-remote positions entirely.
+    Strictly drops on-site, hybrid, and unknown positions.
     When location text is available, uses is_worldwide_remote for precision;
     otherwise falls back to location_type == LOCATION_REMOTE.
     """
+    if location_type != LOCATION_REMOTE:
+        return False
     if location is not None:
         return is_worldwide_remote(location, source=source, description=description)
     if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
         return False
-    return location_type == LOCATION_REMOTE
+    return True
 
 
 # ── Save jobs to file ────────────────────────────────────────────────────────
