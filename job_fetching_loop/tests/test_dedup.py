@@ -68,3 +68,51 @@ def test_seen_store_roundtrip(tmp_slc):
     seen2 = SeenStore()
     assert "abc123" in seen2.seen_hashes
     assert len(seen2.recent) == 1
+
+
+def test_indeed_url_exact_dedup_matches_across_tracking_variants(tmp_slc):
+    """Verify that different tracking URLs for the same Indeed job ID (jk=...)
+
+    produce the exact same canonical ID and trigger exact deduplication.
+    """
+    from src.dedup import accept_and_record
+    from src.main import normalize_raw
+
+    seen = SeenStore()
+
+    raw_search = RawJob(
+        source="indeed",
+        title="AI Engineer",
+        company="GoodLeap",
+        url="https://www.indeed.com/jobs?q=ai&l=remote&vjs=3&jk=096fd4aa5f21fe38",
+    )
+    norm_search = normalize_raw(raw_search)
+
+    # First time seen: new
+    is_new, reason = dedup_job(norm_search, seen)
+    assert is_new
+    assert reason == "new"
+
+    # Accept and record into seen
+    accept_and_record(norm_search, seen)
+    assert seen.has_exact(norm_search.id)
+
+    # Subsequent appearance via a different tracking click URL with same jk
+    raw_click = RawJob(
+        source="indeed",
+        title="AI Engineer",
+        company="GoodLeap",
+        url="https://www.indeed.com/rc/clk?jk=096fd4aa5f21fe38&bb=xyz&xkcb=123",
+    )
+    norm_click = normalize_raw(raw_click)
+
+    # Exact dedup must match!
+    assert norm_click.id == norm_search.id
+    is_dup, reason = dedup_job(norm_click, seen)
+    assert not is_dup
+    assert reason == "exact"
+
+    # Raw job check must also match exact dedup via canonical URL hashing
+    is_dup_raw, reason_raw = dedup_job(raw_click, seen)
+    assert not is_dup_raw
+    assert reason_raw == "exact"

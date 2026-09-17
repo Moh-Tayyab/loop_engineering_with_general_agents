@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 61 — LinkedIn Feed Gate Unblock & Timeout Dedup Safety
+- **Beat #:** 62 — Canonical URL Exact-Dedup Alignment (Indeed & Dynamic URLs)
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix Friday LinkedIn feed pass no-op and timeout dedup burning in-depth
-- **Status:** Resolved both high audit issues: dropped undocumented `LINKEDIN_FEED_PASS` gate in `src/scrapers/linkedin.py` (relies cleanly on `has_authenticated_session()` and `linkedin_feed_enabled()`); deferred `accept_and_record` to caller in `src/main.py` so timed-out runs never burn jobs in `seen` and abandoned workers never cross-thread mutate `seen`; added regression tests; 258 tests green. `PASS`
+- **Trigger:** user request — fix Indeed's exact-dedup layer never matching due to raw vs normalized URL hash mismatch
+- **Status:** Resolved exact-dedup discrepancy across all URL-rewriting sources: added `canonical_job_url` and updated `job_id` to consistently hash canonical URLs (`jk=...` for Indeed, `jl=...` for Glassdoor); updated `dedup_job` to use `job.id` directly for `NormalizedJob` and check fallback raw URL keys; updated `_run_source_impl` to pass `normalized` to `dedup_job`; added regression test; 259 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 62 | 2026-09-17 | user request (exact dedup mismatch) | **Canonical URL Exact-Dedup Alignment:** Canonicalized URLs in `job_id`; updated `dedup_job` to use `normalized.id` and pass `normalized` in `_run_source_impl`; added regression test; 259 tests green | PASS — 259 tests, exit 0 |
 | 61 | 2026-09-17 | user request (feed gate & timeout dedup) | **Feed Gate Unblock & Timeout Dedup Safety:** Dropped undocumented `LINKEDIN_FEED_PASS`; deferred dedup `accept_and_record` to caller thread on confirmed success (no burning jobs on timeout, no cross-thread seen race); 258 tests green | PASS — 258 tests, exit 0 |
 | 60 | 2026-09-17 | user request (prod audit gaps) | **Full Production Audit Remediation:** Single-writer standby aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest outage honesty; Google Sheets decoupled from lock; single-threaded circuit & DLQ ops; DLQ CLI tools; localhost health server; 255 tests green | PASS — 255 tests, exit 0 |
 | 59 | 2026-09-17 | user request (source & regex filter) | **Source Exclusion & US Regex Hardening:** Confirmed zero reliance/inclusion of AI-Jobs, Upwork, Toptal; updated `_is_us_restricted` and `_US_RESTRICTED_RE` to strictly drop `Remote - US/USA/United States` variants; 249 tests green | PASS — 249 tests, exit 0 |

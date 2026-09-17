@@ -8,6 +8,7 @@ The two layers serve different purposes:
 """
 from __future__ import annotations
 
+import hashlib
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -109,10 +110,24 @@ def dedup_job(
 
     reasons: 'new', 'exact', 'fuzzy'
     Supports checking extra in-batch IDs and recent jobs without mutating seen.
+    Uses canonical normalized.id if available, and checks both canonical and
+    raw URL hashes against seen store.
     """
-    jid = job_id(job.url, job.title, job.company)
+    if isinstance(job, NormalizedJob):
+        jid = job.id
+    else:
+        jid = job_id(job.url, job.title, job.company, source=getattr(job, "source", None))
+
     if (extra_ids and jid in extra_ids) or seen.has_exact(jid):
         return False, "exact"
+
+    # Fallback check for raw uncanonicalized URL hash in legacy seen stores
+    if hasattr(job, "url") and job.url:
+        raw_key = f"{job.url.lower().strip()}|{job.title.lower().strip()}|{job.company.lower().strip()}"
+        raw_jid = hashlib.sha256(raw_key.encode()).hexdigest()[:16]
+        if (extra_ids and raw_jid in extra_ids) or seen.has_exact(raw_jid):
+            return False, "exact"
+
     recent = seen.recent_jobs()
     if extra_recent:
         recent = recent + extra_recent

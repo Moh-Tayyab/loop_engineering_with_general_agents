@@ -41,9 +41,25 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def job_id(url: str, title: str, company: str) -> str:
+def canonical_job_url(url: str, source: str | None = None) -> str:
+    """Canonicalize tracking / dynamic query parameters from job URLs for consistent hashing."""
+    if not url:
+        return ""
+    if source == "indeed" or "indeed.com" in url:
+        m = re.search(r"[?&]jk=([a-fA-F0-9]+)", url)
+        if m:
+            return f"https://www.indeed.com/viewjob?jk={m.group(1)}"
+    if source == "glassdoor" or "glassdoor.com" in url:
+        m = re.search(r"[?&]jl=(\d+)", url)
+        if m:
+            return f"https://www.glassdoor.com/job-listing/?jl={m.group(1)}"
+    return url
+
+
+def job_id(url: str, title: str, company: str, source: str | None = None) -> str:
     """Deterministic hash for exact-match dedup (Layer 1)."""
-    raw = f"{url.lower().strip()}|{title.lower().strip()}|{company.lower().strip()}"
+    canon_url = canonical_job_url(url, source=source)
+    raw = f"{canon_url.lower().strip()}|{title.lower().strip()}|{company.lower().strip()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 

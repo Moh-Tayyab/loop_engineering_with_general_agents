@@ -114,14 +114,11 @@ async def linkedin_login() -> int:
 
 def normalize_raw(raw: RawJob) -> NormalizedJob:
     """Convert a source-specific RawJob to the standard NormalizedJob schema."""
-    url = raw.url
-    if raw.source == "indeed" and url:
-        m = re.search(r"[?&]jk=([a-fA-F0-9]+)", url)
-        if m:
-            url = f"https://www.indeed.com/viewjob?jk={m.group(1)}"
+    from src.models import canonical_job_url
+    url = canonical_job_url(raw.url, source=raw.source)
     salary_min, salary_max, salary_currency = parse_salary(raw.salary)
     location_type = classify_location(raw.location)
-    jid = job_id(url, raw.title, raw.company)
+    jid = job_id(url, raw.title, raw.company, source=raw.source)
     snippet = (raw.description or "")[:300]
     from src.matcher import match_usama_cv
     _, cv_score, cv_label = match_usama_cv(raw.title, raw.description, raw.tags)
@@ -368,7 +365,7 @@ def _run_source_impl(
         if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
             log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
             continue
-        is_new, reason = dedup_job(raw, seen, extra_ids=batch_ids, extra_recent=batch_recent)
+        is_new, reason = dedup_job(normalized, seen, extra_ids=batch_ids, extra_recent=batch_recent)
         if not is_new:
             continue
         new_jobs.append(normalized)
