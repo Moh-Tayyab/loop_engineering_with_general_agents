@@ -43,6 +43,39 @@ def test_parse_salary_range_omitted_first_suffix():
     assert cur4 == "$"
 
 
+def test_parse_salary_range_omitted_second_suffix():
+    """Ranges where the second value omits the multiplier (e.g. $150K-200)
+    must propagate the multiplier to max, not parse max as 200."""
+    mn, mx, cur = parse_salary("$150K - 200")
+    assert mn == 150_000
+    assert mx == 200_000
+    assert cur == "$"
+
+    mn2, mx2, cur2 = parse_salary("₹25L - 30")
+    assert mn2 == 2_500_000
+    assert mx2 == 3_000_000
+    assert cur2 == "₹"
+
+
+def test_parse_salary_annual_and_hourly_indicators():
+    """Explicit annual indicators should scale shorthand numbers, while
+    hourly indicators preserve raw dollar values."""
+    mn, mx, cur = parse_salary("$150 - $200 / year")
+    assert mn == 150_000
+    assert mx == 200_000
+    assert cur == "$"
+
+    mn2, mx2, cur2 = parse_salary("$120 / yr")
+    assert mn2 == 120_000
+    assert mx2 is None
+    assert cur2 == "$"
+
+    mn3, mx3, cur3 = parse_salary("$100 - $150 / hr")
+    assert mn3 == 100
+    assert mx3 == 150
+    assert cur3 == "$"
+
+
 def test_parse_salary_single():
     mn, mx, cur = parse_salary("£120k")
     assert mn == 120_000

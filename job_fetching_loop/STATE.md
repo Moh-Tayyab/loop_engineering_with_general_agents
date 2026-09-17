@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 71 — Salary Scale Multiplier Fix & Remote Rocketship Navigation Hardening
+- **Beat #:** 72 — Deep Salary Unit Scale Hardening (Bidirectional Range & Annual Suffix Scaling)
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix findings blocking 100% (salary scale bug, remote_rocketship flakiness, scheduled cron diagnosis)
-- **Status:** Fixed `parse_salary` scale bug where min omitted multiplier in ranges (`$150-200K` now parses to min=150,000, not 150); added `wait_until="domcontentloaded"` to `remote_rocketship` navigation to eliminate timeouts on external scripts; verified GitHub Actions scheduled cron requirement (runs only on default branch `main`); added regression tests. `PASS` — 285 green, exit 0.
+- **Trigger:** user request — in-depth analysis and fix of audit findings
+- **Status:** Upgraded `parse_salary` to handle bidirectional range suffix propagation (e.g. `$150K-200` and `₹25L-30` both propagate multiplier) and annual indicator scaling (e.g. `$150 - $200 / year` scales to thousands, preserving hourly rates like `$100 - $150 / hr`). Diagnosed and documented release gate status for scheduled cron runs. Added 2 regression tests. `PASS` — 287 green, exit 0.
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 72 | 2026-09-17 | user request (in-depth audit fix) | **Deep Salary Scale & Indicator Hardening:** added bidirectional range suffix propagation (`$150K-200`) and annual context scaling (`$150 - $200 / yr` -> 150k-200k, `/hr` preserved); +2 regression tests | PASS — 287 tests, exit 0 |
 | 71 | 2026-09-17 | user request (fix audit findings) | **Salary Scale Fix & Scraper Hardening:** propagated multiplier suffix to range min when omitted in `parse_salary` (`$150-200K` -> 150k); added `wait_until="domcontentloaded"` to `remote_rocketship`; diagnosed GitHub Actions schedule default-branch requirement; +1 regression test | PASS — 285 tests, exit 0 |
 | 70 | 2026-09-17 | user request (clarify cloud sources) | **Clarify `--list-sources` for browser scrapers:** in `src/main.py:658`, report `disabled (browser-bound; skipped on cloud runner)` instead of confusing `(set SOURCE_XYZ=1)` for browser sources on cloud; +1 regression test | PASS — 284 tests, exit 0 |
 | 69 | 2026-09-17 | user: "fix it" on workflow cron | **Cloud cron moved to 08:00 PKT:** `job-loop-cron.yml` schedule `0 4 * * 1-5` (09:00 PKT) → `0 3 * * 1-5` (03:00 UTC = 08:00 PKT); comment + README + STATE.md refs synced, no stale refs | PASS — config-only, 283 tests unaffected |

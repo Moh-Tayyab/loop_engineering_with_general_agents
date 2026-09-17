@@ -456,7 +456,7 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
     if not nums:
         return None, None, currency
 
-    # Propagate multiplier suffix to first number in ranges like "$150-200K", "25-30L", "1-1.5M"
+    # Propagate multiplier suffix across range if one number omits it (e.g. "$150-200K", "$150K-200", "25-30L")
     if len(nums) >= 2:
         val0, suf0 = nums[0]
         val1, suf1 = nums[1]
@@ -470,10 +470,31 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
                         nums[0] = (val0, suf1)
                 except ValueError:
                     pass
+        elif suf0 and not suf1:
+            mult0 = _SALARY_MULTIPLIERS.get(suf0.lower())
+            if mult0:
+                try:
+                    f0 = float(val0)
+                    f1 = float(val1)
+                    if f1 >= f0 or f1 < 1000:
+                        nums[1] = (val1, suf0)
+                except ValueError:
+                    pass
+
+    # Annual indicator check: if unsuffixed but explicitly annual (e.g. "$150 - 200 / yr", "$120 / year")
+    is_annual = bool(re.search(r"(?i)(?:\bper\s+year|/\s*yr\b|/\s*year\b|\bannually\b|\bannual\b|\bper\s+annum|/\s*annum\b)", raw))
+    is_hourly = bool(re.search(r"(?i)(?:\bper\s+hour|/\s*hr\b|/\s*hour\b|\bhourly\b)", raw))
 
     parsed = []
     for val, suffix in nums:
         multiplier = _SALARY_MULTIPLIERS.get(suffix.lower())
+        if not multiplier and is_annual and not is_hourly:
+            try:
+                fval = float(val)
+                if 20 <= fval < 1000:
+                    multiplier = 1000
+            except ValueError:
+                pass
         parsed.append(int(float(val) * multiplier) if multiplier else int(float(val)))
 
     if len(parsed) == 1:
