@@ -743,3 +743,93 @@ def test_start_health_server_binds_localhost(monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_run_source_timeout_does_not_burn_jobs_in_seen(tmp_path, monkeypatch):
+    """When a scraper times out after yielding a job, the jobs must NOT be burned
+
+    in SeenStore. A subsequent run must still be able to discover and accept them.
+    """
+    import threading
+    from src.main import run_source
+    from src.circuit_breaker import CircuitManager
+    from src.dedup import SeenStore, job_id
+    from src.models import RawJob
+    from src.scrapers import _REGISTRY, BaseScraper
+
+    block_event = threading.Event()
+
+    test_raw = RawJob(
+        source="timeout_dedup_test",
+        title="AI Engineer",
+        company="TechCorp",
+        url="https://example.com/ai-1",
+        location="Worldwide Remote",
+        posted_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        description="Build LLM systems with Python",
+        tags=["AI"],
+        fetched_at=datetime.now(timezone.utc),
+    )
+
+    class SlowScraper(BaseScraper):
+        name = "timeout_dedup_test"
+        def is_available(self):
+            return True
+        def fetch(self, kw, posted_after):
+            yield test_raw
+            block_event.wait(timeout=1.0)
+
+    monkeypatch.setitem(_REGISTRY, "timeout_dedup_test", SlowScraper)
+
+    seen = SeenStore(path=tmp_path / "seen.json")
+    circuit = CircuitManager({})
+    outcomes = {}
+
+    # Run with small timeout so it aborts while blocked
+    jobs = run_source(
+        "timeout_dedup_test",
+        keywords=["AI"],
+        posted_after=datetime.now(timezone.utc) - timedelta(days=1),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+        outcomes=outcomes,
+        timeout_s=0.05,
+    )
+
+    block_event.set()  # unblock worker thread
+
+    assert jobs == []
+    assert outcomes["timeout_dedup_test"] == "timeout"
+
+    jid = job_id(test_raw.url, test_raw.title, test_raw.company)
+    # The job must NOT be marked in seen!
+    assert not seen.has_exact(jid)
+    assert len(seen.recent_jobs()) == 0
+
+    # On a normal run that does not timeout, the job must be successfully collected
+    class FastScraper(BaseScraper):
+        name = "timeout_dedup_test"
+        def is_available(self):
+            return True
+        def fetch(self, kw, posted_after):
+            yield test_raw
+
+    monkeypatch.setitem(_REGISTRY, "timeout_dedup_test", FastScraper)
+    circuit._get("timeout_dedup_test").record_success()
+
+    jobs2 = run_source(
+        "timeout_dedup_test",
+        keywords=["AI"],
+        posted_after=datetime.now(timezone.utc) - timedelta(days=1),
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+        outcomes=outcomes,
+        timeout_s=5.0,
+    )
+
+    assert len(jobs2) == 1
+    assert seen.has_exact(jid)

@@ -139,8 +139,8 @@ class LinkedInScraper(BaseScraper):
         # Primary high-reliability collector: LinkedIn public guest search (fast, zero CAPTCHA, canonical URLs)
         yield from self._fetch_guest_public(keywords, posted_after)
 
-        # Secondary: authenticated feed pass (only if explicitly enabled or non-cron)
-        if self.has_authenticated_session() and cfg.linkedin_feed_enabled() and os.environ.get("LINKEDIN_FEED_PASS", "0") == "1":
+        # Secondary: authenticated feed pass (runs when authenticated session exists and feed scraping is enabled)
+        if self.has_authenticated_session() and cfg.linkedin_feed_enabled():
             try:
                 yield from asyncio.run(asyncio.wait_for(
                     self._gather(keywords, posted_after),

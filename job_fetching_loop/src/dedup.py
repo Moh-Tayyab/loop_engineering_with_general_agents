@@ -102,24 +102,44 @@ def dedup_job(
     job: RawJob | NormalizedJob,
     seen: SeenStore,
     threshold: float = 0.85,
+    extra_ids: set[str] | None = None,
+    extra_recent: list[dict] | None = None,
 ) -> tuple[bool, str]:
     """Return (is_new, reason) — True when job passes both dedup layers.
 
     reasons: 'new', 'exact', 'fuzzy'
+    Supports checking extra in-batch IDs and recent jobs without mutating seen.
     """
     jid = job_id(job.url, job.title, job.company)
-    if seen.has_exact(jid):
+    if (extra_ids and jid in extra_ids) or seen.has_exact(jid):
         return False, "exact"
-    if is_fuzzy_duplicate(job, seen.recent_jobs(), threshold=threshold):
+    recent = seen.recent_jobs()
+    if extra_recent:
+        recent = recent + extra_recent
+    if is_fuzzy_duplicate(job, recent, threshold=threshold):
         return False, "fuzzy"
     return True, "new"
 
 
 def accept_and_record(
-    job: RawJob,
-    normalized: NormalizedJob,
-    seen: SeenStore,
+    first: RawJob | NormalizedJob,
+    second: NormalizedJob | SeenStore,
+    third: SeenStore | None = None,
 ) -> None:
-    """Record a validated job in the dedup store (after normalization + filtering)."""
+    """Record a validated job in the dedup store (after normalization + filtering).
+
+    Supports both:
+      accept_and_record(normalized, seen)
+      accept_and_record(raw, normalized, seen)
+    """
+    if third is not None:
+        normalized: NormalizedJob = second  # type: ignore[assignment]
+        seen: SeenStore = third
+    elif isinstance(first, NormalizedJob) and isinstance(second, SeenStore):
+        normalized = first
+        seen = second
+    else:
+        normalized = second  # type: ignore[assignment]
+        seen = first  # type: ignore[assignment]
     seen.mark_exact(normalized.id)
     seen.push_recent(normalized.to_dict())

@@ -307,6 +307,8 @@ def run_source(
     if verdict == "ok":
         circuit.record_success(source_name)
         log.info("[%s] found %d new jobs", source_name, len(jobs))
+        for j in jobs:  # type: ignore[union-attr]
+            accept_and_record(j, seen)
     return jobs  # type: ignore[return-value]
 
 
@@ -321,8 +323,9 @@ def _run_source_impl(
 ) -> tuple[str, list[NormalizedJob]]:
     """Unbounded implementation of run_source (the worker-thread body).
 
-    Pure execution: never mutates circuit, outcomes, or DeadLetterQueue directly,
-    eliminating concurrent mutation and TOCTOU races between worker and main thread.
+    Pure execution: never mutates circuit, outcomes, DeadLetterQueue, or SeenStore
+    directly, eliminating concurrent mutation and TOCTOU races between worker and main thread.
+    Dedup state mutations are deferred to caller on confirmed success.
     """
     if not circuit.is_available(source_name):
         log.info("[%s] circuit OPEN — skipping", source_name)
@@ -335,6 +338,8 @@ def _run_source_impl(
         return "login", []
 
     new_jobs: list[NormalizedJob] = []
+    batch_ids: set[str] = set()
+    batch_recent: list[dict] = []
     count = 0
     for raw in scraper.fetch(keywords, posted_after):
         if cancel_event is not None and cancel_event.is_set():
@@ -363,11 +368,12 @@ def _run_source_impl(
         if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
             log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
             continue
-        is_new, reason = dedup_job(raw, seen)
+        is_new, reason = dedup_job(raw, seen, extra_ids=batch_ids, extra_recent=batch_recent)
         if not is_new:
             continue
         new_jobs.append(normalized)
-        accept_and_record(raw, normalized, seen)
+        batch_ids.add(normalized.id)
+        batch_recent.append(normalized.to_dict())
         count += 1
 
     if cancel_event is not None and cancel_event.is_set():

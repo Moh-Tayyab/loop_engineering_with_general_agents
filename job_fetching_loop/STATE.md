@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 60 — Full Production Audit Remediation (In-Depth Correctness Gaps)
+- **Beat #:** 61 — LinkedIn Feed Gate Unblock & Timeout Dedup Safety
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix production audit findings in-depth one by one
-- **Status:** Resolved all 5 critical/high audit gaps and medium/low hygiene debt: dual Telegram standby topology aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest search outage honesty with exception propagation; Google Sheets sync decoupled from state lock; circuit breaker & DLQ state mutations made strictly single-threaded; DLQ visibility and management (`--dlq`, `--clear-dlq`, `--stats`); localhost health server binding; `chmod 600 .env`; weekly 7-day range fix; 255 tests green. `PASS`
+- **Trigger:** user request — fix Friday LinkedIn feed pass no-op and timeout dedup burning in-depth
+- **Status:** Resolved both high audit issues: dropped undocumented `LINKEDIN_FEED_PASS` gate in `src/scrapers/linkedin.py` (relies cleanly on `has_authenticated_session()` and `linkedin_feed_enabled()`); deferred `accept_and_record` to caller in `src/main.py` so timed-out runs never burn jobs in `seen` and abandoned workers never cross-thread mutate `seen`; added regression tests; 258 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 61 | 2026-09-17 | user request (feed gate & timeout dedup) | **Feed Gate Unblock & Timeout Dedup Safety:** Dropped undocumented `LINKEDIN_FEED_PASS`; deferred dedup `accept_and_record` to caller thread on confirmed success (no burning jobs on timeout, no cross-thread seen race); 258 tests green | PASS — 258 tests, exit 0 |
 | 60 | 2026-09-17 | user request (prod audit gaps) | **Full Production Audit Remediation:** Single-writer standby aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest outage honesty; Google Sheets decoupled from lock; single-threaded circuit & DLQ ops; DLQ CLI tools; localhost health server; 255 tests green | PASS — 255 tests, exit 0 |
 | 59 | 2026-09-17 | user request (source & regex filter) | **Source Exclusion & US Regex Hardening:** Confirmed zero reliance/inclusion of AI-Jobs, Upwork, Toptal; updated `_is_us_restricted` and `_US_RESTRICTED_RE` to strictly drop `Remote - US/USA/United States` variants; 249 tests green | PASS — 249 tests, exit 0 |
 | 58 | 2026-09-17 | user request (prod gaps) | **Outage Honesty, Timeout Double-Count Shield & Topology Alignment:** Propagated HTTP/network failures across all curated & HTTP scrapers (no swallowed outage errors); added `cancel_event` to prevent daemon threads from double-counting circuit breaker failures on timeout; aligned `JOB_LOOP_PRIMARY=local` across configs; added regression tests; 249 tests green | PASS — 249 tests, exit 0 |

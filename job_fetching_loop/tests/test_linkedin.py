@@ -157,3 +157,60 @@ def test_linkedin_guest_public_http_error_raises_when_all_fail(monkeypatch):
     scraper = LinkedInScraper()
     with pytest.raises(requests.HTTPError):
         list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+
+
+def test_linkedin_feed_pass_runs_when_session_and_feed_enabled(monkeypatch):
+    """When an authenticated session exists and SOURCE_LINKEDIN_FEED=1,
+
+    the feed pass (_gather) must execute.
+    """
+    from unittest.mock import MagicMock
+    from src.scrapers.linkedin import LinkedInScraper
+
+    monkeypatch.setenv("SOURCE_LINKEDIN_FEED", "1")
+    scraper = LinkedInScraper()
+
+    # Mock authenticated session
+    monkeypatch.setattr(scraper, "has_authenticated_session", lambda: True)
+    monkeypatch.setattr(scraper, "_fetch_guest_public", lambda kw, dt: iter([]))
+
+    gather_called = False
+
+    async def mock_gather(kw, dt):
+        nonlocal gather_called
+        gather_called = True
+        return []
+
+    monkeypatch.setattr(scraper, "_gather", mock_gather)
+
+    list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+    assert gather_called is True
+
+
+def test_linkedin_feed_pass_skipped_when_disabled_or_no_session(monkeypatch):
+    """When SOURCE_LINKEDIN_FEED=0 or no session exists, _gather must not be called."""
+    from src.scrapers.linkedin import LinkedInScraper
+
+    scraper = LinkedInScraper()
+    monkeypatch.setattr(scraper, "_fetch_guest_public", lambda kw, dt: iter([]))
+
+    gather_called = False
+
+    async def mock_gather(kw, dt):
+        nonlocal gather_called
+        gather_called = True
+        return []
+
+    monkeypatch.setattr(scraper, "_gather", mock_gather)
+
+    # 1. No session, but feed enabled
+    monkeypatch.setenv("SOURCE_LINKEDIN_FEED", "1")
+    monkeypatch.setattr(scraper, "has_authenticated_session", lambda: False)
+    list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+    assert gather_called is False
+
+    # 2. Session exists, but feed disabled
+    monkeypatch.setenv("SOURCE_LINKEDIN_FEED", "0")
+    monkeypatch.setattr(scraper, "has_authenticated_session", lambda: True)
+    list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+    assert gather_called is False
