@@ -61,7 +61,7 @@ def test_write_digest_files(tmp_path):
     assert "Weekly Digest" in md_p.read_text(encoding="utf-8")
 
 
-def test_collect_weekly_jobs(tmp_path, monkeypatch):
+def test_collect_weekly_jobs(tmp_path, monkeypatch, tmp_slc):
     import src.digest as digest
     from datetime import timedelta
 
@@ -71,3 +71,30 @@ def test_collect_weekly_jobs(tmp_path, monkeypatch):
 
     raw = digest.collect_weekly_jobs(tmp_path)
     assert len(raw) == 2
+
+
+def test_collect_weekly_jobs_fallback_to_seen_store(tmp_slc):
+    """Cloud runner digests must not come back empty when `output/` is missing:
+    jobs are merged back from the durable seen-store snapshot."""
+    import src.digest as digest
+    from datetime import timedelta
+    from src.state import SeenStore
+
+    today = digest.utc_now().date()
+    a = _sample_job(1)  # present in both output file and seen store
+    b = _sample_job(2)  # only in seen store, within the week window
+    c = _sample_job(3)  # only in seen store, but older than the 7-day window
+    c.fetched_at = c.fetched_at - timedelta(days=20)
+
+    (tmp_slc / f"jobs_{today.isoformat()}.json").write_text(
+        json.dumps([a.to_dict()]), encoding="utf-8")
+
+    store = SeenStore()
+    store.push_recent(a.to_dict())
+    store.push_recent(b.to_dict())
+    store.push_recent(c.to_dict())
+    store.save()
+
+    out = digest.collect_weekly_jobs(tmp_slc)
+    ids = {j.id for j in out}
+    assert ids == {"id-1", "id-2"}

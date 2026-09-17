@@ -212,3 +212,20 @@ def test_build_notifiers_skips_linkedin_without_token(monkeypatch):
     monkeypatch.setattr(cfg, "notify_telegram", lambda: False)
     monkeypatch.setattr(cfg, "notify_whatsapp", lambda: False)
     assert build_notifiers() == []
+
+
+def test_telegram_format_weekly_cold_start_empty():
+    from src.notifier import TelegramNotifier
+    n = TelegramNotifier("tok", "chat")
+    text = n._format_weekly({"week_key": "2026-W38", "total": 0}, [])
+    assert "2026-W38" in text
+    assert "Total jobs found: 0" in text
+    assert "Cold-start or quiet week" in text
+
+
+def test_linkedin_format_weekly_cold_start_empty():
+    n = LinkedInNotifier("t", "urn:li:person:abc")
+    text = n._format_weekly({"week_key": "2026-W38", "total": 0}, [])
+    assert "2026-W38" in text
+    assert "Total remote AI/ML jobs found this week: 0" in text
+    assert "cold-start or quiet week" in text

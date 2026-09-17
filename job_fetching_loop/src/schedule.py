@@ -147,7 +147,7 @@ def next_fetch_start(now: datetime | None = None, tz: ZoneInfo | None = None, ru
 
     Matches the daily schedule rule: Sat/Sun are idle in the spec,
     so the next window is the next Mon-Fri at run_hour (configurable via SCRAPE_RUN_HOUR,
-    defaulting to 8 if JOB_LOOP_PRIMARY == 'local', else 9).
+    defaulting to 9; use SCRAPE_RUN_HOUR=8 for 08:00 PKT local crontab alignment).
     The self-scheduling daemon (`python -m src.main --serve`) sleeps until this time.
     """
     tz = tz or _get_tz()

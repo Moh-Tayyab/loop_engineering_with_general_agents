@@ -61,6 +61,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--stats", action="store_true", help="print per-source circuit breaker stats")
     p.add_argument("--dlq", action="store_true", help="inspect unresolved dead-letter queue items")
     p.add_argument("--clear-dlq", action="store_true", help="clear dead-letter queue items")
+    p.add_argument("--replay-dlq", nargs="?", const="google_sheets", default=None, metavar="SOURCE",
+                   help="replay dead-lettered batches for a source (default: google_sheets); respects --dry-run")
     p.add_argument("--reset-circuit", action="store_true", help="reset all circuit breakers")
     p.add_argument("--linkedin-login", action="store_true", help="open LinkedIn login gate")
     p.add_argument("--list-sources", action="store_true", help="print registered sources and exit")
@@ -677,6 +679,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[dlq] cleared {count} item(s)")
         return 0
 
+    if args.replay_dlq:
+        if args.replay_dlq != "google_sheets":
+            print(f"[replay-dlq] unsupported source '{args.replay_dlq}' (only 'google_sheets' currently)")
+            return 1
+        from src.sheets import replay_sheets_dlq
+        replayed = replay_sheets_dlq(dry_run=args.dry_run)
+        verb = "would have replayed" if args.dry_run else "replayed"
+        print(f"[replay-dlq] {verb} {replayed} google_sheets batch(es)")
+        return 0
+
     if args.stats:
         for s in circuit.summary():
             print(f"  {s['source']:25} {s['status']}  fails={s['consecutive_fails']}  ok={s['total_ok']}  err={s['total_fail']}")
@@ -831,10 +843,11 @@ def main(argv: list[str] | None = None) -> int:
         log.error("[outage] every scheduled source failed this run — %s",
                   ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
         log.error("[outage] returning exit code 1 so monitoring/downstream can alert")
-        send_ops_alert(
-            "total source outage — every scheduled source failed. "
-            "Check loop.log / GitHub Actions."
-        )
+        if not cfg.is_cloud_runner():
+            send_ops_alert(
+                "total source outage — every scheduled source failed. "
+                "Check loop.log / GitHub Actions."
+            )
         return 1
 
     return 0

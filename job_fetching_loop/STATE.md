@@ -15,7 +15,7 @@
   Five scaffolds remain default-OFF. Cloud cron skips browser-bound sources.
 - **Stack:** Python 3.12, Playwright (local headed + persistent profiles), requests, pytest.
 - **Live end-to-end since:** Beat 26 (2026-09-14) — real Telegram delivery.
-- **Runners:** GitHub Actions `job-loop-cron.yml` (weekday 09:00 PKT = `0 4 * * 1-5` UTC,
+- **Runners:** GitHub Actions `job-loop-cron.yml` (weekday 08:00 PKT = `0 3 * * 1-5` UTC,
   `.slc/` cache) and local `run_loop.sh` via crontab (weekday **08:00 PKT**, `0 8 * * 1-5`).
   Which one is primary follows `JOB_LOOP_PRIMARY`; `both` = both fire (duplicate Telegram risk).
 - **CI gate:** `.github/workflows/test-gate.yml` runs pytest in
@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 64 — CI Alignment, Dead Code Purge, Google Sheets Retry/DLQ & Worker Thread Join
+- **Beat #:** 69 — Cloud cron hour change (09:00 PKT → 08:00 PKT)
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix LOW audit items (CI drift, dead code/dev deps, Sheets retry/DLQ, daemon thread join)
-- **Status:** Resolved all LOW audit findings: aligned `actions/checkout@v6` across all workflows; separated `pytest` out of `requirements.txt` into `requirements-dev.txt`; purged dead code (`_KNOWN_COMPANIES` and `_parse_company` in `apac_remote.py` & `pakistan_remote.py`); added 3-attempt exponential backoff and `DeadLetterQueue` recording to `sync_to_google_sheet`; added grace `worker.join(0.5)` on scraper timeouts in `src/main.py`; 265 tests passing. `PASS`
+- **Trigger:** user request — "fix it" on the workflow schedule; chose "change run hour" (match local 08:00 PKT)
+- **Status:** `job-loop-cron.yml` schedule updated to `0 3 * * 1-5` (03:00 UTC = 08:00 PKT), comment + README topology table + STATE.md refs synced; no stale `0 4 * * 1-5`/09:00 PKT references remain. Config-only, no test impact. Cloud and local runner now both fire 08:00 PKT; local stays standby via `JOB_LOOP_PRIMARY=github`. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,11 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 69 | 2026-09-17 | user: "fix it" on workflow cron | **Cloud cron moved to 08:00 PKT:** `job-loop-cron.yml` schedule `0 4 * * 1-5` (09:00 PKT) → `0 3 * * 1-5` (03:00 UTC = 08:00 PKT); comment + README + STATE.md refs synced, no stale refs | PASS — config-only, 283 tests unaffected |
+| 68 | 2026-09-17 | user request (remediate Beat 67 audit findings) | **Audit Findings Remediation & Hardening:** outage ops-alert gated on `not cfg.is_cloud_runner()` (`src/main.py:846`, ends cloud duplex pings); cold-start empty digest renders a notice instead of a bare 0-job summary; WhatsApp status confirmed (Telegram-only in both runner envs is intended); docs synced (AGENTS.md 283 tests, schedule.py run_hour docstring). +4 regression tests | PASS — 283 green, exit 0 |
+| 67 | 2026-09-17 | user: "100% production ready? verify as senior eng, in-depth" | **Hard re-audit (read-only):** traced full cloud path (workflow env→schedule→lock→scrape→sheets DLQ→two-phase notify→digest delivery→exit codes). Single-writer holds locally (primary=github, standbby exits 0); weekday/tz alignment holds (SCRAPE_TZ Asia/Karachi × cron 04 UTC); Friday linkedin-only guest mode won't false-alarm (raises only if nothing succeeded); sheets DLQ replay confirmed container-complete; no token logging. Findings: dup outage alert (py+workflow), cold-start Monday digest stub, WhatsApp channel live in neither env, stale docs | PASS — 279 green, no code change |
+| 66 | 2026-09-17 | user request (audit gap remediation) | **Gap Remediation:** seen-store fallback in `collect_weekly_jobs` + `output/` added to Actions cache/artifact (cloud digest); `replay_sheets_dlq()` + `--replay-dlq` (dry-run safe) storing full rows in DLQ; lakh/₹ salary parsing + currency-aware `₹25L` display; `BOARD_HEADLESS` keeps indeed/glassdoor headed by default; Wellfound fetches page once (keyword loop stays in-memory); cleared 12 legacy DLQ rows | PASS — 279 tests, exit 0 |
+| 65 | 2026-09-17 | user request (prod-readiness audit) | **Deep Prod-Readiness Audit (honest):** 265 tests green; secrets clean; lock/watchdog/DLQ/dry-run verified; location+salary guards probed. Gaps: cloud weekly digest lacks `output/` cache (HIGH); Sheets DLQ has no replay (MED); stale DLQ rows + glassdoor ignores `SCRAPE_HEADLESS` (LOW) | PASS — 265, exit 0 |
 | 64 | 2026-09-17 | user request (low audit items) | **CI Checkout v6, Dead Code Purge, Sheets Retry/DLQ & Worker Join:** Aligned workflows to `actions/checkout@v6`; separated dev deps into `requirements-dev.txt`; deleted dead code in scrapers; added retries & DLQ recording to `sync_to_google_sheet`; added timeout worker join grace in `src/main.py`; 265 tests green | PASS — 265 tests, exit 0 |
 | 63 | 2026-09-17 | user request (salary, 24h datetime, cron hour) | **Salary Comma Parser, 24h Datetime & Cron Hour:** Stripped commas in `parse_salary`; compared ISO datetimes in `_run_source_impl`; added `SCRAPE_RUN_HOUR` to `next_fetch_start`; added regression tests; 263 tests green | PASS — 263 tests, exit 0 |
 | 62 | 2026-09-17 | user request (exact dedup mismatch) | **Canonical URL Exact-Dedup Alignment:** Canonicalized URLs in `job_id`; updated `dedup_job` to use `normalized.id` and pass `normalized` in `_run_source_impl`; added regression test; 259 tests green | PASS — 259 tests, exit 0 |
@@ -72,6 +77,8 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 3. Local crontab is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
 4. Indeed/Glassdoor remain local-headed only; cloud never waits on CAPTCHA.
 5. Scaffolds cleanly retired: feedcoyote, jobboardsearch, flexjobs, dynamitejobs, and virtual_vocations purged. Production operates on 15 live, verified sources.
+6. ~~**(Beat 65, HIGH)** Persist `output/` in `job-loop-cron.yml` cache (or build Monday weekly digest from durable state) — cloud primary otherwise mails a near-empty digest.~~ Done Beat 66: `output/` in cache+artifact, seen-store fallback in `collect_weekly_jobs`.
+7. ~~**(Beat 65, MED)** Add a Sheets DLQ replay path (`--replay-dlq google_sheets`) so webhook-outage rows aren't lost; then `--clear-dlq` the stale legacy rows.~~ Done Beat 66: replay added (dry-run safe), 12 legacy rows cleared.
 
 ## 11. Human Gate Decisions (job loop)
 

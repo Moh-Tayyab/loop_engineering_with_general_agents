@@ -27,8 +27,15 @@ SOURCE_NAMES = [
     "python_org",
 ]
 
-# Salary parsing units
-_SALARY_MULTIPLIERS = {"k": 1_000, "m": 1_000_000}
+# Salary parsing units (k/m plus Indian/Pakistani lakh conventions)
+_SALARY_MULTIPLIERS = {
+    "k": 1_000,
+    "m": 1_000_000,
+    "l": 100_000,
+    "lakh": 100_000,
+    "lac": 100_000,
+    "lpa": 100_000,
+}
 
 # Normalized location buckets
 LOCATION_REMOTE = "remote"
@@ -430,18 +437,22 @@ def is_expired_job(raw: RawJob) -> bool:
 
 
 def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
-    """Parse '180k-220k', '$150-200K', '$150,000 - $200,000', '£120k', '$200k+' into (min, max, currency)."""
-    if not raw:
+    """Parse '180k-220k', '$150-200K', '$150,000 - $200,000', '£120k', '$200k+',
+    '₹25L-30L', '3.5 LPA' into (min, max, currency)."""
+    if not raw or not re.search(r"\d", raw):
+        # "N/A", "Not specified", empty → no numbers, no made-up currency
         return None, None, None
-    currency_match = re.match(r"^\s*([$£€A-Za-z]*)", raw)
+    currency_match = re.match(r"^\s*([$£€₹A-Za-z]*)", raw)
     currency = currency_match.group(1) if currency_match else None
-    if currency and not currency.isalpha() and currency not in ("$", "£", "€", "Rs", "PKR", "USD", "EUR", "GBP"):
+    if currency and not currency.isalpha() and currency not in (
+        "$", "£", "€", "₹", "Rs", "PKR", "USD", "EUR", "GBP", "INR",
+    ):
         currency = None
 
     # Strip thousand-separator commas (e.g. $150,000 -> $150000) so commas don't split values
     cleaned = re.sub(r"(?<=\d),(?=\d)", "", raw)
 
-    nums = re.findall(r"(\d+(?:\.\d+)?)\s*([kKmM]?)", cleaned)
+    nums = re.findall(r"(\d+(?:\.\d+)?)\s*((?:lakh|lac|lpa|[kKmMlL])?)", cleaned)
     if not nums:
         return None, None, currency
 

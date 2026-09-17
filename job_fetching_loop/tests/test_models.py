@@ -59,6 +59,27 @@ def test_parse_salary_comma_separated():
     assert cur3 == "£"
 
 
+# ── lakh / INR conventions (beat 65 audit) ───────────────────────────────────
+def test_parse_salary_lakh():
+    mn, mx, cur = parse_salary("₹25L-30L")
+    assert mn == 2_500_000
+    assert mx == 3_000_000
+    assert cur == "₹"
+
+
+def test_parse_salary_lakh_word():
+    mn, mx, _ = parse_salary("3.5 LPA")
+    assert mn == 350_000
+    assert mx is None
+
+
+def test_parse_salary_na_has_no_madeup_currency():
+    """'N/A' / prose without digits must not invent a currency like 'N'."""
+    assert parse_salary("N/A") == (None, None, None)
+    assert parse_salary("Not specified") == (None, None, None)
+    assert parse_salary("competitive") == (None, None, None)
+
+
 def test_parse_posted_datetime():
     from src.models import parse_posted_datetime
 

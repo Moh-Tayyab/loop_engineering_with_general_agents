@@ -57,7 +57,7 @@ class GlassdoorScraper(BaseScraper):
         days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
         any_success = False
         errors: list[Exception] = []
-        async with launch_browser(self.name, persistent=True, headless=False) as context:
+        async with launch_browser(self.name, persistent=True, headless=cfg.board_headless()) as context:
             page = await context.new_page()
             await warm_up(page, self._HOME, self.name)
             for kw in keywords:

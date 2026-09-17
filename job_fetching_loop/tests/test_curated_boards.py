@@ -722,3 +722,32 @@ def test_working_nomads_api_failure_raises_when_browser_disabled(monkeypatch):
 
 
 
+
+
+# ── Wellfound single-fetch optimization (beat 65 audit) ───────────────────────
+
+def test_wellfound_fetch_fetches_page_once():
+    """Wellfound ignores the keyword in its HTTP request, so fetch() must hit
+    the page ONCE and run the per-keyword tag/match loop in memory — not
+    re-download the same payload once per keyword."""
+    import src.scrapers.curated_boards as cb
+
+    calls = []
+    item = {
+        "title": "AI Engineer",
+        "_url": "https://wellfound.com/jobs/1-ai-engineer",
+        "acceptedRemoteLocationNames": ["Worldwide"],
+        "locationNames": ["Remote"],
+        "primaryRole": {"name": "AI Engineer"},
+        "remote": True,
+        "liveStartAt": 1758033000,
+    }
+
+    scraper = cb.WellfoundScraper()
+    scraper._get = lambda kw: (calls.append(kw) or [dict(item)])
+
+    jobs = list(scraper.fetch(["AI", "ML", "LLM"], datetime.now(timezone.utc)))
+    assert calls == [""], f"expected exactly one __NEXT_DATA__ fetch, got {calls}"
+    assert len(jobs) == 1            # URL-dedup still collapses across keywords
+    assert jobs[0].tags == ["AI"]    # first keyword still tags the job
+    assert jobs[0].url == "https://wellfound.com/jobs/1-ai-engineer"

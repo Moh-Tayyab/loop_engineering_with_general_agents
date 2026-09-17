@@ -59,6 +59,13 @@ def scrape_headless() -> bool:
     return os.environ.get("SCRAPE_HEADLESS", "1") == "1"
 
 
+def board_headless() -> bool:
+    """Headed by default for CAPTCHA-prone boards (Indeed/Glassdoor) so a human
+    can solve challenges in the visible browser. Opt into unattended headless
+    runs explicitly via BOARD_HEADLESS=1."""
+    return os.environ.get("BOARD_HEADLESS", "0") == "1"
+
+
 def scrape_remote_only() -> bool:
     """Drop on-site/hybrid jobs entirely unless a job is clearly remote."""
     return os.environ.get("SCRAPE_REMOTE_ONLY", "1") == "1"

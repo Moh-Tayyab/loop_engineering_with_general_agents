@@ -8,7 +8,7 @@ optional WhatsApp / LinkedIn / Google Sheet).
 
 | Runner | When | Sources | State |
 |--------|------|---------|--------|
-| **GitHub Actions** (`job-loop-cron.yml`) | Weekdays 09:00 PKT | Cloud-safe HTTP/JSON/RSS only (no CAPTCHA browsers) | `.slc/` restored via Actions cache |
+| **GitHub Actions** (`job-loop-cron.yml`) | Weekdays 08:00 PKT (`0 3 * * 1-5` UTC) | Cloud-safe HTTP/JSON/RSS only (no CAPTCHA browsers) | `.slc/` restored via Actions cache |
 | **This machine** (`run_loop.sh` cron) | Only if `JOB_LOOP_PRIMARY=local` | Full set including Indeed/Glassdoor headed | local `.slc/` |
 
 Set `JOB_LOOP_PRIMARY=github` in `.env` (recommended) so laptop cron **does

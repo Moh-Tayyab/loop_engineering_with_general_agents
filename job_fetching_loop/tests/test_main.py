@@ -452,6 +452,66 @@ def test_main_exit_code_one_on_total_outage(tmp_slc, monkeypatch):
     assert delivered == [], "total outage must skip the daily heartbeat"
 
 
+def test_outage_alert_cloud_runner_suppresses_send_ops_alert(tmp_slc, monkeypatch):
+    """In cloud (JOB_LOOP_CLOUD=1), Python send_ops_alert is suppressed because
+    GitHub Actions workflow has an `if: failure()` step that handles the Telegram ping.
+    Double-alerting on the same exit-1 must not happen."""
+    import src.main as main
+    import src.config as cfg
+
+    class Broken:
+        name = "broken"
+        def fetch(self, keywords, posted_after):
+            raise RuntimeError("source exploded")
+        def is_available(self):
+            return True
+        def login_required(self):
+            return False
+
+    alerts: list[str] = []
+    monkeypatch.setattr(main, "enabled_scrapers", lambda: ["broken"])
+    monkeypatch.setattr(main, "get_scraper", lambda name: Broken())
+    monkeypatch.setattr(main, "build_notifiers", lambda: [])
+    monkeypatch.setattr(main, "send_ops_alert", lambda msg: alerts.append(msg))
+    monkeypatch.setenv("JOB_LOOP_PRIMARY", "github")
+    monkeypatch.setenv("JOB_LOOP_CLOUD", "1")
+    cfg.OUTPUT_DIR = tmp_slc / "output"
+    cfg.RUNTIME_DIR = tmp_slc / ".runtime"
+
+    rc = main.main(["--window", "daily"])
+    assert rc == 1
+    assert alerts == [], "cloud runner must suppress send_ops_alert to avoid duplex alert"
+
+
+def test_outage_alert_local_runner_sends_ops_alert(tmp_slc, monkeypatch):
+    """On local runner (JOB_LOOP_CLOUD unset), Python send_ops_alert fires on total outage."""
+    import src.main as main
+    import src.config as cfg
+
+    class Broken:
+        name = "broken"
+        def fetch(self, keywords, posted_after):
+            raise RuntimeError("source exploded")
+        def is_available(self):
+            return True
+        def login_required(self):
+            return False
+
+    alerts: list[str] = []
+    monkeypatch.setattr(main, "enabled_scrapers", lambda: ["broken"])
+    monkeypatch.setattr(main, "get_scraper", lambda name: Broken())
+    monkeypatch.setattr(main, "build_notifiers", lambda: [])
+    monkeypatch.setattr(main, "send_ops_alert", lambda msg: alerts.append(msg))
+    monkeypatch.delenv("JOB_LOOP_CLOUD", raising=False)
+    cfg.OUTPUT_DIR = tmp_slc / "output"
+    cfg.RUNTIME_DIR = tmp_slc / ".runtime"
+
+    rc = main.main(["--window", "daily"])
+    assert rc == 1
+    assert len(alerts) == 1
+    assert "total source outage" in alerts[0]
+
+
 def test_main_exit_code_zero_when_a_source_succeeds_empty(tmp_slc, monkeypatch):
     """Exit 0 on a healthy quiet day (a source ran OK but found nothing) —
     the outage signal must not fire on silence alone. And a healthy 0-new-job

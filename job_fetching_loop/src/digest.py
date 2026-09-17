@@ -56,6 +56,27 @@ def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
         except (json.JSONDecodeError, OSError, KeyError) as e:
             log.warning("skipped %s: %s", day_file.name, e)
 
+    # Fallback for ephemeral runners (cloud Actions where an evicted cache means
+    # `output/` is absent): the durable seen-store snapshot keeps every job from
+    # the last DEDUP_WINDOW_DAYS, so the weekly digest never silently comes back
+    # empty. Overlaps with the files above are excluded by `seen_ids`.
+    try:
+        from src.state import SeenStore
+        fallback_added = 0
+        for d in SeenStore().recent_jobs():
+            j = NormalizedJob.from_dict(d)
+            if j.fetched_at is None or (today - j.fetched_at.date()).days >= 7:
+                continue
+            if j.id in seen_ids:
+                continue
+            seen_ids.add(j.id)
+            all_jobs.append(j)
+            fallback_added += 1
+        if fallback_added:
+            log.info("[digest] merged %d job(s) from seen-store fallback", fallback_added)
+    except (json.JSONDecodeError, OSError, ValueError, KeyError) as e:
+        log.warning("[digest] seen-store fallback unavailable: %s", e)
+
     return all_jobs
 
 

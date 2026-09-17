@@ -2,8 +2,8 @@ name: Job Fetching Loop Cloud Runner
 
 on:
   schedule:
-    # 04:00 UTC = 09:00 Pakistan Standard Time (PKT), Monday to Friday
-    - cron: '0 4 * * 1-5'
+    # 03:00 UTC = 08:00 Pakistan Standard Time (PKT), Monday to Friday
+    - cron: '0 3 * * 1-5'
   workflow_dispatch:
 
 concurrency:
@@ -35,7 +35,9 @@ jobs:
       - name: Restore durable loop state
         uses: actions/cache@v4
         with:
-          path: job_fetching_loop/.slc
+          path: |
+            job_fetching_loop/.slc
+            job_fetching_loop/output
           key: job-loop-slc-${{ github.run_id }}
           restore-keys: |
             job-loop-slc-
@@ -66,7 +68,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: job-loop-slc
-          path: job_fetching_loop/.slc
+          path: |
+            job_fetching_loop/.slc
+            job_fetching_loop/output
           if-no-files-found: ignore
           retention-days: 30
 

@@ -448,6 +448,24 @@ class WellfoundScraper(CuratedBoardScraper):
                 f"https://wellfound.com/jobs/{job_id}-{job.get('slug') or ''}")
         return jobs
 
+    def fetch(self, keywords: list[str], posted_after) -> Iterator[RawJob]:
+        # Wellfound ignores the keyword in the HTTP request (one __NEXT_DATA__
+        # payload), so the base class would re-download the same page once per
+        # keyword. Fetch the page ONCE, then run the per-keyword tag/match loop
+        # in memory — keeps per-keyword tags (the AI gate reads them) with 1
+        # HTTP hit instead of N.
+        seen_urls: set[str] = set()
+        items = self._get("")
+        for kw in keywords:
+            for item in items:
+                job = self._parse_item(item, kw)
+                if job is None:
+                    continue
+                if job.url in seen_urls:
+                    continue
+                seen_urls.add(job.url)
+                yield job
+
     def _parse_item(self, item: dict, kw: str) -> RawJob | None:
         title = (item.get("title") or "").strip()
         url = (item.get("_url") or "").strip()

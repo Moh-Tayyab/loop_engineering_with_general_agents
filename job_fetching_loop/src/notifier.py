@@ -130,6 +130,10 @@ class TelegramNotifier(Notifier):
             "",
         ]
 
+        if total == 0:
+            lines.append("ℹ️ Cold-start or quiet week — no accumulated jobs found in cache.")
+            lines.append("")
+
         if by_source:
             lines.append("📡 By Source:")
             for name, count in sorted(by_source.items(), key=lambda x: -x[1]):
@@ -295,6 +299,9 @@ class LinkedInNotifier(Notifier):
             f"Total remote AI/ML jobs found this week: {total}",
             "",
         ]
+        if total == 0:
+            lines.append("No accumulated jobs found in cache (cold-start or quiet week).")
+            lines.append("")
         if by_source:
             lines.append("Sources:")
             for name, count in sorted(by_source.items(), key=lambda x: -x[1]):
