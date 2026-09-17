@@ -430,7 +430,7 @@ def is_expired_job(raw: RawJob) -> bool:
 
 
 def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
-    """Parse '180k-220k', '$150-200K', '£120k', '$200k+' into (min, max, currency)."""
+    """Parse '180k-220k', '$150-200K', '$150,000 - $200,000', '£120k', '$200k+' into (min, max, currency)."""
     if not raw:
         return None, None, None
     currency_match = re.match(r"^\s*([$£€A-Za-z]*)", raw)
@@ -438,7 +438,10 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
     if currency and not currency.isalpha() and currency not in ("$", "£", "€", "Rs", "PKR", "USD", "EUR", "GBP"):
         currency = None
 
-    nums = re.findall(r"(\d+(?:\.\d+)?)\s*([kKmM]?)", raw)
+    # Strip thousand-separator commas (e.g. $150,000 -> $150000) so commas don't split values
+    cleaned = re.sub(r"(?<=\d),(?=\d)", "", raw)
+
+    nums = re.findall(r"(\d+(?:\.\d+)?)\s*([kKmM]?)", cleaned)
     if not nums:
         return None, None, currency
 
@@ -450,6 +453,23 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None, str | None]:
     if len(parsed) == 1:
         return parsed[0], None, currency or None
     return parsed[0], parsed[1], currency or None
+
+
+def parse_posted_datetime(value: str | None, now: datetime | None = None) -> datetime | None:
+    """Parse a full UTC-aware datetime from ISO timestamps if available."""
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        # Full ISO with time (e.g. 2026-09-17T04:12:00Z or 2026-09-17T04:12:00+00:00)
+        if "T" in text or " " in text:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+    except ValueError:
+        pass
+    return None
 
 
 def classify_job_type(raw: str | None) -> str:

@@ -349,7 +349,19 @@ def _run_source_impl(
             log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
             continue
         normalized = normalize_raw(raw)
-        # Strict date window across all platforms: only accept jobs posted within the active window (24h daily).
+        # Strict date/time window across all platforms:
+        # 1. Compare full datetime if available (strict 24h hour-level check)
+        # 2. Fall back to calendar date comparison when only date is available
+        from src.models import parse_posted_datetime
+        posted_dt = parse_posted_datetime(raw.posted_date)
+        if posted_dt is not None:
+            cmp_after = posted_after if posted_after.tzinfo is not None else posted_after.replace(tzinfo=timezone.utc)
+            if posted_dt.tzinfo is None:
+                posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+            if posted_dt < cmp_after:
+                log.debug("[%s] skipping outside datetime window (%s < %s): %s", source_name, posted_dt, cmp_after, raw.title[:50])
+                continue
+
         cutoff_date = posted_after.date()
         if normalized.posted_date and normalized.posted_date < cutoff_date:
             log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])

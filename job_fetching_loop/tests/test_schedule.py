@@ -152,3 +152,12 @@ def test_next_fetch_start_saturday_skips_to_monday(monkeypatch):
 def test_next_fetch_start_is_tz_aware(monkeypatch):
     monkeypatch.setenv("SCRAPE_TZ", "UTC")
     assert next_fetch_start().tzinfo is not None
+
+
+def test_next_fetch_start_explicit_run_hour(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    monkeypatch.setenv("SCRAPE_RUN_HOUR", "8")
+    before = datetime(2026, 9, 16, 6, 0, tzinfo=timezone.utc)
+    assert next_fetch_start(before) == datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc)
+    # Or passed explicitly
+    assert next_fetch_start(before, run_hour=7) == datetime(2026, 9, 16, 7, 0, tzinfo=timezone.utc)

@@ -42,6 +42,41 @@ def test_parse_salary_garbage():
     assert mn is None and mx is None
 
 
+def test_parse_salary_comma_separated():
+    mn, mx, cur = parse_salary("$150,000 - $200,000")
+    assert mn == 150_000
+    assert mx == 200_000
+    assert cur == "$"
+
+    mn2, mx2, cur2 = parse_salary("$120,000")
+    assert mn2 == 120_000
+    assert mx2 is None
+    assert cur2 == "$"
+
+    mn3, mx3, cur3 = parse_salary("£85,000+")
+    assert mn3 == 85_000
+    assert mx3 is None
+    assert cur3 == "£"
+
+
+def test_parse_posted_datetime():
+    from src.models import parse_posted_datetime
+
+    dt = parse_posted_datetime("2026-09-17T04:12:00Z")
+    assert dt is not None
+    assert dt.year == 2026 and dt.month == 9 and dt.day == 17 and dt.hour == 4
+    assert dt.tzinfo is not None
+
+    dt2 = parse_posted_datetime("2026-09-17 08:30:00")
+    assert dt2 is not None
+    assert dt2.hour == 8 and dt2.minute == 30
+
+    # Date-only should return None so caller uses calendar date fallback
+    assert parse_posted_datetime("2026-09-17") is None
+    assert parse_posted_datetime("yesterday") is None
+
+
+
 # ── location classification ──────────────────────────────────────────────────
 
 def test_classify_remote():

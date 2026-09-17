@@ -833,3 +833,71 @@ def test_run_source_timeout_does_not_burn_jobs_in_seen(tmp_path, monkeypatch):
 
     assert len(jobs2) == 1
     assert seen.has_exact(jid)
+
+
+def test_run_source_strict_24h_datetime_comparison(tmp_path, monkeypatch):
+    """When a job has an ISO datetime, run_source must compare full datetime
+
+    rather than only calendar date (preventing jobs >24h old from slipping in).
+    """
+    from src.main import run_source
+    from src.circuit_breaker import CircuitManager
+    from src.dedup import SeenStore
+    from src.models import RawJob
+    from src.scrapers import _REGISTRY, BaseScraper
+
+    now = datetime.now(timezone.utc)
+    posted_after = now - timedelta(hours=24)
+
+    # Job from 30 hours ago (e.g. earlier yesterday)
+    old_raw = RawJob(
+        source="dt_test",
+        title="Senior AI Engineer",
+        company="OldCorp",
+        url="https://example.com/old-1",
+        location="Worldwide Remote",
+        posted_date=(now - timedelta(hours=30)).isoformat(),
+        description="Python LLM",
+        tags=["AI"],
+        fetched_at=now,
+    )
+
+    # Job from 10 hours ago (within 24h)
+    fresh_raw = RawJob(
+        source="dt_test",
+        title="Senior AI Engineer",
+        company="FreshCorp",
+        url="https://example.com/fresh-1",
+        location="Worldwide Remote",
+        posted_date=(now - timedelta(hours=10)).isoformat(),
+        description="Python LLM",
+        tags=["AI"],
+        fetched_at=now,
+    )
+
+    class DtScraper(BaseScraper):
+        name = "dt_test"
+        def is_available(self):
+            return True
+        def fetch(self, kw, dt):
+            yield old_raw
+            yield fresh_raw
+
+    monkeypatch.setitem(_REGISTRY, "dt_test", DtScraper)
+
+    seen = SeenStore(path=tmp_path / "seen.json")
+    circuit = CircuitManager({})
+
+    jobs = run_source(
+        "dt_test",
+        keywords=["AI"],
+        posted_after=posted_after,
+        seen=seen,
+        circuit=circuit,
+        max_jobs=10,
+        dry_run=False,
+    )
+
+    # old_raw (30h ago) must be skipped, fresh_raw (10h ago) must be collected
+    assert len(jobs) == 1
+    assert jobs[0].company == "FreshCorp"

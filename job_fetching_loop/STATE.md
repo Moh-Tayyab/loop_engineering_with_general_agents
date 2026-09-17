@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 62 — Canonical URL Exact-Dedup Alignment (Indeed & Dynamic URLs)
+- **Beat #:** 63 — Salary Comma Parser, Strict 24h Datetime Comparison & Cron Hour Alignment
 - **Date:** 2026-09-17
-- **Trigger:** user request — fix Indeed's exact-dedup layer never matching due to raw vs normalized URL hash mismatch
-- **Status:** Resolved exact-dedup discrepancy across all URL-rewriting sources: added `canonical_job_url` and updated `job_id` to consistently hash canonical URLs (`jk=...` for Indeed, `jl=...` for Glassdoor); updated `dedup_job` to use `job.id` directly for `NormalizedJob` and check fallback raw URL keys; updated `_run_source_impl` to pass `normalized` to `dedup_job`; added regression test; 259 tests green. `PASS`
+- **Trigger:** user request — fix salary parser comma splitting, strict 24h datetime comparison, and next_fetch_start hour alignment
+- **Status:** Resolved all 3 medium audit findings: stripped commas in `parse_salary` so `$150,000 - $200,000` parses cleanly to `(150000, 200000, "$")` and `$120,000` to `(120000, None, "$")`; added `parse_posted_datetime` and strict datetime comparison in `_run_source_impl` whenever ISO timestamps are available (preventing >24h false admissions); made `next_fetch_start` configurable via `SCRAPE_RUN_HOUR` (aligning with local 08:00 PKT or cloud 09:00 PKT); added regression tests; 263 tests green. `PASS`
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-16: beats 26–40 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 63 | 2026-09-17 | user request (salary, 24h datetime, cron hour) | **Salary Comma Parser, 24h Datetime & Cron Hour:** Stripped commas in `parse_salary`; compared ISO datetimes in `_run_source_impl`; added `SCRAPE_RUN_HOUR` to `next_fetch_start`; added regression tests; 263 tests green | PASS — 263 tests, exit 0 |
 | 62 | 2026-09-17 | user request (exact dedup mismatch) | **Canonical URL Exact-Dedup Alignment:** Canonicalized URLs in `job_id`; updated `dedup_job` to use `normalized.id` and pass `normalized` in `_run_source_impl`; added regression test; 259 tests green | PASS — 259 tests, exit 0 |
 | 61 | 2026-09-17 | user request (feed gate & timeout dedup) | **Feed Gate Unblock & Timeout Dedup Safety:** Dropped undocumented `LINKEDIN_FEED_PASS`; deferred dedup `accept_and_record` to caller thread on confirmed success (no burning jobs on timeout, no cross-thread seen race); 258 tests green | PASS — 258 tests, exit 0 |
 | 60 | 2026-09-17 | user request (prod audit gaps) | **Full Production Audit Remediation:** Single-writer standby aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest outage honesty; Google Sheets decoupled from lock; single-threaded circuit & DLQ ops; DLQ CLI tools; localhost health server; 255 tests green | PASS — 255 tests, exit 0 |
