@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 69 — Cloud cron hour change (09:00 PKT → 08:00 PKT)
+- **Beat #:** 70 — Clarify `--list-sources` output for browser-bound sources on cloud runner
 - **Date:** 2026-09-17
-- **Trigger:** user request — "fix it" on the workflow schedule; chose "change run hour" (match local 08:00 PKT)
-- **Status:** `job-loop-cron.yml` schedule updated to `0 3 * * 1-5` (03:00 UTC = 08:00 PKT), comment + README topology table + STATE.md refs synced; no stale `0 4 * * 1-5`/09:00 PKT references remain. Config-only, no test impact. Cloud and local runner now both fire 08:00 PKT; local stays standby via `JOB_LOOP_PRIMARY=github`. `PASS`
+- **Trigger:** user request — clarify cloud sources listing
+- **Status:** Updated `src/main.py:658` so `--list-sources` clearly reports `disabled (browser-bound; skipped on cloud runner)` for the 6 browser-bound scrapers in cloud mode, preventing false impressions that `SOURCE_<NAME>=1` is missing. Added regression test in `tests/test_main.py`. `PASS` — 284 green, exit 0.
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 70 | 2026-09-17 | user request (clarify cloud sources) | **Clarify `--list-sources` for browser scrapers:** in `src/main.py:658`, report `disabled (browser-bound; skipped on cloud runner)` instead of confusing `(set SOURCE_XYZ=1)` for browser sources on cloud; +1 regression test | PASS — 284 tests, exit 0 |
 | 69 | 2026-09-17 | user: "fix it" on workflow cron | **Cloud cron moved to 08:00 PKT:** `job-loop-cron.yml` schedule `0 4 * * 1-5` (09:00 PKT) → `0 3 * * 1-5` (03:00 UTC = 08:00 PKT); comment + README + STATE.md refs synced, no stale refs | PASS — config-only, 283 tests unaffected |
 | 68 | 2026-09-17 | user request (remediate Beat 67 audit findings) | **Audit Findings Remediation & Hardening:** outage ops-alert gated on `not cfg.is_cloud_runner()` (`src/main.py:846`, ends cloud duplex pings); cold-start empty digest renders a notice instead of a bare 0-job summary; WhatsApp status confirmed (Telegram-only in both runner envs is intended); docs synced (AGENTS.md 283 tests, schedule.py run_hour docstring). +4 regression tests | PASS — 283 green, exit 0 |
 | 67 | 2026-09-17 | user: "100% production ready? verify as senior eng, in-depth" | **Hard re-audit (read-only):** traced full cloud path (workflow env→schedule→lock→scrape→sheets DLQ→two-phase notify→digest delivery→exit codes). Single-writer holds locally (primary=github, standbby exits 0); weekday/tz alignment holds (SCRAPE_TZ Asia/Karachi × cron 04 UTC); Friday linkedin-only guest mode won't false-alarm (raises only if nothing succeeded); sheets DLQ replay confirmed container-complete; no token logging. Findings: dup outage alert (py+workflow), cold-start Monday digest stub, WhatsApp channel live in neither env, stale docs | PASS — 279 green, no code change |

@@ -655,7 +655,12 @@ def main(argv: list[str] | None = None) -> int:
         print("registered sources:")
         for name, cls in all_scrapers().items():
             enabled = cfg.source_enabled(name)
-            status = "enabled" if enabled else f"disabled (set SOURCE_{name.upper()}=1)"
+            if enabled:
+                status = "enabled"
+            elif not cfg.allow_browser_scrapers() and name in cfg.BROWSER_BOUND_SOURCES:
+                status = "disabled (browser-bound; skipped on cloud runner)"
+            else:
+                status = f"disabled (set SOURCE_{name.upper()}=1)"
             print(f"  {name:25} {status}")
         return 0
 

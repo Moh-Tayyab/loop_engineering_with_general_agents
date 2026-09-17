@@ -18,7 +18,7 @@ level up. A task inside this loop touches only this loop's spine.
 - **What:** Autonomous AI/ML remote-job scraper: 7 sources → dedup → normalize →
   atomic store → Telegram/WhatsApp. Runs by cron schedule (daily/weekly windows).
 - **Layout:** `src/` (DAG: main orchestrator, config, state, circuit_breaker, dedup,
-  digest, browser, notifier, models, scrapers/), `tests/` (283 tests), `jobs output/`,
+  digest, browser, notifier, models, scrapers/), `tests/` (284 tests), `jobs output/`,
   `.slc/` runtime state, `.env` (gitignored — secrets!), `.env.example` (template).
 - **Runtime state lives in `.slc/`** (state.json, seen.json, dead_letter.json) —
   never commit it.

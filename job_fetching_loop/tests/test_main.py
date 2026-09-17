@@ -961,3 +961,16 @@ def test_run_source_strict_24h_datetime_comparison(tmp_path, monkeypatch):
     # old_raw (30h ago) must be skipped, fresh_raw (10h ago) must be collected
     assert len(jobs) == 1
     assert jobs[0].company == "FreshCorp"
+
+
+def test_list_sources_cloud_indicates_browser_bound(capsys, monkeypatch):
+    import src.main as main
+    monkeypatch.setenv("JOB_LOOP_CLOUD", "1")
+    monkeypatch.delenv("CLOUD_ALLOW_BROWSER", raising=False)
+    rc = main.main(["--list-sources"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "registered sources:" in out
+    assert "disabled (browser-bound; skipped on cloud runner)" in out
+    assert "remotive" in out
+    assert "enabled" in out
