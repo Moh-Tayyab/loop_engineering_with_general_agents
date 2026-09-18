@@ -136,6 +136,7 @@ def test_redownload_retries_finite_and_small():
 def test_clip_is_real_video_accepts_readable_video(tmp_path, monkeypatch):
     f = tmp_path / "clip.mp4"
     f.write_bytes(b"not-empty")
+    monkeypatch.setattr("src.flow_automation.cfg.ffprobe_binary", lambda: "/usr/bin/ffprobe")
     monkeypatch.setattr("src.flow_automation.merger.probe_media", lambda p: {"has_video": True})
     assert _clip_is_real_video(f) is True
 
@@ -146,6 +147,7 @@ def test_clip_is_real_video_rejects_empty_and_audio_only(tmp_path, monkeypatch):
     assert _clip_is_real_video(empty) is False  # rejected before any probe
     audio_only = tmp_path / "audio.mp4"
     audio_only.write_bytes(b"bytes")
+    monkeypatch.setattr("src.flow_automation.cfg.ffprobe_binary", lambda: "/usr/bin/ffprobe")
     monkeypatch.setattr("src.flow_automation.merger.probe_media", lambda p: {"has_video": False})
     assert _clip_is_real_video(audio_only) is False
 
