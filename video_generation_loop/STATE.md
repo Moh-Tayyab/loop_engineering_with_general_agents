@@ -18,21 +18,21 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — morning triage: hermetic clip-verify tests + stale-PR human gate
+- **Date:** 2026-09-18
+- **Trigger:** weekday 9am heartbeat (morning triage loop)
+- **Status:** Done — triage ran (CI-gate reproduced locally: 274 root+video + 297 job green;
+  `gh run list` 403-denied so no run history). CLEAR FIX shipped: `_clip_is_real_video`
+  probe-path tests now pin `cfg.ffprobe_binary` (suite was red for the audio-only rejection
+  on any ffprobe-less host). Checker APPROVED (substitute read-only review; dedicated
+  checker model unavailable in-runner). Open issues #1/#3/#4/#6 all route to a human gate
+  on stale PRs #5/#7/#8/#9. `PASS`
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-09-18 | weekday 9am heartbeat | **Morning triage + hermetic clip-verify tests:** local CI-gate repro green (274 root+video w/ ffmpeg, 297 job); pinned `cfg.ffprobe_binary` in `test_clip_is_real_video_accepts_readable_video` & `_rejects_empty_and_audio_only` (were env-dependent: 1 red without ffprobe) | PASS — 274 green; checker APPROVED (subst. read-only review) |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -74,7 +74,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    Use `docs/PRODUCTION_RUNBOOK.md`.
 2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+3. Decide stale PRs: **#5 (wrap_text), #7/#8/#9 (issue #6 redact_secrets fix)** — merge or close. All OPEN with fix code complete; issues #1 (test stub), #3/#4 (wrap_text dup, fixed in #5), #6 (redact_secrets, fixed in #9) stay OPEN until a human merges. `gh run list` 403-denied in this env (no `actions` scope) — human should eyeball last night's test-gate runs.
 4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
