@@ -23,10 +23,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 75 — End-to-End Scraper Location & Description Restriction Hardening
-- **Date:** 2026-09-17
-- **Trigger:** user report — location mismatch continuing; positions fetched that candidate in Pakistan cannot work from home
-- **Status:** Fixed `WellfoundScraper` converting on-site jobs (`remote: False`) into "Remote" by using real `locationNames` (Santa Clara, NYC); fixed `ArbeitnowScraper` hardcoding "Worldwide" for German/EU city positions (Berlin, Munich, etc.); added `is_description_restricted` checking US work authorization, W-2 only, security clearance, hybrid/in-office mandates, and tight timezone exclusions across all sources; wired into `is_worldwide_remote` & `is_remotely_workable`. +3 regression tests. `PASS` — 297 green, exit 0.
+- **Beat #:** 76 — morning triage: de-bomb two `run_source` fixture dates
+- **Date:** 2026-09-21
+- **Trigger:** weekday heartbeat (morning triage) — local CI-gate repro red on `main`
+- **Status:** Job suite was red on `main` (2 fails: `test_smart_working_and_trellions_onsite_jobs_dropped`, `test_run_source_drops_us_only_and_restricted_jobs`): fixtures hardcoded `posted_date="2026-09-17"/"09-16"` but `run_source` cuts at `now−2d`, so the fixtures aged out as the wall-clock advanced (CI last ran 09-17). Fixed: dynamic `recent = (utc_now()−1d).date()` for all fixtures in both tests. `PASS` — 297 green; checker substituted (dedicated subagent model unavailable in-runner, beats-31 precedent).
 
 ## 3. Beat Log
 
@@ -34,6 +34,7 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 76 | 2026-09-21 | weekday heartbeat (morning triage) | **Job-suite date-bomb fix:** `test_main.py` fixtures hardcoded `posted_date="2026-09-17"/"09-16"` while `run_source` filters at `now−2d` (CLI gate red on 09-21). Switched all fixtures in `test_smart_working_and_trellions_onsite_jobs_dropped` + `test_run_source_drops_us_only_and_restricted_jobs` to `recent = (utc_now()−1d).date().isoformat()` | PASS — 297 tests, exit 0; checker reviewed (subst.) |
 | 75 | 2026-09-17 | user report (location mismatch frustration) | **Description & Scraper-level Remote Hardening:** `WellfoundScraper` keeps on-site locations when `remote: False`; `ArbeitnowScraper` preserves real German/EU city locations; `is_description_restricted` filters US auth, hybrid, clearance, and tight timezones; +3 tests | PASS — 297 tests, exit 0 |
 | 74 | 2026-09-17 | user report (US-only/foreign jobs in sheet) | **Strict Pakistan Remote Verification & Domestic Purge:** `is_title_restricted` catches US-only/hub titles; `_is_us_restricted` and `is_foreign_country_restricted` filter non-APAC foreign remote; `PythonOrgScraper` parses real location line instead of faking Worldwide; +4 regression tests | PASS — 294 tests, exit 0 |
 | 73 | 2026-09-17 | user report (on-site jobs in output) | **Strict Remote Gate & Pakistan Onsite Elimination:** `is_remotely_workable` rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical Pakistan cities & bare country without explicit remote markers; LinkedIn drops non-remote title/loc; +3 regression tests | PASS — 290 tests, exit 0 |
