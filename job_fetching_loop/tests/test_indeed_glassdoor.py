@@ -117,6 +117,36 @@ def test_indeed_parse_card_relative_dates():
         assert isinstance(parsed, date)
 
 
+def test_indeed_missing_location_not_fabricated():
+    """Beat 105 / A2: missing location element must stay None (fail-closed), never 'Pakistan (Remote)'."""
+    scraper = IndeedScraper()
+    mock_title = MockElement(text="AI Engineer", attrs={"href": "/viewjob?jk=abc", "title": "AI Engineer"})
+    mock_desc = MockElement(text="Fully remote role for our global team.")
+    mock_date = MockElement(text="Just posted")
+    card = MockElement(
+        children={
+            "h2.jobTitle a": mock_title,
+            "div.job-snippet": mock_desc,
+            "span.date": mock_date,
+        },
+    )
+    job = asyncio.run(scraper._parse_card(card, "AI"))
+    assert job is not None
+    assert job.location is None
+    from src.models import is_worldwide_remote
+    assert not is_worldwide_remote(job.location, source="indeed", description=job.description)
+
+
+def test_indeed_missing_date_fail_closed():
+    """Beat 105 / A11: no date badge → posted_date is None (strict recency), not fabricated."""
+    scraper = IndeedScraper()
+    mock_title = MockElement(text="AI Engineer", attrs={"href": "/viewjob?jk=abc", "title": "AI Engineer"})
+    card = MockElement(children={"h2.jobTitle a": mock_title})
+    job = asyncio.run(scraper._parse_card(card, "AI"))
+    assert job is not None
+    assert job.posted_date is None
+
+
 # ── Glassdoor Scraper Tests ───────────────────────────────────────────────────
 
 def test_glassdoor_parse_card_full_data():

@@ -58,7 +58,12 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
     if is_title_restricted(job.title):
         return False
 
+    # A12: filter on the FULL stored description (raw), not the 2000-char notify
+    # snippet — restriction text past the truncate point must still be seen.
     desc = job.description_snippet or ""
+    raw_desc = ((job.raw or {}).get("description") or "")
+    if len(raw_desc) > len(desc):
+        desc = raw_desc
     full_text = f"{job.title} {desc}".strip()
 
     # Language restrictions (Japanese, JLPT, German, Hebrew, etc.)

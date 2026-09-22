@@ -65,34 +65,53 @@ class GlassdoorScraper(BaseScraper):
             for kw in keywords:
                 from urllib.parse import quote_plus
                 ea_filter = "&easyApplyOnly=true" if cfg.easy_apply_only() else ""
-                url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ea_filter
-                try:
+                # B6: paginate Glassdoor (page=1..3)
+                for page_no in (1, 2, 3):
+                    url = (
+                        self._SEARCH.format(kw=quote_plus(kw), days=days) + ea_filter
+                        + f"&page={page_no}"
+                    )
                     try:
-                        await page.goto(url, timeout=45_000, wait_until="domcontentloaded")
-                    except Exception as goto_err:
-                        log.debug("[glassdoor] page.goto warning: %s", goto_err)
-                    if await has_captcha(page):
-                        if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
-                            raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
-                    any_success = True
-                    await human_scroll(page)
-                    await human_delay(1.5, 3.5)
-                    cards = []
-                    for _ in range(6):
-                        cards = await page.query_selector_all("li[data-test='jobListing'], article[data-test='job-listing-card'], li.JobsList_jobListItem__wjTHv, li.job-card, div[data-test='job-card']")
-                        if cards:
+                        try:
+                            await page.goto(url, timeout=45_000, wait_until="domcontentloaded")
+                        except Exception as goto_err:
+                            log.debug("[glassdoor] page.goto warning: %s", goto_err)
+                        if await has_captcha(page):
+                            if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
+                                raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
+                        any_success = True
+                        await human_scroll(page)
+                        await human_delay(1.5, 3.5)
+                        cards = []
+                        for _ in range(6):
+                            cards = await page.query_selector_all("li[data-test='jobListing'], article[data-test='job-listing-card'], li.JobsList_jobListItem__wjTHv, li.job-card, div[data-test='job-card']")
+                            if cards:
+                                break
+                            await asyncio.sleep(1.0)
+                        # B5: loaded page, 0 cards, page 1 → selector drift
+                        if not cards and page_no == 1:
+                            body_len = 0
+                            try:
+                                body_len = len(await page.content())
+                            except Exception:
+                                pass
+                            if body_len > 5000:
+                                errors.append(RuntimeError(
+                                    f"parse_drift: Glassdoor page loaded ({body_len} bytes) but 0 cards for {kw!r}"
+                                ))
+                        for card in cards:
+                            job = await self._parse_card(card, kw, days, page=page)
+                            if job:
+                                yield job
+                        if not cards:
                             break
-                        await asyncio.sleep(1.0)
-                    for card in cards:
-                        job = await self._parse_card(card, kw, days, page=page)
-                        if job:
-                            yield job
-                    await human_delay(3.0, 6.0)
-                except (CaptchaDetected, CaptchaTimeout):
-                    raise
-                except Exception as e:
-                    errors.append(e)
-                    log.warning("[glassdoor] error scraping %r: %s", kw, e)
+                        await human_delay(3.0, 6.0)
+                    except (CaptchaDetected, CaptchaTimeout):
+                        raise
+                    except Exception as e:
+                        errors.append(e)
+                        log.warning("[glassdoor] error scraping %r: %s", kw, e)
+                        break
             await page.close()
         if not any_success and errors:
             raise errors[0]
@@ -209,11 +228,9 @@ class GlassdoorScraper(BaseScraper):
                 m = re.search(r"\b(just now|today|\d+h\b|\d+d\b|\d+\s+hours?\s+ago|\d+\s+days?\s+ago)", card_text, re.IGNORECASE)
                 if m:
                     posted_date = m.group(1).strip()
-                else:
-                    # Glassdoor search is filtered by `fromAge={days}`; if no badge is shown, it falls in window
-                    posted_date = "today" if days <= 1 else f"{days}d"
+                # No badge → None (strict 24h fail-closed); never invent a date.
             except Exception:
-                posted_date = "today" if days <= 1 else f"{days}d"
+                posted_date = None
         return RawJob(
             source=self.name,
             title=title,

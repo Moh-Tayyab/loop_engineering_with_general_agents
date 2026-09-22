@@ -56,12 +56,28 @@ def _feed_queries(keywords: list[str], weekday: int) -> list[str]:
     return queries
 
 
+# Physical-city tokens across APAC & Middle East (not just Gulf). A post that
+# pins a candidate to one of these metros without an explicit worldwide/global
+# remote marker is a residency requirement → Hybrid (dropped), never Remote.
+_PHYSICAL_CITIES = (
+    # Middle East / Gulf
+    "dammam", "al\\s+khobar", "khobar", "riyadh", "jeddah", "abu\\s+dhabi", "dubai",
+    "sharjah", "doha", "manama", "muscat", "kuwait(?:\\s+city)?", "istanbul",
+    "cairo", "amman", "beirut", "baghdad", "tehran", "tel\\s+aviv", "jerusalem",
+    # South / Southeast Asia
+    "karachi", "lahore", "islamabad", "rawalpindi", "peshawar", "faisalabad",
+    "delhi", "mumbai", "bengaluru", "bangalore", "hyderabad", "pune", "chennai",
+    "gurgaon", "noida", "dhaka", "colombo", "kathmandu", "thimphu",
+    "bangkok", "manila", "jakarta", "kuala\\s+lumpur", "singapore",
+    "hanoi", "ho\\s+chi\\s+minh", "saigon", "yangon", "phnom\\s+penh",
+    # East Asia
+    "tokyo", "osaka", "seoul", "taipei", "hong\\s+kong", "beijing", "shanghai",
+    "shenzhen", "guangzhou",
+)
 _PHYSICAL_CITY_RE = re.compile(
     r"\b(?:(?:in|based\s+in|located\s+in|settled\s+in|position\s+in|work\s+from|across)\s+"
-    r"(?:the\s+)?(?:dammam|al\s+khobar|khobar|riyadh|jeddah|abu\s+dhabi|dubai|"
-    r"sharjah|doha|manama|muscat|kuwait(?:\s+city)?|istanbul)|"
-    r"(?:dammam|al\s+khobar|khobar|riyadh|jeddah|abu\s+dhabi|dubai|sharjah|"
-    r"doha|manama|muscat|kuwait(?:\s+city)?|istanbul)\s+(?:office|lab|hub|region|city))"
+    r"(?:the\s+)?" + "|".join(_PHYSICAL_CITIES) + r")"
+    r"|(?:" + "|".join(_PHYSICAL_CITIES) + r")\s+(?:office|lab|hub|region|city|only|based)"
     r"(?:\b|,|\s+city)",
     re.I,
 )
@@ -76,8 +92,9 @@ def _post_location(text: str | None) -> str:
     2. Restricted foreign countries surface as restricted locations so downstream filters drop them.
     3. Explicit US restrictions (Tampa, FL, USA) surface as USA (Remote).
     4. Remote markers map to Remote.
-    5. Physical cities without remote markers map to Hybrid.
-    6. Fallback defaults to Remote.
+    5. Physical cities (APAC & ME metros) without remote markers map to Hybrid.
+    6. Fallback is FAIL-CLOSED (empty string → caller drops): never invent "Remote"
+       for a post with no location signal (Beat 105 / audit A1).
     """
     t = (text or "").lower()
     if any(w in t for w in ("on-site", "onsite", "on site", "in-office", "in office",
@@ -96,6 +113,15 @@ def _post_location(text: str | None) -> str:
     if _is_us_restricted(t):
         return "USA (Remote)"
 
+    # Residency pin ("based in <city>", "<city> only") beats a casual "remote"
+    # word/hashtag unless an explicit worldwide/global escape is present.
+    if (
+        _PHYSICAL_CITY_RE.search(t)
+        and not any(w in t for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote"))
+        and re.search(r"\b(?:only|based\s+in|located\s+in|settled\s+in|must\s+be\s+based)\b", t)
+    ):
+        return "Hybrid"
+
     if any(w in t for w in ("remote", "wfh", "work from home", "work-from-home",
                             "anywhere", "worldwide", "location-agnostic")):
         return "Remote"
@@ -106,7 +132,8 @@ def _post_location(text: str | None) -> str:
     if "hybrid" in t:
         return "Hybrid"
 
-    return "Remote"
+    # Fail-closed: no location signal → empty (not "Remote") so the gate drops it.
+    return ""
 
 
 _HIRING_MARKERS = re.compile(
@@ -114,7 +141,9 @@ _HIRING_MARKERS = re.compile(
     r"\bwe(?:'|\u2019)?re\s+(?:are\s+)?(?:hiring|looking)\b|"
     r"\bwe\s+are\s+(?:hiring|looking)\b|\blooking\s+for\b|\bseeking\b|"
     r"\bjoin(?:ing)?\s+our\s+team\b|\b(?:apply|application|resume|cv)\b|"
-    r"\b(?:role|position)s?\s*[:：]|\bposition\b",
+    # A10: require the colon form for role/position — bare "position"/"role"
+    # matches educational/commentary posts and let non-jobs through.
+    r"\b(?:role|position)s?\s*[:：]",
     re.I,
 )
 
@@ -168,8 +197,19 @@ def _feed_post_to_raw(post: dict[str, Any], kw: str,
     if "linkedin.com/in/" in url:
         return None
 
-    loc = _post_location(text)
-    if loc in ("Onsite", "Hybrid") or any(k in loc for k in ("Domestic", "Restricted", "USA", "UK", "India", "Germany", "Canada")):
+    # B3: explicit worldwide markers in the post body win over city extraction —
+    # the city is the employer HQ, not a residency pin, unless restricted above.
+    text_low = text.lower()
+    if any(w in text_low for w in (
+        "worldwide", "work from anywhere", "anywhere in the world",
+        "global remote", "globally remote", "anywhere in world",
+    )) and not any(w in text_low for w in ("on-site", "onsite", "in-office", "hybrid")):
+        loc = "Worldwide"
+    else:
+        loc = _post_location(text)
+    if not loc or loc in ("Onsite", "Hybrid") or any(
+        k in loc for k in ("Domestic", "Restricted", "USA", "UK", "India", "Germany", "Canada")
+    ):
         return None
     from src.models import is_worldwide_remote
     if not is_worldwide_remote(loc, description=text):
@@ -259,6 +299,7 @@ class LinkedInScraper(BaseScraper):
         tpr_param = f"r{seconds}"
         any_success = False
         errors: list[Exception] = []
+        detail_drops = 0
         for kw in keywords:
             if monotonic() > deadline:
                 log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
@@ -276,103 +317,152 @@ class LinkedInScraper(BaseScraper):
                 exp_levels = cfg.linkedin_experience_levels()
                 if exp_levels:
                     extra_params += f"&f_E={exp_levels}"
-                url = (
-                    f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
-                    f"keywords={quote_plus(remote_query)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
-                    f"{extra_params}"
-                )
-                try:
-                    r = requests.get(url, headers=headers, timeout=15)
-                    if r.status_code != 200:
-                        errors.append(requests.HTTPError(f"HTTP {r.status_code} from LinkedIn guest search", response=r))
-                        continue
-                    any_success = True
-                    titles = re.findall(r'<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>\s*([^<]+?)\s*</h3>', r.text)
-                    companies = re.findall(r'<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>\s*<a[^>]*>([^<]+?)</a>', r.text)
-                    locations = re.findall(r'<span[^>]*class="[^"]*job-search-card__location[^"]*"[^>]*>\s*([^<]+?)\s*</span>', r.text)
-                    links = re.findall(r'<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"', r.text)
-                    dates = re.findall(r'<time[^>]*datetime="([^"]+)"', r.text)
-                    for i in range(len(titles)):
-                        if monotonic() > deadline:
+                # B6: paginate guest search (25/page, cap 4 pages) so recall is
+                # not stuck on the first ~25 cards per query.
+                page_parsed = False
+                for start in (0, 25, 50, 75):
+                    if monotonic() > deadline:
+                        break
+                    url = (
+                        f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
+                        f"keywords={quote_plus(remote_query)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
+                        f"&start={start}{extra_params}"
+                    )
+                    try:
+                        r = requests.get(url, headers=headers, timeout=15)
+                        if r.status_code != 200:
+                            errors.append(requests.HTTPError(f"HTTP {r.status_code} from LinkedIn guest search", response=r))
                             break
-                        title = html.unescape(titles[i].strip())
-                        comp = html.unescape(companies[i].strip()) if i < len(companies) else "Unknown"
-                        loc = html.unescape(locations[i].strip()) if i < len(locations) else "Remote"
-                        raw_lnk = links[i].split("?")[0] if i < len(links) else ""
-                        if not raw_lnk or raw_lnk in seen_urls:
-                            continue
-                        seen_urls.add(raw_lnk)
+                        titles = re.findall(r'<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>\s*([^<]+?)\s*</h3>', r.text)
+                        companies = re.findall(r'<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>\s*<a[^>]*>([^<]+?)</a>', r.text)
+                        locations = re.findall(r'<span[^>]*class="[^"]*job-search-card__location[^"]*"[^>]*>\s*([^<]+?)\s*</span>', r.text)
+                        links = re.findall(r'<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"', r.text)
+                        dates = re.findall(r'<time[^>]*datetime="([^"]+)"', r.text)
+                        # B5: non-empty page body but zero parsed cards = selector drift
+                        # → record failure so circuit/DLQ sees silent total recall loss.
+                        if not titles and len(r.text or "") > 500:
+                            errors.append(RuntimeError(
+                                f"parse_drift: LinkedIn guest page returned {len(r.text)} bytes "
+                                f"but 0 cards (start={start}, kw={remote_query!r})"
+                            ))
+                            break
+                        if titles:
+                            any_success = True
+                            page_parsed = True
+                        elif start == 0 and not titles and len(r.text or "") <= 500:
+                            # Legitimately empty response (e.g. mock/no results)
+                            any_success = True
+                            break
+                        if not titles:
+                            break  # short page / no more results
+                        for i in range(len(titles)):
+                            if monotonic() > deadline:
+                                break
+                            title = html.unescape(titles[i].strip())
+                            comp = html.unescape(companies[i].strip()) if i < len(companies) else "Unknown"
+                            # A1: missing location element must NOT be fabricated as "Remote".
+                            if i >= len(locations):
+                                log.debug("[linkedin] guest drop (no location element): %s", title[:60])
+                                continue
+                            loc = html.unescape(locations[i].strip())
+                            if not loc:
+                                log.debug("[linkedin] guest drop (empty location): %s", title[:60])
+                                continue
+                            raw_lnk = links[i].split("?")[0] if i < len(links) else ""
+                            if not raw_lnk or raw_lnk in seen_urls:
+                                continue
+                            seen_urls.add(raw_lnk)
 
-                        # Deep verification: ensure job is not expired and is genuinely remote
-                        jid_m = re.search(r"-(\d+)$", raw_lnk)
-                        if not jid_m:
-                            continue
-                        detail_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid_m.group(1)}"
-                        try:
-                            r2 = requests.get(detail_url, headers=headers, timeout=4)
-                            if r2.status_code != 200 or "expired_jd_redirect" in r2.url:
-                                log.debug("[linkedin] dropping expired/redirected: %s", raw_lnk)
+                            # Deep verification: ensure job is not expired and is genuinely remote
+                            jid_m = re.search(r"-(\d+)$", raw_lnk)
+                            if not jid_m:
                                 continue
-                            desc_m = re.search(r'<div class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', r2.text, re.DOTALL)
-                            real_desc = re.sub(r"<[^>]+>", " ", desc_m.group(1)).strip() if desc_m else f"{title} at {comp}"
-                            full_check = f"{title.lower()} {loc.lower()} {real_desc.lower()}"
-                            if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
-                                log.debug("[linkedin] dropping closed posting: %s", title)
+                            detail_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid_m.group(1)}"
+                            try:
+                                r2 = requests.get(detail_url, headers=headers, timeout=8)
+                                if r2.status_code != 200 or "expired_jd_redirect" in r2.url:
+                                    log.debug("[linkedin] dropping expired/redirected: %s", raw_lnk)
+                                    detail_drops += 1
+                                    continue
+                                desc_m = re.search(r'<div class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', r2.text, re.DOTALL)
+                                # A9: never substitute a fake "Title at Company" body — that
+                                # blinds every description/location filter. Fail-closed drop.
+                                if not desc_m or not desc_m.group(1).strip():
+                                    log.debug("[linkedin] dropping (no JD body): %s", title[:60])
+                                    detail_drops += 1
+                                    continue
+                                real_desc = re.sub(r"<[^>]+>", " ", desc_m.group(1)).strip()
+                                if len(real_desc) < 20:
+                                    log.debug("[linkedin] dropping (JD body too short): %s", title[:60])
+                                    detail_drops += 1
+                                    continue
+                                full_check = f"{title.lower()} {loc.lower()} {real_desc.lower()}"
+                                if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
+                                    log.debug("[linkedin] dropping closed posting: %s", title)
+                                    continue
+                                from src.models import (
+                                    is_language_restricted,
+                                    is_hybrid_work,
+                                    is_title_restricted,
+                                    is_description_restricted,
+                                    is_worldwide_remote,
+                                )
+                                if is_language_restricted(title) or is_language_restricted(real_desc):
+                                    log.debug("[linkedin] dropping language-restricted: %s", title)
+                                    continue
+                                if is_hybrid_work(title) or is_hybrid_work(real_desc) or is_hybrid_work(loc):
+                                    log.debug("[linkedin] dropping hybrid: %s", title)
+                                    continue
+                                if is_title_restricted(title) or is_description_restricted(real_desc):
+                                    log.debug("[linkedin] dropping restricted: %s", title)
+                                    continue
+                                if not is_worldwide_remote(loc, source="linkedin", description=real_desc, title=title):
+                                    log.debug("[linkedin] dropping non-worldwide remote: %s (%s)", title, loc)
+                                    continue
+                                if any(w in full_check for w in ("on-site", "onsite", "in-office", "office-based", "office only")):
+                                    log.debug("[linkedin] dropping onsite posting: %s (%s)", title, loc)
+                                    continue
+                                title_loc = f"{title.lower()} {loc.lower()}"
+                                has_remote_in_header = any(
+                                    w in title_loc
+                                    for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual", "worldwide")
+                                )
+                                has_strict_remote_desc = (
+                                    any(w in real_desc.lower() for w in ("100% remote", "fully remote", "100% work from home", "fully work from home"))
+                                    or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", real_desc.lower()))
+                                    or bool(re.search(r"\bremote[,\s]+pakistan\b", real_desc.lower()))
+                                    or bool(re.search(r"\bpakistan[,\s]+remote\b", real_desc.lower()))
+                                )
+                                if not (has_remote_in_header or has_strict_remote_desc):
+                                    log.debug("[linkedin] dropping posting lacking explicit remote marker: %s (%s)", title, loc)
+                                    continue
+                            except Exception as detail_exc:
+                                detail_drops += 1
+                                log.debug("[linkedin] detail fetch failed (%s): %s", detail_exc, raw_lnk)
                                 continue
-                            from src.models import (
-                                is_language_restricted,
-                                is_hybrid_work,
-                                is_title_restricted,
-                                is_description_restricted,
-                                is_worldwide_remote,
-                            )
-                            if is_language_restricted(title) or is_language_restricted(real_desc):
-                                log.debug("[linkedin] dropping language-restricted: %s", title)
-                                continue
-                            if is_hybrid_work(title) or is_hybrid_work(real_desc) or is_hybrid_work(loc):
-                                log.debug("[linkedin] dropping hybrid: %s", title)
-                                continue
-                            if is_title_restricted(title) or is_description_restricted(real_desc):
-                                log.debug("[linkedin] dropping restricted: %s", title)
-                                continue
-                            if not is_worldwide_remote(loc, source="linkedin", description=real_desc, title=title):
-                                log.debug("[linkedin] dropping non-worldwide remote: %s (%s)", title, loc)
-                                continue
-                            if any(w in full_check for w in ("on-site", "onsite", "in-office", "office-based", "office only")):
-                                log.debug("[linkedin] dropping onsite posting: %s (%s)", title, loc)
-                                continue
-                            title_loc = f"{title.lower()} {loc.lower()}"
-                            has_remote_in_header = any(
-                                w in title_loc
-                                for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual", "worldwide")
-                            )
-                            has_strict_remote_desc = (
-                                any(w in real_desc.lower() for w in ("100% remote", "fully remote", "100% work from home", "fully work from home"))
-                                or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", real_desc.lower()))
-                                or bool(re.search(r"\bremote[,\s]+pakistan\b", real_desc.lower()))
-                                or bool(re.search(r"\bpakistan[,\s]+remote\b", real_desc.lower()))
-                            )
-                            if not (has_remote_in_header or has_strict_remote_desc):
-                                log.debug("[linkedin] dropping posting lacking explicit remote marker: %s (%s)", title, loc)
-                                continue
-                        except Exception:
-                            continue
 
-                        posted = dates[i][:10] if i < len(dates) else None
-                        yield RawJob(
-                            source="linkedin",
-                            title=title,
-                            company=comp,
-                            url=raw_lnk,
-                            location=loc,
-                            description=real_desc[:2500],
-                            posted_date=posted,
-                            tags=[kw],
-                            fetched_at=utc_now(),
-                        )
-                except Exception as exc:
-                    errors.append(exc)
-                    log.info("[linkedin] guest public search failed (kw=%r, loc=%r): %s", kw, loc_query, exc)
+                            posted = dates[i][:10] if i < len(dates) else None
+                            yield RawJob(
+                                source="linkedin",
+                                title=title,
+                                company=comp,
+                                url=raw_lnk,
+                                location=loc,
+                                description=real_desc[:2500],
+                                posted_date=posted,
+                                tags=[kw],
+                                fetched_at=utc_now(),
+                            )
+                    except Exception as exc:
+                        errors.append(exc)
+                        log.info("[linkedin] guest public search failed (kw=%r, loc=%r): %s", kw, loc_query, exc)
+                        break
+                if not page_parsed and not any_success:
+                    # ensure empty-but-valid first pages still count as success (set above)
+                    pass
+        if detail_drops:
+            log.info("[linkedin] guest pass dropped %d job(s) on detail-fetch/JD-body failure (B4 visibility)",
+                     detail_drops)
         if not any_success and errors:
             raise errors[0]
 

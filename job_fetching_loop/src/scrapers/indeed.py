@@ -65,29 +65,48 @@ class IndeedScraper(BaseScraper):
             for kw in keywords:
                 from urllib.parse import quote_plus
                 ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
-                url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ia_filter
-                try:
-                    await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
-                    if await has_captcha(page):
-                        if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
-                            raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
-                    await check_captcha(page, self.name)
-                    any_success = True
-                    await human_scroll(page)
-                    await human_delay(2.0, 5.0)
-                    cards = await page.query_selector_all("div.cardOutline, div.job_seen_beacon, div.jobsearch-SerpJobCard")
-                    if not cards:
-                        cards = await page.query_selector_all("td.resultContent")
-                    for card in cards:
-                        job = await self._parse_card(card, kw, days, page=page)
-                        if job:
-                            yield job
-                    await human_delay(3.0, 6.0)
-                except (CaptchaDetected, CaptchaTimeout):
-                    raise
-                except Exception as e:
-                    errors.append(e)
-                    log.warning("[indeed] error scraping %r: %s", kw, e)
+                keyword_yielded = False
+                # B6: paginate Indeed (start=0,10,20) — first page only capped recall.
+                for start in (0, 10, 20):
+                    url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ia_filter + f"&start={start}"
+                    try:
+                        await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
+                        if await has_captcha(page):
+                            if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
+                                raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
+                        await check_captcha(page, self.name)
+                        any_success = True
+                        await human_scroll(page)
+                        await human_delay(2.0, 5.0)
+                        cards = await page.query_selector_all("div.cardOutline, div.job_seen_beacon, div.jobsearch-SerpJobCard")
+                        if not cards:
+                            cards = await page.query_selector_all("td.resultContent")
+                        # B5: page loaded but 0 cards on first page = selector drift
+                        if not cards and start == 0:
+                            body_len = 0
+                            try:
+                                body_len = len(await page.content())
+                            except Exception:
+                                pass
+                            if body_len > 5000:
+                                errors.append(RuntimeError(
+                                    f"parse_drift: Indeed page loaded ({body_len} bytes) but 0 cards for {kw!r}"
+                                ))
+                        for card in cards:
+                            job = await self._parse_card(card, kw, days, page=page)
+                            if job:
+                                keyword_yielded = True
+                                yield job
+                        if not cards:
+                            break
+                        await human_delay(3.0, 6.0)
+                    except (CaptchaDetected, CaptchaTimeout):
+                        raise
+                    except Exception as e:
+                        errors.append(e)
+                        log.warning("[indeed] error scraping %r: %s", kw, e)
+                        break
+                del keyword_yielded
             await page.close()
         if not any_success and errors:
             raise errors[0]
@@ -157,8 +176,9 @@ class IndeedScraper(BaseScraper):
             if any(w in comb for w in ("remote", "work from home", "wfh")):
                 if location and "remote" not in location.lower():
                     location = f"{location} (Remote)"
-                elif not location:
-                    location = "Pakistan (Remote)"
+                # A2: NEVER invent "Pakistan (Remote)" when the location element is
+                # missing — that string is an in-scope marker that bypasses the
+                # US-domestic-board gate. Leave None → fail-closed drop downstream.
         # Salary
         salary_el = await card.query_selector("div.salary-snippet-container, span.estimated-salary, div.metadata.salary-snippet-container, [data-testid='attribute_snippet_testid']")
         salary = (await salary_el.inner_text()).strip() if salary_el else None
@@ -179,11 +199,10 @@ class IndeedScraper(BaseScraper):
                 m = re.search(r"\b(just posted|active today|posted today|today|\d+\s+days?\s+ago|\d+d\b)", card_text, re.IGNORECASE)
                 if m:
                     posted_date = m.group(1).strip()
-                else:
-                    # Indeed search is filtered by `fromage={days}`; if no date badge is shown, it falls in window
-                    posted_date = "today" if days <= 1 else f"{days} days ago"
+                # A11: no badge → None (strict 24h fail-closed in main). Do NOT
+                # fabricate "today"/"N days ago" — that defeats the recency gate.
             except Exception:
-                posted_date = "today" if days <= 1 else f"{days} days ago"
+                posted_date = None
         return RawJob(
             source=self.name,
             title=title,

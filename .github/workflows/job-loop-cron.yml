@@ -38,6 +38,8 @@ jobs:
           path: |
             job_fetching_loop/.slc
             job_fetching_loop/output
+          # Unique key per run forces a fresh save (caches are immutable);
+          # restore-keys prefix picks the latest prior snapshot.
           key: job-loop-slc-${{ github.run_id }}
           restore-keys: |
             job-loop-slc-
@@ -59,7 +61,7 @@ jobs:
           CLOUD_ALLOW_BROWSER: "0"
           SOURCE_LINKEDIN: "1"
           MAX_JOBS_PER_SOURCE: "250"
-          SCRAPE_KEYWORDS: "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE,Generative AI,GenAI,Deep Learning,MLOps,AI Agent,PyTorch"
+          SCRAPE_KEYWORDS: "AI/ML,LLM Engineer,AI Engineer,ML Engineer,AI FDE,Generative AI,Agentic AI"
           PYTHONPATH: .
         run: python -m src.main
 

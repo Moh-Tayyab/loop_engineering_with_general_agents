@@ -121,14 +121,38 @@ class CircuitManager:
         self._flush()
 
     def record_failure(self, source: str) -> None:
-        self._get(source).record_failure()
+        c = self._get(source)
+        was_open = c.is_open()
+        c.record_failure()
         self._flush()
+        # C1: alert the moment a circuit opens (CAPTCHA/timeout outage is otherwise silent)
+        if c.is_open() and not was_open:
+            try:
+                from src.notifier import send_ops_alert
+                send_ops_alert(
+                    f"circuit OPEN for `{source}` after {c.consecutive_fails} consecutive failures "
+                    f"(resets {c.open_until.isoformat(timespec='seconds') if c.open_until else 'n/a'}). "
+                    f"Local headed run or --reset-circuit to recover."
+                )
+            except Exception:
+                pass  # alerting must never break the scrape path
 
     def reset_all(self) -> None:
         for c in self._circuits.values():
             c.consecutive_fails = 0
             c.open_until = None
         self._flush()
+
+    def prune_unknown(self, known: frozenset[str] | set[str]) -> list[str]:
+        """Drop circuit entries for sources that no longer exist (post-purge).
+
+        Returns the source names removed. Safe no-op when nothing is stale."""
+        stale = [name for name in list(self._circuits) if name not in known]
+        for name in stale:
+            del self._circuits[name]
+        if stale:
+            self._flush()
+        return stale
 
     def _flush(self) -> None:
         out = {}

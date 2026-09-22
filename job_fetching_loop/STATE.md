@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 104 — Production-Readiness Audit Remediation (test isolation, commit drift, DLQ hygiene)
+- **Beat #:** 107 — Commit Beat 105–106 (close run; 3/3 beat ceiling)
 - **Date:** 2026-09-22
-- **Trigger:** user — "kya yh loop 100% production ready hai" → "yes" (fix the 3 gaps)
-- **Status:** (1) Fixed `test_setup_logging_idempotent` isolation bug (autouse fixture resets `src.log._configured` per test); suite now **274 pass / 0 fail** (STATE previously claimed 268 — count updated); (2) Committed 38 pending worktree files (3-platform scraper purge, Rule 11 law, beats 76–103 code) + systemd `setup/` units + new tests; junk (`scratch/`, `prune_output.py`, `job-live-*.yml`) gitignored; (3) DLQ: replayed 2 `google_sheets` batches (live success, rows recovered), cleared 33 stale CAPTCHA/timeout noise items → **DLQ 0**; (4) Secret scan clean (0 hits); video_generation_loop left untouched | PASS — 274 tests, exit 0
+- **Trigger:** user — "yes next beat"
+- **Status:** Staged + committed all Beat 105 accuracy-gap code/tests + Beat 106 smoke STATE + related worktree (workflow keywords/cache comment, conftest SCRAPE_RUN_HOUR isolation, snippet-cap test 2000). Secret scan clean; `.env`/`output/`/`.slc/` ignored. Tests 298 exit 0 pre-commit. Run ceiling hit after this beat — stop and report | PASS — 298 tests, exit 0
 
 ## 3. Beat Log
 
@@ -39,6 +39,9 @@ compressed at 2026-09-22 (beat 104, §9 cap 20): beats 63–89 all PASS except 8
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 107 | 2026-09-22 | user — yes next beat | **Commit Beat 105–106** accuracy-gap remediation + LinkedIn dry-run smoke + worktree drift (workflow keywords, test isolation, snippet-cap) | PASS — 298 tests, exit 0; run 3/3 ceiling → stop |
+| 106 | 2026-09-22 | backlog #10 smoke | Live `--dry-run` after Beat 105: LinkedIn guest 45s budget → 71 jobs, 2 detail_drops (B4), purity clean; Indeed → CAPTCHA (human) | PASS (LinkedIn only; Indeed/Glassdoor pending human CAPTCHA) |
+| 105 | 2026-09-22 | user — fix all accuracy gaps small pieces | **A1–C5 remediation:** fail-closed location (A1/A2/A9), US cities+title/desc/lang/TZ+daily-weekly parity (A3–A8), hiring markers+no fake dates+full-desc digest (A10–A12), hybrid precision+Israel market+B3 worldwide override (B1–B3), detail-drop visibility (B4), parse_drift+pagination (B5–B6), circuit ops alert+.env sync+score-sorted top5+rejected.jsonl (C1–C5). New `tests/test_accuracy_gaps.py` | PASS — 298 tests, Checker APPROVED |
 | 104 | 2026-09-22 | user — prod-ready audit → fix test fail + commit drift + DLQ | **Audit Remediation:** (1) `tests/test_log.py` autouse fixture resets `log_mod._configured` (was leaking → `assert 10 == 30`); (2) Committed 38 worktree files (3-platform purge, Rule 11, beats 76–103) + `setup/` systemd units; gitignored junk; (3) `--replay-dlq` recovered 2 sheets batches live; `--clear-dlq` removed 33 noise → 0; (4) secret scan 0 hits | PASS — 274 tests, exit 0 |
 | 103 | 2026-09-21 | user audio — fetch today's jobs live, test accuracy % | **Live Monday 3-Day Scrape:** Indeed/Glassdoor remote-badge detection from card snippets; 2 fresh Indeed AI roles + 1 LinkedIn; `jobs_2026-09-21` JSON/CSV + Sheet; 100% Rule 11 accuracy | PASS — 268 tests, exit 0 |
 | 102 | 2026-09-21 | user audio — act human, kill bot detection | **Anti-Bot Alignment:** removed fake JS shims; native Chrome 152 + `AutomationControlled` off; Bezier mouse for Turnstile; live 5/5 Indeed + 5/5 Glassdoor, 0 blocks | PASS — 268 tests, exit 0 |
@@ -82,7 +85,9 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 5. Exclusive 3-platform production (Beat 79): linkedin, indeed, glassdoor only.
 6. ~~**(Beat 65, HIGH)** Persist `output/` in cron cache~~ Done Beat 66.
 7. ~~**(Beat 65, MED)** Sheets DLQ replay + clear~~ Done Beat 66 / re-run Beat 104 (DLQ now 0).
-8. Restore LinkedIn feed **description body capture** (Beat 100b root-cause: empty bodies blinded location law on card-label only).
+8. ~~Restore LinkedIn feed **description body capture** (Beat 100b)~~ — A9 now fail-closes missing JD bodies in guest path (Beat 105); authenticated feed body capture still worth a live Friday check.
+9. **Human spot-check (weekly):** open `output/jobs_*.json` + latest Telegram digest; sample 5 jobs — confirm Rule 11 (APAC/ME remote, Global, or Worldwide contractor only), live URLs, and description_snippet length ≤ 2000. Log pass/fail in beat log.
+10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 
 ## 11. Human Gate Decisions (job loop)
 

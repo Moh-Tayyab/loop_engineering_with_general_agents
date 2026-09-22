@@ -72,3 +72,20 @@ def test_manager_reset_all():
     mgr.reset_all()
     assert mgr.is_available("indeed")
     assert mgr.is_available("glassdoor")
+
+
+def test_manager_prune_unknown_drops_stale_sources():
+    backing = {"sources": {"old_scraper": {"consecutive_fails": 5}, "linkedin": {"consecutive_fails": 0}}}
+    mgr = CircuitManager(backing)
+    removed = mgr.prune_unknown(frozenset({"linkedin", "indeed"}))
+    assert removed == ["old_scraper"]
+    assert "old_scraper" not in backing["sources"]
+    assert "linkedin" in backing["sources"]
+
+
+def test_manager_prune_unknown_noop_when_all_known():
+    backing = {"sources": {"linkedin": {"consecutive_fails": 1}}}
+    mgr = CircuitManager(backing)
+    removed = mgr.prune_unknown(frozenset({"linkedin"}))
+    assert removed == []
+    assert "linkedin" in backing["sources"]

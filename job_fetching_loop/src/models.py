@@ -62,7 +62,11 @@ def is_valid_job_url(url: str | None) -> bool:
 
 
 def check_link_health(url: str, timeout_s: float = 3.0) -> bool:
-    """True if link is alive and not 404/410/dead (Phase 4 requirement)."""
+    """True if link is alive (or health is indeterminate); False only on definitive death.
+
+    Fail-closed only for proof of death (404/410). Network flake / timeout /
+    TLS weirdness must NOT drop a valid Rule-11 job (symmetric with
+    `is_expired_job`: unknown stays, known-dead goes)."""
     if not is_valid_job_url(url):
         return False
     import os
@@ -78,9 +82,14 @@ def check_link_health(url: str, timeout_s: float = 3.0) -> bool:
         if resp.status_code in (404, 410):
             return False
         return True
-    except requests.exceptions.ConnectionError:
-        return False
+    except requests.exceptions.HTTPError:
+        # 4xx other than 404/410 still answers — treat as alive enough to keep
+        return True
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        # Indeterminate: DNS blip / RST / slow origin — keep the job
+        return True
     except Exception:
+        # Unknown client-side error — do not punish the job for our stack
         return True
 
 
@@ -244,6 +253,34 @@ _US_STATE_ABBR = frozenset({
     "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy",
 })
 
+# A3: major US metros that appear in "Remote - Austin" / "Chicago - Remote"
+# without a state name — previously slipped the US-board gate.
+_US_MAJOR_CITIES = frozenset({
+    "new york", "nyc", "los angeles", "chicago", "houston", "phoenix",
+    "philadelphia", "san antonio", "san diego", "dallas", "austin",
+    "san jose", "jacksonville", "fort worth", "columbus", "charlotte",
+    "indianapolis", "seattle", "denver", "washington", "boston", "el paso",
+    "nashville", "detroit", "oklahoma city", "portland", "las vegas",
+    "memphis", "louisville", "baltimore", "milwaukee", "albuquerque",
+    "tucson", "fresno", "sacramento", "mesa", "kansas city", "atlanta",
+    "colorado springs", "miami", "raleigh", "omaha", "long beach",
+    "virginia beach", "oakland", "minneapolis", "tampa", "tulsa", "arlington",
+    "new orleans", "wichita", "cleveland", "bakersfield", "aurora",
+    "anaheim", "honolulu", "santa ana", "riverside", "corpus christi",
+    "lexington", "san francisco", "pittsburgh", "st louis", "cincinnati",
+    "st paul", "greensboro", "anchorage", "plano", "lincoln", "orlando",
+    "irvine", "newark", "durham", "chula vista", "toledo", "fort wayne",
+    "st petersburg", "laredo", "jersey city", "chandler", "madison",
+    "lubbock", "scottsdale", "reno", "buffalo", "gilbert", "glendale",
+    "north las vegas", "winston salem", "chesapeake", "norfolk", "fremont",
+    "garland", "irving", "hialeah", "richmond", "boise", "spokane",
+    "baton rouge", "san brae", "dayton", "moreno valley", "santa clarita",
+    "fayetteville", "birmingham", "rochester", "oxnard", "port st lucie",
+    "grand rapids", "huntsville", "salt lake city", "yrs", "frisco",
+    "amherst", "round rock", "cambridge", "tucson", "raleigh",
+    "brooklyn", "manhattan", "queens", "bronx", "jersey", "waterbury",
+})
+
 _US_RESTRICTED_RE = re.compile(
     r"(?i)(?:remote\s*\(([^)]*)\)"          # "Remote (US Only)" / "Remote (San Francisco)"
     r"|remote\s*[-,–/]\s*([A-Za-z .]+)"  # "Remote - US Only" / "Remote - Texas" / "Remote / US"
@@ -349,7 +386,7 @@ def is_foreign_country_restricted(text: str) -> bool:
 _FOREIGN_LANGUAGE_RESTRICTION_PATTERNS = [
     r"\bjlpt(?:\s*n[1-5])?\b",
     r"\bjapanese\b",
-    r"\bn[1-5]\s*level\b",
+    r"\bn[1-5]\s+level\b",
     r"\bbusiness\s+(?:level\s+)?japanese\b",
     r"\bfluent\s+(?:in\s+)?japanese\b",
     r"\bgerman\b",
@@ -372,8 +409,21 @@ _FOREIGN_LANGUAGE_RESTRICTION_PATTERNS = [
     r"\bpolish\b",
     r"\brussian\b",
     r"\bnative\s+or\s+bilingual\s+in\s+(?:japanese|german|french|hebrew|chinese|korean|spanish|italian|russian)\b",
-    r"\barabic\s+(?:mandatory|required|native)\b",
-    r"\bfluent\s+in\s+arabic\b",
+    # A6: broader local-language requirements (Arabic/Portuguese/Turkish/Thai/…)
+    r"\bnative\s+(?:or\s+bilingual\s+)?arabic\b",
+    r"\bfluent\s+(?:in\s+)?arabic\b",
+    r"\barabic\s+(?:is\s+)?(?:a\s+)?(?:must|required|mandatory|needed|essential)\b",
+    r"\b(?:must|required|needs?\s+to)\s+(?:speak|have)\s+arabic\b",
+    r"\bprofessional\s+arabic\b",
+    r"\b(?:fluent|native|proficient)\s+(?:in\s+)?(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu)\b",
+    r"\b(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu)\s+(?:required|mandatory|native|fluent|needed|must)\b",
+    r"\b(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu)\s+(?:is\s+)?(?:a\s+)?(?:must|required|mandatory|needed|essential)\b",
+    r"\bprofi(?:ciency|cient)\s+(?:in\s+)?(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu)\b",
+    r"\b(?:business|professional)\s+(?:level\s+)?(?:portuguese|turkish|thai|hindi|vietnamese)\b",
+    r"\b(?:speak|speaking)\s+(?:fluent\s+)?(?:portuguese|turkish|thai|hindi|vietnamese|arabic)\b",
+    r"\b(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu|arabic)\s+fluency\b",
+    r"\bfluency\s+(?:in\s+)?(?:portuguese|turkish|thai|hindi|vietnamese|indonesian|bahasa|farsi|persian|urdu|arabic)\b",
+    r"\b(?:arabic|portuguese|turkish|thai|hindi|vietnamese)\s+(?:language\s+)?required\b",
 ]
 
 
@@ -389,12 +439,50 @@ def is_language_restricted(text: str | None) -> bool:
 
 
 def is_hybrid_work(text: str | None) -> bool:
-    """True if text designates a hybrid physical office requirement (not Hybrid Cloud stack)."""
+    """True only when text designates a hybrid *work arrangement* (RTO), not
+    tech-stack "hybrid" (Hybrid Cloud, hybrid of monorepo/polyrepo, …).
+
+    Beat 105/B1: bare `\\bhybrid\\b` anywhere killed Worldwide jobs whose body
+    merely said "hybrid of X and Y". We now require an RTO-shaped signal.
+    """
     if not text:
         return False
     low = text.lower()
-    cleaned = re.sub(r"\bhybrid[\s_-]+(?:cloud|multicloud|multi-cloud|infrastructure|infra|ai|architecture|models?|search|retrieval|rag|index(?:ing)?)\b", " ", low)
-    return bool(re.search(r"\bhybrid\b", cleaned))
+    # Tech-stack / figure-of-speech carve-outs first
+    cleaned = re.sub(
+        r"\bhybrid[\s_-]+(?:cloud|multicloud|multi-cloud|infrastructure|infra|"
+        r"ai|architecture|models?|search|retrieval|rag|index(?:ing)?|storage|"
+        r"native|approach|strategy|method|pattern|mix|modeling|modelling)\b",
+        " ", low,
+    )
+    cleaned = re.sub(r"\bhybrid\s+of\b", " ", cleaned)
+    cleaned = re.sub(r"\bhybrid(?:ly)?\s+(?:combines?|uses?|blends?|merges?)\b", " ", cleaned)
+    # Positive RTO / work-arrangement signals
+    if re.search(
+        r"\bhybrid\s+(?:work|schedule|model|arrangement|office|remote|onsite|on-site|"
+        r"role|position|setup|environment|workplace|policy|format|structure|working)\b",
+        cleaned,
+    ):
+        return True
+    if re.search(r"\b(?:work|role|position|job|schedule|model|workplace)\s+(?:is|as|:)\s*hybrid\b", cleaned):
+        return True
+    if re.search(r"\b(?:work|role|position|job|schedule|workplace)\s+model\s*[:：]\s*hybrid\b", cleaned):
+        return True
+    if re.search(r"\bhybrid\s*[-–/]\s*(?:remote|onsite|on-site|in-office)\b", cleaned):
+        return True
+    if re.search(r"\b(?:onsite|on-site)\s*/\s*hybrid\b|\bhybrid\s*/\s*(?:remote|onsite|on-site)\b", cleaned):
+        return True
+    if re.search(r"\b\d+\s*days?\s+(?:a|per)\s+week\s+(?:in|from)\s+(?:the\s+)?office\b", cleaned):
+        return True
+    if re.search(r"\breturn\s+to\s+office\b|\brto\b.*\bhybrid\b|\bhybrid\b.*\brto\b", cleaned):
+        return True
+    # Bare "hybrid" only counts with explicit office/onsite context nearby
+    if re.search(r"\bhybrid\b", cleaned) and re.search(
+        r"\b(?:in[- ]office|on[- ]?site|onsite|office\s+days?|office\s+attendance|commute)\b",
+        cleaned,
+    ):
+        return True
+    return False
 
 
 def is_title_restricted(title: str | None) -> bool:
@@ -408,6 +496,7 @@ def is_title_restricted(title: str | None) -> bool:
       "(US Candidates Only)"
       "(Must reside in USA)"
       "JLPT N1 Level"
+      "AI Engineer - India Only" / "… Japan Only" / "… Singapore Only"   (A4)
     """
     if not title:
         return False
@@ -417,11 +506,20 @@ def is_title_restricted(title: str | None) -> bool:
         return True
     t = title.lower()
     # Foreign domestic-only restrictions in title (US, UK, Canada, Europe, Germany, Poland, LATAM)
-    if re.search(r"\b(?:usa?|u\.s\.a?|uk|united kingdom|canada|europe|germany|poland|brazil|latam|israel)\s*[-–]?\s*only\b", t):
+    # A4: extend to APAC/ME foreign markets that previously slipped ("India Only", "Japan Only").
+    _title_only_countries = (
+        "usa?|u\\.s\\.a?|uk|united kingdom|canada|europe|germany|poland|brazil|latam|israel"
+        "|india|japan|singapore|australia|china|south korea|korea|taiwan|hong kong"
+        "|france|spain|italy|netherlands|sweden|switzerland|ireland|mexico|colombia"
+        "|uae|saudi arabia|qatar|kuwait|bahrain|oman|egypt|turkey|nigeria|kenya"
+        "|south africa|russia|ukraine|argentina|chile|peru|vietnam|thailand"
+        "|malaysia|indonesia|philippines|new zealand"
+    )
+    if re.search(rf"\b(?:{_title_only_countries})\s*[-–]?\s*only\b", t):
         return True
-    if re.search(r"\b(?:only\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|europe|germany|israel))\b", t):
+    if re.search(rf"\bonly\s+in\s+(?:the\s+)?(?:{_title_only_countries})\b", t):
         return True
-    if re.search(r"\b(?:us|usa|uk|canada|eu|european|israel)\s+candidates?\s+only\b", t):
+    if re.search(rf"\b(?:{_title_only_countries}|eu|european|emirates)\s+candidates?\s+only\b", t):
         return True
     if re.search(r"\b(?:us|usa|u\.s\.|uk|canada|eu|european|israel)\s+based\b", t):
         return True
@@ -447,6 +545,25 @@ def is_title_restricted(title: str | None) -> bool:
     return False
 
 
+# A5: residency/"X only" phrasings generalized off the country tables.
+# Pakistan is intentionally EXCLUDED — Pakistan residency is in-scope for this loop.
+_RESIDENCY_BLOCK_COUNTRIES = tuple(sorted(
+    (
+        _FOREIGN_RESTRICTED_COUNTRIES
+        | {
+            "singapore", "malaysia", "thailand", "vietnam", "indonesia",
+            "philippines", "saudi arabia", "saudi", "uae", "united arab emirates",
+            "qatar", "kuwait", "bahrain", "oman", "egypt", "turkey", "türkiye",
+            "dubai", "riyadh", "doha", "istanbul", "abu dhabi",
+            "japan", "south korea", "china", "taiwan", "hong kong",
+            "australia", "new zealand", "india",
+        }
+    ) - {"pakistan"},
+    key=len,
+    reverse=True,
+))
+_RESIDENCY_COUNTRY_ALT = "|".join(re.escape(c) for c in _RESIDENCY_BLOCK_COUNTRIES)
+
 _DESCRIPTION_RESTRICTION_PATTERNS = [
     # US / North America / Europe / Foreign geographic or work authorization restrictions
     r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america|poland|japan|singapore|saudi|uae|australia|israel)\b",
@@ -471,9 +588,15 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\b(?:no\s+c2c|w-?2\s+only|w2\s+candidates?)\b",
     r"\bsecurity\s+clearance\s+required\b",
     r"\bactive\s+secret\s+clearance\b",
-    # Specific timezone exclusions that cannot be accommodated from Pakistan (UTC+5)
-    r"\bwithin\s+\d+\s+hours\s+of\s+(?:london|uk|gmt|cet|bst)\b",
-    r"\bmust\s+be\s+based\s+in\s+(?:cet|bst|gmt)\b",
+    # A8: timezone exclusions that cannot be accommodated from Pakistan (UTC+5)
+    r"\bwithin\s+\d+\s*(?:[-–to]+\s*\d*\s*)?hours?\s+of\s+(?:london|uk|gmt|cet|bst|est|cst|mst|pst)\b",
+    r"\bmust\s+be\s+based\s+in\s+(?:cet|bst|gmt|est|cst|mst|pst)\b",
+    r"\bus\s+(?:eastern|central|pacific|mountain)\b",
+    r"\b(?:eastern|central|pacific|mountain)\s+(?:time|hours?|zone)\b",
+    r"\b(?:est|cst|mst|pst)\s+(?:time|hours?|zone|business)\b",
+    r"\b(?:eastern|central|pacific|mountain)\s*\(\s*(?:est|cst|mst|pst)\s*\)",
+    r"\bmust\s+overlap\b",
+    r"\b\d+\s+hours?\s+(?:of\s+)?(?:timezone\s+)?overlap\b",
     # Regional remote restrictions (e.g. "fully remote role in EU", "remote in US only")
     r"\b(?:fully\s+remote|remote|wfh)\s+(?:role|job|position)?\s*(?:in|within)\s+(?:the\s+)?(?:us|usa|united states|uk|eu|europe|canada|germany|india|latin america)\b",
     # Onsite requirements
@@ -481,8 +604,26 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\b(?:onsite|on-site)\b.*(?:in\s+\w+|office\b)",
     r"\brelocation\s+(?:required|assistance\s+to)\b",
     r"\bmust\s+be\s+able\s+to\s+commute\b",
-    # Sanctioned / Non-diplomatic territory for Pakistan
-    r"\b(?:israel|tel aviv|jerusalem|haifa)\b",
+    # B2: Israel roles blocked only with residency/geo pins — not market mentions
+    # ("we sell to teams in Israel" must not kill a Worldwide role).
+    r"\b(?:based\s+in|reside(?:s|nt)?\s+in|resident\s+of|located\s+in|office\s+in)\s+(?:israel|tel\s+aviv|jerusalem|haifa)\b",
+    r"\b(?:israeli?|tel\s+aviv)\s+(?:residents?|based|citizens?|nationals?|only|work\s+permit|office|location)\b",
+    r"\b(?:must|need(?:ing)?\s+to|required\s+to)\s+(?:be\s+)?(?:based|reside|live|work)\s+in\s+(?:israel|tel\s+aviv|jerusalem|haifa)\b",
+    r"\b(?:israel|tel\s+aviv|jerusalem|haifa)\s*[-–]?\s*only\b",
+    r"\bright\s+to\s+work\s+in\s+israel\b",
+    r"\bwork\s+authorization\s+in\s+israel\b",
+    # A5: generalized "… only" / "candidates in X only" residency pins (non-Pakistan)
+    rf"\b(?:only|restricted\s+to)\s+(?:candidates\s+)?(?:based\s+)?in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    rf"\bcandidates\s+(?:in|based\s+in)\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    rf"\bopen\s+to\s+candidates\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    rf"\bonly\s+candidates\s+(?:based\s+)?in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    rf"\b(?:{_RESIDENCY_COUNTRY_ALT})\s+(?:residents?|nationals?|based|citizens?)\s+only\b",
+    rf"\b(?:must|required)\s+(?:to\s+)?be\s+(?:based|located|residing)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    # "Applicants in Germany only" / "in India only" / "based in Japan only"
+    rf"\b(?:applicants?|candidates?|individuals?|engineers?)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    rf"\bin\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    rf"\bbased\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    rf"\b(?:must|required)\s+be\s+based\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
 ]
 
 
@@ -556,6 +697,15 @@ def _is_us_restricted(text: str) -> bool:
             if any(w in _US_STATE_ABBR for w in two_letter_words):
                 return True
             if any(re.search(rf"\b{re.escape(name)}\b", grp_low) for name in _US_STATE_NAMES):
+                return True
+            if any(re.search(rf"\b{re.escape(city)}\b", grp_low) for city in _US_MAJOR_CITIES):
+                return True
+    # A3: bare "Remote - Austin" style where the city is the only qualifier
+    # (already covered via _US_RESTRICTED_RE groups); also catch a US city
+    # sitting next to Remote outside the paren/dash forms, e.g. "Remote, Chicago".
+    if re.search(r"\bremote\b", low):
+        for city in _US_MAJOR_CITIES:
+            if re.search(rf"\b{re.escape(city)}\b", low):
                 return True
     return False
 
@@ -723,6 +873,23 @@ def is_worldwide_remote(
     # Only "anywhere in the world" or "anywhere in world" or "work from anywhere" is allowed.
     if re.search(r"anywhere\s+in\s+(?!(?:the\s+)?world\b)", text):
         return False
+
+    # B3: explicit worldwide markers in the DESCRIPTION override a physical-city
+    # location label (HQ city ≠ residency pin). Residency language is already
+    # rejected by is_description_restricted above; Israel location stays hard-blocked.
+    desc_low_b3 = (description or "").lower()
+    if (
+        description
+        and any(m in desc_low_b3 for m in (
+            "worldwide", "work from anywhere", "anywhere in the world",
+            "global remote", "globally remote", "anywhere in world",
+        ))
+        and not _is_us_restricted(text)
+        and not re.search(r"\b(?:israel|tel aviv|jerusalem|haifa)\b", text)
+        and not is_hybrid_work(text)
+        and not any(w in text for w in ("onsite", "on-site", "in-office", "office only"))
+    ):
+        return True
 
     # If the location is restricted to a foreign country outside Pakistan/APAC/worldwide -> reject
     if is_foreign_country_restricted(text):

@@ -84,12 +84,25 @@ def test_feed_post_career_commentary_rejected():
 
 
 def test_feed_post_hiring_intent_accepted():
-    raw = _feed_post_to_raw(_post(text="We are looking for a senior Machine Learning engineer — apply now."), "ML")
+    raw = _feed_post_to_raw(
+        _post(text="We are looking for a senior Machine Learning engineer — apply now. Fully remote worldwide."),
+        "ML",
+    )
     assert raw is not None
 
 
 def test_feed_post_missing_text_rejected():
     assert _feed_post_to_raw(_post(text=""), "ML") is None
+
+
+def test_feed_post_body_capture_length():
+    """Regression: feed post must carry a non-trivial description body
+    (Beat 100b empty-body blinded Rule 11; snippet now caps at 2000)."""
+    raw = _feed_post_to_raw(_post(), "ML")
+    assert raw is not None
+    assert raw.description is not None
+    assert len(raw.description) >= 50
+    assert "remote team" in raw.description.lower()
 
 
 def test_post_location_remote_markers():
@@ -102,9 +115,10 @@ def test_post_location_explicit_onsite_hybrid():
     assert _post_location("Hybrid role in the Karachi office.") == "Hybrid"
 
 
-def test_post_location_defaults_remote():
-    assert _post_location("Looking for an ML engineer to grow our team") == "Remote"
-    assert _post_location("") == "Remote"
+def test_post_location_defaults_fail_closed():
+    """Beat 105 / A1: no location signal → empty string (caller drops), never invented Remote."""
+    assert _post_location("Looking for an ML engineer to grow our team") == ""
+    assert _post_location("") == ""
 
 
 def test_post_location_surfaces_foreign_markers():
@@ -128,6 +142,14 @@ def test_post_location_physical_gulf_city_rejected():
     assert _post_location("We're hiring across AI in Dammam, Saudi Arabia.") == "Hybrid"
     assert _post_location("Looking for engineers based in Riyadh.") == "Hybrid"
     assert _post_location("Join our Dubai office, AI team.") == "Hybrid"
+
+
+def test_post_location_physical_apac_city_rejected():
+    """Beat 105 / A1: non-Gulf APAC metros must not fall through to Remote."""
+    assert _post_location("Hiring ML Engineer - must be based in Karachi.") == "Hybrid"
+    assert _post_location("Looking for engineers based in Lahore.") == "Hybrid"
+    assert _post_location("Join our Dhaka office, AI team.") == "Hybrid"
+    assert _post_location("Remote role based in Manila only.") == "Hybrid"
 
 
 def test_post_location_remote_gulf_stays_remote():

@@ -100,7 +100,8 @@ class TelegramNotifier(Notifier):
             "",
         ]
 
-        top = jobs[:5]
+        # C4: surface the best CV matches first, not scrape order.
+        top = sorted(jobs, key=lambda j: (j.cv_match_score or 0), reverse=True)[:5]
         if top:
             lines.append("🔥 Top Picks:")
             for i, job in enumerate(top, 1):
@@ -213,7 +214,8 @@ class WhatsAppNotifier(Notifier):
     def _format_plain(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> str:
         today = utc_now().date().isoformat()
         lines = [f"AI/ML Jobs — {today}", f"New: {len(jobs)}", ""]
-        for i, j in enumerate(jobs[:5], 1):
+        top_plain = sorted(jobs, key=lambda j: (j.cv_match_score or 0), reverse=True)[:5]
+        for i, j in enumerate(top_plain, 1):
             lines.append(f"{i}. {j.title} @ {j.company}")
         return "\n".join(lines)
 
