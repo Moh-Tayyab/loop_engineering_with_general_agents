@@ -47,8 +47,12 @@ class FakeNotifier:
         return True
 
 
-def _raw(title="Machine Learning Engineer", location="Remote", posted_date=None):
+def _raw(title="Machine Learning Engineer", location="Remote", posted_date=None, _no_date=False):
     from datetime import datetime, timezone
+    if _no_date:
+        posted_date = None
+    elif posted_date is None:
+        posted_date = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return RawJob(
         source="fake",
         title=title,
@@ -148,6 +152,31 @@ def test_run_source_strict_24h_window_on_curated_boards(tmp_slc, monkeypatch):
     jobs = run_source("himalayas", ["AI", "LLM"], posted_after, seen, circuit, 100)
     assert len(jobs) == 1
     assert jobs[0].title == "Staff AI Engineer"
+
+
+def test_run_source_drops_jobs_without_parseable_date(tmp_slc, monkeypatch):
+    """Strict past-24h policy: a job with no parseable posted date cannot be
+    verified inside the window and must be dropped (fail-closed)."""
+    monkeypatch.setenv("SCRAPE_KEYWORDS", "AI,LLM")
+    import src.main as main
+
+    posted_after = datetime.now(timezone.utc) - timedelta(hours=24)
+    fake = FakeScraper([
+        # No date at all -> must be dropped
+        _raw(title="Undated AI Engineer", location="Worldwide", _no_date=True),
+        # Garbage date -> must be dropped
+        _raw(title="ASAP AI Engineer", location="Worldwide", posted_date="asap"),
+        # Fresh timestamp inside window -> must be kept
+        _raw(title="Fresh AI Engineer", location="Worldwide", posted_date=(datetime.now(timezone.utc) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+    ])
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    seen = SeenStore()
+    state = LoopState()
+    circuit = CircuitManager(state.state)
+
+    jobs = run_source("fake", ["AI", "LLM"], posted_after, seen, circuit, 100)
+    assert [j.title for j in jobs] == ["Fresh AI Engineer"]
 
 
 def test_run_source_failure_opens_circuit(tmp_slc, monkeypatch):
@@ -972,7 +1001,9 @@ def test_list_sources_cloud_indicates_browser_bound(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "registered sources:" in out
     assert "disabled (browser-bound; skipped on cloud runner)" in out
-    assert "remotive" in out
+    assert "linkedin" in out
+    assert "indeed" in out
+    assert "glassdoor" in out
     assert "enabled" in out
 
 
@@ -984,6 +1015,8 @@ def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
     from src.state import SeenStore
     from src.circuit_breaker import CircuitManager
 
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
     j1 = RawJob(
         source="linkedin",
         title="Senior Data Engineer (Contract, Full-Time) [HR208] (PK)",
@@ -991,7 +1024,7 @@ def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
         url="https://pk.linkedin.com/jobs/view/senior-data-engineer-contract-full-time-hr208-pk-at-smart-working-4467172677",
         location="Islamabad, Islāmābād, Pakistan",
         description="Join one of the highest-rated workplaces and thrive in a truly remote-first world.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     j2 = RawJob(
@@ -1001,7 +1034,7 @@ def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
         url="https://pk.linkedin.com/jobs/view/senior-software-engineer-at-trellions-4467121181",
         location="Pakistan",
         description="We are looking for experienced software engineers to join our team and work remotely.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     j3 = RawJob(
@@ -1011,7 +1044,7 @@ def test_smart_working_and_trellions_onsite_jobs_dropped(monkeypatch, tmp_path):
         url="https://pk.linkedin.com/jobs/view/acme-remote-12345",
         location="Pakistan (Remote)",
         description="100% remote work from home position.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
 
@@ -1053,6 +1086,8 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
     from src.state import SeenStore
     from src.circuit_breaker import CircuitManager
 
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
     # US-only in title with Worldwide location
     j_sixfeet = RawJob(
         source="python_org",
@@ -1061,7 +1096,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://www.python.org/jobs/8113/",
         location="Worldwide",
         description="Must reside in the USA.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # US domestic remote in location
@@ -1072,7 +1107,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://www.python.org/jobs/8132/",
         location="Remote, United States of America",
         description="Looking for remote US engineer.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # Foreign country restricted (Poland/Ukraine)
@@ -1083,7 +1118,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://www.python.org/jobs/8129/",
         location="Poland, Lviv, Ivano-Frankivsk, Ternopil, Uzhhorod, Chernivtsi or Kyiv, Ukraine/Poland",
         description="Python developer in Poland or Ukraine.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # Hub-restricted in title
@@ -1094,7 +1129,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://wellfound.com/jobs/4523599-staff-software-engineer-backend-infra-nyc-or-sf",
         location="Remote",
         description="Join our team in NYC or SF.",
-        posted_date="2026-09-16",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # Onsite in title
@@ -1105,7 +1140,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://www.python.org/jobs/8123/",
         location="Worldwide",
         description="Onsite position.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # Legitimate worldwide remote (Sticker Mule)
@@ -1116,7 +1151,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://weworkremotely.com/remote-jobs/sticker-mule-ai-agent-engineer",
         location="Anywhere in the World",
         description="We are 100% remote and hire worldwide.",
-        posted_date="2026-09-16",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
     # Legitimate worldwide remote (Evaboot)
@@ -1127,7 +1162,7 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
         url="https://www.python.org/jobs/8133/",
         location="Worldwide",
         description="Build agentic AI workflows with Python and FastAPI.",
-        posted_date="2026-09-17",
+        posted_date=yesterday,
         fetched_at=utc_now(),
     )
 

@@ -40,7 +40,7 @@ def _stats() -> dict:
     return {
         "week_key": "2026-W38",
         "total": 12,
-        "by_source": {"linkedin": 5, "indeed": 4, "working_nomads": 3},
+        "by_source": {"linkedin": 5, "indeed": 4, "glassdoor": 3},
         "by_type": {"full-time": 10, "contract": 2},
     }
 

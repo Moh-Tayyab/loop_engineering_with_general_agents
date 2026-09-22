@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 try:
     from dotenv import load_dotenv
@@ -35,7 +37,7 @@ def scan_keywords() -> list[str]:
     to qualify (Java Developer etc. without an AI term is rejected)."""
     raw = os.environ.get(
         "SCRAPE_KEYWORDS",
-        "AI,Machine Learning,LLM,NLP,Data Science,Computer Vision,AI FDE,Generative AI,GenAI,Deep Learning,MLOps,AI Agent,PyTorch",
+        "AI/ML,LLM Engineer,AI Engineer,ML Engineer,AI FDE,Generative AI,Agentic AI",
     )
     return [k.strip() for k in raw.split(",") if k.strip()]
 
@@ -87,7 +89,7 @@ def captcha_solve_timeout() -> float:
     # Cloud cron must fail-closed immediately — nobody is at a headed window.
     if is_cloud_runner() and os.environ.get("CAPTCHA_SOLVE_TIMEOUT") is None:
         return 0.0
-    return env_float("CAPTCHA_SOLVE_TIMEOUT", 300.0)
+    return min(env_float("CAPTCHA_SOLVE_TIMEOUT", 120.0), max(10.0, source_timeout_s() - 20.0))
 
 
 # All registered sources are live-verified and default ON.
@@ -97,9 +99,18 @@ DEFAULT_DISABLED_SOURCES: frozenset[str] = frozenset()
 # JOB_LOOP_CLOUD=1 and cannot solve CAPTCHAs or reuse .runtime Chrome profiles.
 # They stay available on a local headed machine unless CLOUD_ALLOW_BROWSER=1.
 BROWSER_BOUND_SOURCES = frozenset({
-    "indeed", "glassdoor", "justremote",
-    "remote_rocketship", "apac_remote", "pakistan_remote",
+    "indeed", "glassdoor",
 })
+
+FRIDAY_WEEKDAY = 4
+
+
+def _get_tz() -> ZoneInfo:
+    raw = os.environ.get("SCRAPE_TZ", "UTC")
+    try:
+        return ZoneInfo(raw)
+    except (ValueError, KeyError):  # bad tz string → UTC
+        return ZoneInfo("UTC")
 
 
 def is_cloud_runner() -> bool:
@@ -195,13 +206,22 @@ def lock_timeout_s() -> float:
     return env_float("LOCK_TIMEOUT_S", 5.0)
 
 
-def source_timeout_s() -> float:
-    """Hard per-source wall-clock cap. A hung Playwright fetch (CAPTCHA stall,
-    EPIPE, stuck SPA) must not stall the whole daily loop beyond this. The
-    orchestrator runs each source in a bounded worker; a source that exceeds
-    this is failed (circuit breaker) and the run continues with the rest.
-    150s < 15-min run budget: worst case ≈ linkedin(135) + 2 heavy browsers
-    (2×120) + 12 fast sources (~2s each) ≈ 8 min, plus digest + notifies."""
+def source_timeout_s(source_name: str | None = None, now: datetime | None = None) -> float:
+    """Hard wall-clock cap per source worker (main.py worker.join).
+
+    Browser-bound sources (Indeed, Glassdoor) that may involve human CAPTCHA
+    solving get 300s. Regular sources get 150s. LinkedIn is the exception:
+    Friday is the spec'd hiring-feed-only day, so its feed pass (21 queries)
+    needs real headroom — otherwise the 150s cap strangles the feed pass and
+    it silently yields only guest jobs. Other weekdays keep the standard cap so
+    the full-sweep days stay bounded."""
+    if source_name == "linkedin":
+        weekday = (now or datetime.now(_get_tz())).weekday()
+        if weekday in (0, FRIDAY_WEEKDAY):  # Monday (3d backfill + feed) and Friday (feed day)
+            return env_float("LINKEDIN_FEED_TIMEOUT_S", 600.0)
+        return env_float("LINKEDIN_TIMEOUT_S", 150.0)
+    if source_name and source_name in BROWSER_BOUND_SOURCES:
+        return env_float("BROWSER_SOURCE_TIMEOUT_S", 300.0)
     return env_float("SOURCE_TIMEOUT_S", 150.0)
 
 
@@ -210,16 +230,18 @@ def linkedin_guest_timeout_s() -> float:
     keywords × Worldwide/Pakistan). Unbounded it can eat 390s of network
     timeout and starve the whole source. Yields what it collected once the
     budget is exhausted and stops, so the browser feed pass still has room."""
-    return env_float("LINKEDIN_GUEST_TIMEOUT_S", 45.0)
+    return env_float("LINKEDIN_GUEST_TIMEOUT_S", 120.0)
 
 
 def linkedin_browser_timeout_s() -> float:
     """Cap for the authenticated LinkedIn browser pass (feed + board gather).
     The public guest request pass is fast; only the Playwright SPA path needs
-    the rope so a single keyword-nav loop can't burn the whole budget.
-    45 (guest) + 90 (browser) = 135s < SOURCE_TIMEOUT_S=150 → LinkedIn yields
-    guest jobs first, then feed posts, without hitting the orchestrator cap."""
-    return env_float("LINKEDIN_BROWSER_TIMEOUT_S", 90.0)
+    the rope. Friday expands _feed_queries to 3 per keyword (plain + #hiring +
+    "we are hiring") = 21 content-search navigations on top of the 7 board
+    scrapes — 90s was far too tight and the feed pass silently self-aborted
+    with an empty TimeoutError. 480s fits Friday's full feed scan under the
+    600s Friday source cap (120s guest + 480s browser = 600s)."""
+    return env_float("LINKEDIN_BROWSER_TIMEOUT_S", 480.0)
 
 
 def lock_stale_s() -> float:
@@ -260,6 +282,20 @@ def env_int(name: str, default: int) -> int:
 def health_port() -> int:
     """Port for daemon /healthz endpoint in --serve mode."""
     return env_int("HEALTH_PORT", 8080)
+
+
+def easy_apply_only() -> bool:
+    """If True, restrict search queries where supported (LinkedIn f_AL=true,
+    Indeed iaFilter=1, Glassdoor easyApplyOnly=true) to Easy Apply jobs only."""
+    return os.environ.get("EASY_APPLY_ONLY", "0") == "1"
+
+
+def linkedin_experience_levels() -> str:
+    """LinkedIn experience levels filter (f_E param).
+    1: Internship, 2: Entry level, 3: Associate, 4: Mid-Senior level, 5: Director, 6: Executive.
+    Disabled by default per user request. Empty string disables f_E from search URL."""
+    return os.environ.get("LINKEDIN_EXPERIENCE_LEVELS", "").strip()
+
 
 
 def die(msg: str, code: int = 1) -> None:

@@ -248,7 +248,7 @@ def run_source(
     detect a total-outage day for the exit code.
     """
     if timeout_s is None:
-        timeout_s = cfg.source_timeout_s()
+        timeout_s = cfg.source_timeout_s(source_name)
 
     box: dict[str, object] = {}
     cancel_event = threading.Event()
@@ -381,6 +381,20 @@ def _run_source_impl(
         if normalized.posted_date and normalized.posted_date < cutoff_date:
             log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
             continue
+
+        # Strict 24h fail-closed: when neither a full datetime nor a calendar
+        # date could be parsed, the job cannot be verified as posted within the
+        # window — drop it rather than pass an age-unknown job into the digest.
+        if posted_dt is None and normalized.posted_date is None:
+            log.info("[%s] dropping job with no parseable posted date (strict 24h): %s",
+                     source_name, raw.title[:60])
+            continue
+        from src.models import check_link_health, is_valid_job_url
+        if not is_valid_job_url(raw.url) or not check_link_health(raw.url):
+            log.info("[%s] dropping job with invalid, profile or dead URL: %s (%s)",
+                     source_name, raw.url, raw.title[:50])
+            continue
+
         if cfg.scrape_remote_only() and not is_remotely_workable(
             normalized.location_type,
             raw.location,
@@ -389,6 +403,12 @@ def _run_source_impl(
             title=raw.title,
         ):
             continue
+
+        if not normalized.cv_match_score or normalized.cv_match_score < 70:
+            log.debug("[%s] dropping role failing CV match score (%d%%): %s",
+                      source_name, normalized.cv_match_score, raw.title[:50])
+            continue
+
         # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
         if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
             log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
@@ -459,7 +479,15 @@ def _compute_window(args: argparse.Namespace):
                            generate_digest=False, window_label="manual idle", day_of_week=6)
     if args.window != "auto":
         now = utc_now()
-        return FetchWindow(reason=args.window, window_start=now, window_end=now,
+        if args.window == "daily":
+            start = now - timedelta(hours=24)
+        elif args.window == "weekly":
+            start = now - timedelta(days=7)
+        elif args.window == "backfill":
+            start = now - timedelta(days=3)
+        else:
+            start = now
+        return FetchWindow(reason=args.window, window_start=start, window_end=now,
                            generate_digest=(args.window == "weekly"),
                            window_label=f"manual {args.window}", day_of_week=now.weekday())
     return compute_fetch_window()

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import date, datetime, timezone
 from typing import Any, Iterator
 from urllib.parse import quote_plus
@@ -27,7 +28,12 @@ from src.browser import CaptchaDetected, check_captcha, launch_browser, polite_d
 from src.log import get_logger
 
 log = get_logger(__name__)
-from src.models import RawJob, utc_now
+from src.models import (
+    _FOREIGN_RESTRICTED_COUNTRIES,
+    RawJob,
+    is_foreign_country_restricted,
+    utc_now,
+)
 from . import register_scraper
 from .base import BaseScraper
 
@@ -44,44 +50,110 @@ def _feed_queries(keywords: list[str], weekday: int) -> list[str]:
     queries: list[str] = []
     for kw in keywords:
         queries.append(kw)
-        if weekday == 4:
+        if weekday == 4:  # Friday expands into #hiring and "we are hiring" scenes
             queries.append(f"#hiring {kw}")
             queries.append(f'"we are hiring" {kw}')
     return queries
 
 
+_PHYSICAL_CITY_RE = re.compile(
+    r"\b(?:(?:in|based\s+in|located\s+in|settled\s+in|position\s+in|work\s+from|across)\s+"
+    r"(?:the\s+)?(?:dammam|al\s+khobar|khobar|riyadh|jeddah|abu\s+dhabi|dubai|"
+    r"sharjah|doha|manama|muscat|kuwait(?:\s+city)?|istanbul)|"
+    r"(?:dammam|al\s+khobar|khobar|riyadh|jeddah|abu\s+dhabi|dubai|sharjah|"
+    r"doha|manama|muscat|kuwait(?:\s+city)?|istanbul)\s+(?:office|lab|hub|region|city))"
+    r"(?:\b|,|\s+city)",
+    re.I,
+)
+
+
 def _post_location(text: str | None) -> str:
     """Location guess for a hiring feed post (which has no structured location).
 
-    Heuristic (documented): remote markers win; explicit on-site/hybrid wording
-    with no remote marker maps to Hybrid (rejected by SCRAPE_REMOTE_ONLY so it
-    can't pollute the digest); otherwise default Remote — hiring posts are
-    usually written location-agnostic ("looking for an ML engineer").
+    Strict-location law (Rule 11):
+    1. Explicit on-site / in-office wording maps to Hybrid (which SCRAPE_REMOTE_ONLY drops),
+       preventing hashtag spam (#RemoteJobs) on an onsite post from masquerading as remote.
+    2. Restricted foreign countries surface as restricted locations so downstream filters drop them.
+    3. Explicit US restrictions (Tampa, FL, USA) surface as USA (Remote).
+    4. Remote markers map to Remote.
+    5. Physical cities without remote markers map to Hybrid.
+    6. Fallback defaults to Remote.
     """
     t = (text or "").lower()
+    if any(w in t for w in ("on-site", "onsite", "on site", "in-office", "in office",
+                            "office-based", "at our office", "work from office",
+                            "office only", "commute to the office")):
+        return "Hybrid"
+
+    if is_foreign_country_restricted(t):
+        for c in sorted(_FOREIGN_RESTRICTED_COUNTRIES, key=len, reverse=True):
+            if re.search(rf"\b{re.escape(c)}\b", t):
+                label = "UK" if c == "uk" else c.title()
+                return f"{label} (Remote)"
+        return "Restricted (Remote)"
+
+    from src.models import _is_us_restricted
+    if _is_us_restricted(t):
+        return "USA (Remote)"
+
     if any(w in t for w in ("remote", "wfh", "work from home", "work-from-home",
                             "anywhere", "worldwide", "location-agnostic")):
         return "Remote"
-    if any(w in t for w in ("on-site", "onsite", "on site", "in-office", "in office",
-                            "hybrid", "office-based", "at our office", "work from office")):
+
+    if _PHYSICAL_CITY_RE.search(t):
         return "Hybrid"
+
+    if "hybrid" in t:
+        return "Hybrid"
+
     return "Remote"
 
 
+_HIRING_MARKERS = re.compile(
+    r"\bhir(?:ing|e|es)\b|\b(?:job|jobs)\b|\bvacanc\w*|\bopportunit\w*|\bopenings?\b|"
+    r"\bwe(?:'|\u2019)?re\s+(?:are\s+)?(?:hiring|looking)\b|"
+    r"\bwe\s+are\s+(?:hiring|looking)\b|\blooking\s+for\b|\bseeking\b|"
+    r"\bjoin(?:ing)?\s+our\s+team\b|\b(?:apply|application|resume|cv)\b|"
+    r"\b(?:role|position)s?\s*[:：]|\bposition\b",
+    re.I,
+)
+
+
+def _is_hiring_post(text: str) -> bool:
+    """A feed "post" is only a JOB when the post is explicitly hiring.
+
+    The content-search page returns any post about AI/ML (educational deep
+    dives, career commentary, news). Only keep posts whose body carries a
+    hiring signal — an explicit "hiring"/"we're looking", an apply/role/posting
+    marker, or a role keyword — so educational content never lands in the
+    job digest."""
+    return bool(_HIRING_MARKERS.search(text or ""))
+
+
 def _post_title(text: str, headline: str | None) -> str:
-    """A compact title for a feed post: the actor headline when present
-    (LinkedIn renders the author's "X is hiring..." line in it), else the first
-    sentence/line of the post body. Capped so the title stays a title."""
-    if headline and headline.strip():
-        return headline.strip()[:140]
+    """A compact title for a feed post.
+
+    Old feed DOM: LinkedIn rendered the author's "X is hiring..." line as the
+    actor headline — that is a hiring title, use it. New content-search DOM:
+    the "headline" is the actor's role line ("CTO", "• 3rd+", ...), which is
+    NOT a job title — fall back to the post body's first sentence ("We're
+    hiring — Junior AI Engineer ..."). Capped so the title stays a title."""
+    header = (headline or "").strip()
+    header = re.sub(r"^•?\s*[123](?:st|nd|rd)\+?\s*$", "", header).strip()
     body = (text or "").strip()
-    if not body:
-        return "Hiring"
-    for sep in ("\n", ". "):
-        part = body.split(sep, 1)[0].strip()
-        if part:
-            return part[:140]
-    return body[:140] or "Hiring"
+    if header and re.search(r"\b(hir(?:e|ing|es)|job|vacanc|opportunit|open(?:ing|ing s)?)\b",
+                            header[:300], re.I):
+        return header[:140]
+    if body:
+        for line in body.split("\n"):
+            line = line.strip()
+            if _is_hiring_post(line):
+                return re.sub(r"\s+[…•·]+$", "", line)[:140]
+        for sep in ("\n", ". "):
+            part = body.split(sep, 1)[0].strip()
+            if part:
+                return part[:140]
+    return (header or body or "Hiring")[:140]
 
 
 def _feed_post_to_raw(post: dict[str, Any], kw: str,
@@ -91,7 +163,16 @@ def _feed_post_to_raw(post: dict[str, Any], kw: str,
     TTL dedup layer handles re-scrapes)."""
     text = (post.get("text") or "").strip()
     url = (post.get("url") or "").strip()
-    if not text or not url:
+    if not text or not url or not _is_hiring_post(text):
+        return None
+    if "linkedin.com/in/" in url:
+        return None
+
+    loc = _post_location(text)
+    if loc in ("Onsite", "Hybrid") or any(k in loc for k in ("Domestic", "Restricted", "USA", "UK", "India", "Germany", "Canada")):
+        return None
+    from src.models import is_worldwide_remote
+    if not is_worldwide_remote(loc, description=text):
         return None
 
     posted = (post.get("posted") or "")[:10]
@@ -107,7 +188,7 @@ def _feed_post_to_raw(post: dict[str, Any], kw: str,
         title=_post_title(text, post.get("headline")),
         company=(post.get("author") or "").strip() or "Unknown",
         url=url,
-        location=_post_location(text),
+        location=loc,
         posted_date=posted or None,
         description=text[:2000],
         tags=[kw],
@@ -120,7 +201,7 @@ class LinkedInScraper(BaseScraper):
 
     _BASE = "https://www.linkedin.com"
     _SEARCH = "https://www.linkedin.com/jobs/search/?keywords={kw}&f_WT=2&location=Worldwide"
-    _FEED = "https://www.linkedin.com/search/content/all/?origin=GLOBAL_SEARCH_HEADER&keywords={kw}"
+    _FEED = "https://www.linkedin.com/search/results/content/?keywords={kw}"
 
     def login_required(self) -> bool:
         # Graceful degradation: if no authenticated session exists, fallback to
@@ -139,8 +220,12 @@ class LinkedInScraper(BaseScraper):
         # Primary high-reliability collector: LinkedIn public guest search (fast, zero CAPTCHA, canonical URLs)
         yield from self._fetch_guest_public(keywords, posted_after)
 
-        # Secondary: authenticated feed pass (runs when authenticated session exists and feed scraping is enabled)
-        if self.has_authenticated_session() and cfg.linkedin_feed_enabled():
+        # Secondary: authenticated feed pass (runs strictly on Friday, the designated hiring-feed day,
+        # or when explicitly enabled via LINKEDIN_FEED_EVERYDAY=1).
+        # Monday through Thursday exclusively scrape the structured Jobs board/section.
+        is_feed_day = utc_now().weekday() == 4  # Friday only
+        feed_allowed = cfg.linkedin_feed_enabled() and (is_feed_day or os.environ.get("LINKEDIN_FEED_EVERYDAY", "0") == "1")
+        if self.has_authenticated_session() and feed_allowed:
             try:
                 yield from asyncio.run(asyncio.wait_for(
                     self._gather(keywords, posted_after),
@@ -185,9 +270,16 @@ class LinkedInScraper(BaseScraper):
                              len(seen_urls))
                     break
                 remote_query = f"remote {kw}" if "remote" not in kw.lower() else kw
+                extra_params = ""
+                if cfg.easy_apply_only():
+                    extra_params += "&f_AL=true"
+                exp_levels = cfg.linkedin_experience_levels()
+                if exp_levels:
+                    extra_params += f"&f_E={exp_levels}"
                 url = (
                     f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
                     f"keywords={quote_plus(remote_query)}&location={loc_query}&f_WT=2&sortBy=DD&f_TPR={tpr_param}"
+                    f"{extra_params}"
                 )
                 try:
                     r = requests.get(url, headers=headers, timeout=15)
@@ -227,20 +319,41 @@ class LinkedInScraper(BaseScraper):
                             if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
                                 log.debug("[linkedin] dropping closed posting: %s", title)
                                 continue
-                            if any(w in full_check for w in ("hybrid", "on-site", "onsite", "in-office", "office-based", "office only")):
-                                log.debug("[linkedin] dropping hybrid/onsite posting: %s (%s)", title, loc)
-                                continue
-                            loc_lower = loc.lower()
-                            title_lower = title.lower()
-                            has_loc_title_remote = any(
-                                w in loc_lower or w in title_lower
-                                for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual")
+                            from src.models import (
+                                is_language_restricted,
+                                is_hybrid_work,
+                                is_title_restricted,
+                                is_description_restricted,
+                                is_worldwide_remote,
                             )
-                            if not has_loc_title_remote:
-                                log.debug("[linkedin] dropping on-site posting lacking remote marker in title/loc: %s (%s)", title, loc)
+                            if is_language_restricted(title) or is_language_restricted(real_desc):
+                                log.debug("[linkedin] dropping language-restricted: %s", title)
                                 continue
-                            if not any(w in full_check for w in ("remote", "work from home", "wfh", "telecommute", "anywhere")):
-                                log.debug("[linkedin] dropping job without remote marker: %s", title)
+                            if is_hybrid_work(title) or is_hybrid_work(real_desc) or is_hybrid_work(loc):
+                                log.debug("[linkedin] dropping hybrid: %s", title)
+                                continue
+                            if is_title_restricted(title) or is_description_restricted(real_desc):
+                                log.debug("[linkedin] dropping restricted: %s", title)
+                                continue
+                            if not is_worldwide_remote(loc, source="linkedin", description=real_desc, title=title):
+                                log.debug("[linkedin] dropping non-worldwide remote: %s (%s)", title, loc)
+                                continue
+                            if any(w in full_check for w in ("on-site", "onsite", "in-office", "office-based", "office only")):
+                                log.debug("[linkedin] dropping onsite posting: %s (%s)", title, loc)
+                                continue
+                            title_loc = f"{title.lower()} {loc.lower()}"
+                            has_remote_in_header = any(
+                                w in title_loc
+                                for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual", "worldwide")
+                            )
+                            has_strict_remote_desc = (
+                                any(w in real_desc.lower() for w in ("100% remote", "fully remote", "100% work from home", "fully work from home"))
+                                or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", real_desc.lower()))
+                                or bool(re.search(r"\bremote[,\s]+pakistan\b", real_desc.lower()))
+                                or bool(re.search(r"\bpakistan[,\s]+remote\b", real_desc.lower()))
+                            )
+                            if not (has_remote_in_header or has_strict_remote_desc):
+                                log.debug("[linkedin] dropping posting lacking explicit remote marker: %s (%s)", title, loc)
                                 continue
                         except Exception:
                             continue
@@ -274,6 +387,13 @@ class LinkedInScraper(BaseScraper):
         page-context evaluate (LinkedIn's SPA destroys element handles across
         steps, so DOM access must happen in a single evaluate, same as the
         jobs board). Raise on CAPTCHA; the caller decides how to degrade.
+
+        LinkedIn switched this page to CSS-module hashed classes (the classic
+        .feed-shared-update-v2 / [data-urn] nodes are gone and /search/content/
+        now 404s), so the extractor locates each post structurally: the
+        leaf-most container whose text opens with the "Feed post" label, then
+        splits off author / headline / relative timestamp / body around the
+        "Follow" marker. The author profile anchor provides the stable URL.
         """
         feed_url = LinkedInScraper._FEED.format(kw=quote_plus(query))
         await page.goto(feed_url, timeout=45_000, wait_until="domcontentloaded")
@@ -281,41 +401,70 @@ class LinkedInScraper(BaseScraper):
         await asyncio.sleep(6)
         try:
             posts = await page.evaluate("""() => {
-                const seen = new Map();
-                const push = (url, rec) => { if (url && !seen.has(url)) seen.set(url, rec); };
-                document.querySelectorAll(
-                    ".feed-shared-update-v2, [data-urn*='activity']"
-                ).forEach(el => {
-                    let urn = el.getAttribute("data-urn") || "";
-                    const a = el.querySelector("a[href*='/feed/update/'], a[href*='urn:li:activity']");
+                const isFeedRoot = (el) => {
+                    const t = (el.innerText || "").trim();
+                    if (!/^feed post/mi.test(t)) return false;
+                    for (const c of el.querySelectorAll("div")) {
+                        if (/^feed post/mi.test((c.innerText || "").trim())) return false;
+                    }
+                    return true;
+                };
+                const out = new Map();
+                document.querySelectorAll("div").forEach(el => {
+                    if (!isFeedRoot(el)) return;
+                    const jobLink = el.querySelector("a[href*='/jobs/view/']");
+                    const updateLink = el.querySelector("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='urn:li:activity']");
+                    const extLink = el.querySelector("a[href^='http']:not([href*='linkedin.com/in/']):not([href*='linkedin.com/company/']):not([href*='linkedin.com/search'])");
                     let url = "";
-                    if (a && a.href) url = a.href.split("?")[0];
-                    else if (urn) url = "https://www.linkedin.com/feed/update/" + urn;
-                    if (!url) return;
-                    const textEl = el.querySelector(
-                        ".update-components-text, .feed-shared-inline-show-more-text, [class*='inline-show-more-text']"
-                    );
-                    const authorEl = el.querySelector(
-                        ".update-components-actor__name, .feed-shared-actor__name, [class*='actor__name']"
-                    );
-                    const headlineEl = el.querySelector(
-                        ".update-components-actor__sub-description, [class*='actor__sub-description'], [class*='actor__description']"
-                    );
-                    const timeEl = el.querySelector("time");
-                    push(url, {
-                        author: authorEl ? authorEl.innerText.trim() : "",
-                        headline: headlineEl ? headlineEl.innerText.trim() : "",
-                        text: textEl ? textEl.innerText.trim() : el.innerText.trim(),
-                        posted: timeEl ? (timeEl.getAttribute("datetime") || timeEl.innerText.trim()) : "",
+                    if (jobLink && jobLink.href) {
+                        url = jobLink.href.split("?")[0];
+                    } else if (updateLink && updateLink.href) {
+                        url = updateLink.href.split("?")[0];
+                    } else if (extLink && extLink.href) {
+                        url = extLink.href.split("?")[0];
+                    }
+                    if (!url || url.includes("/in/")) return;
+                    const t = el.innerText.replace(/\\u00a0/g, " ").trim();
+                    const lines = t.split("\\n").map(l => l.trim()).filter(Boolean).slice(1);
+                    if (!lines.length) return;
+                    const author = (lines[0] || "").replace(/\\s*•.*$/, "").trim();
+                    let posted = "";
+                    let followIdx = -1;
+                    for (let i = 0; i < lines.length; i++) {
+                        const l = lines[i];
+                        if (/^\\d+[dhwmo]\\b.*•/.test(l)) posted = (l.match(/^\\d+[dhwmo]/) || [""])[0];
+                        if (l.toLowerCase() === "follow") followIdx = i;
+                    }
+                    const stopIdx = followIdx >= 0 ? followIdx : lines.length;
+                    let headline = "";
+                    for (let i = 1; i < stopIdx; i++) {
+                        const l = lines[i];
+                        if (!l || l === "Visit my website" || l === "Follow"
+                            || /^\\d+[dhwmo]\\b.*•/.test(l)
+                            || /^\\d+\\+?$/.test(l)
+                            || /^•?\\s*[123](?:st|nd|rd)\\+?\\s*$/i.test(l)
+                            || /^•+$/.test(l)) continue;
+                        headline = l;
+                        break;
+                    }
+                    const postBody = followIdx >= 0
+                        ? lines.slice(followIdx + 1).join("\\n")
+                        : lines.slice(1).join("\\n");
+                    out.set(url, {
+                        author,
+                        headline,
+                        text: postBody.trim() || t,
+                        posted,
                         url,
                     });
                 });
-                return Array.from(seen.values());
+                return Array.from(out.values());
             }""")
-        except Exception:
+        except Exception as exc:
+            log.warning("[linkedin] feed-pass evaluate failed: %s", exc)
             posts = []
         for p in posts:
-            raw = _feed_post_to_raw(p, kw, posted_after)
+            raw = _feed_post_to_raw(p, query, posted_after)
             if raw is not None:
                 yield raw
 
@@ -387,16 +536,20 @@ class LinkedInScraper(BaseScraper):
                 await polite_delay()
                 await asyncio.sleep(2)
 
-                # ── hiring feed posts (guarded: never fail the whole source) ──
-                if cfg.linkedin_feed_enabled():
-                    for query in _feed_queries(keywords, utc_now().weekday()):
-                        try:
-                            async for raw in self._scrape_feed_posts(page, query, posted_after):
-                                yield raw
-                        except CaptchaDetected:
-                            log.warning("[linkedin] feed CAPTCHA for '%s' — skipping feed pass", query)
-                            break
-                        except Exception as exc:
-                            log.warning("[linkedin] feed scrape failed for '%s': %s", query, exc)
+            # ── hiring feed posts (guarded: never fail the whole source) ──
+            # `_feed_queries` already expands ALL keywords, so this must run ONCE
+            # after the keyword loop — inline it used to re-scan every query per
+            # keyword (7 keywords × 21 Friday queries = 147 page loads, blowing the
+            # browser timeout and silently skipping the feed pass).
+            if cfg.linkedin_feed_enabled():
+                for query in _feed_queries(keywords, utc_now().weekday()):
+                    try:
+                        async for raw in self._scrape_feed_posts(page, query, posted_after):
+                            yield raw
+                    except CaptchaDetected:
+                        log.warning("[linkedin] feed CAPTCHA for '%s' — skipping feed pass", query)
+                        break
+                    except Exception as exc:
+                        log.warning("[linkedin] feed scrape failed for '%s': %s", query, exc)
 
             await page.close()

@@ -53,14 +53,9 @@ def load_all_scrapers() -> None:
 
     log = logging.getLogger(__name__)
     _modules = [
-        "src.scrapers.remote_rocketship",
-        "src.scrapers.working_nomads",
         "src.scrapers.linkedin",
         "src.scrapers.indeed",
         "src.scrapers.glassdoor",
-        "src.scrapers.apac_remote",
-        "src.scrapers.pakistan_remote",
-        "src.scrapers.curated_boards",
     ]
     for mod in _modules:
         try:

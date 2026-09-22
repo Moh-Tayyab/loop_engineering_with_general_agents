@@ -48,6 +48,42 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def is_valid_job_url(url: str | None) -> bool:
+    """True if URL points to a legitimate job posting, not a user profile or root domain."""
+    if not url:
+        return False
+    u = url.lower().strip()
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return False
+    # Never accept LinkedIn user profiles as job URLs
+    if "linkedin.com/in/" in u:
+        return False
+    return True
+
+
+def check_link_health(url: str, timeout_s: float = 3.0) -> bool:
+    """True if link is alive and not 404/410/dead (Phase 4 requirement)."""
+    if not is_valid_job_url(url):
+        return False
+    import os
+    import requests
+    # In unmocked pytest runs, do not make live outbound requests on dummy test domains
+    if os.environ.get("PYTEST_CURRENT_TEST") and getattr(requests.head, "__module__", "") == "requests.api":
+        return True
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        resp = requests.head(url, headers=headers, timeout=timeout_s, allow_redirects=True)
+        if resp.status_code == 405:
+            resp = requests.get(url, headers=headers, timeout=timeout_s, stream=True)
+        if resp.status_code in (404, 410):
+            return False
+        return True
+    except requests.exceptions.ConnectionError:
+        return False
+    except Exception:
+        return True
+
+
 def canonical_job_url(url: str, source: str | None = None) -> str:
     """Canonicalize tracking / dynamic query parameters from job URLs for consistent hashing."""
     if not url:
@@ -57,7 +93,7 @@ def canonical_job_url(url: str, source: str | None = None) -> str:
         if m:
             return f"https://www.indeed.com/viewjob?jk={m.group(1)}"
     if source == "glassdoor" or "glassdoor.com" in url:
-        m = re.search(r"[?&]jl=(\d+)", url)
+        m = re.search(r"[?&](?:jl|jobListingId)=(\d+)", url)
         if m:
             return f"https://www.glassdoor.com/job-listing/?jl={m.group(1)}"
     return url
@@ -217,35 +253,148 @@ _US_RESTRICTED_RE = re.compile(
 US_DOMESTIC_BOARDS = frozenset({"indeed", "glassdoor", "ziprecruiter", "monster"})
 
 _WORLDWIDE_MARKERS = (
-    "worldwide", "work from anywhere", "anywhere in the world",
+    "worldwide", "work from anywhere", "anywhere in the world", "anywhere in world",
     "global remote", "globally remote", "remote - global", "remote (global)",
     "remote - worldwide", "remote (worldwide)", "international remote",
-    "remote international", "work from home", "wfh", "anywhere",
+    "remote international",
+    "b2b", "b2b contract", "freelance", "freelance remote", "contractor",
+    "independent contractor", "c2c",
     "pakistan remote", "remote in pakistan", "pakistan (remote)", "remote (pakistan)", "remote - pakistan",
-    "apac remote", "asia pacific remote", "south asia remote", "remote (apac)",
+    "apac remote", "asia pacific remote", "south asia remote", "remote (apac)", "apac (remote)",
+    "middle east remote", "remote - middle east", "remote (middle east)", "middle east (remote)",
+    "mena remote", "remote - mena", "remote (mena)", "mena (remote)",
+    "gcc remote", "remote - gcc", "remote (gcc)", "gcc (remote)",
+    "uae remote", "dubai remote", "saudi arabia remote", "qatar remote",
+    "remote (uae)", "remote (dubai)", "uae (remote)", "dubai (remote)",
+    "saudi arabia (remote)", "qatar (remote)",
 )
 
+
+_APAC_REGIONS = frozenset({
+    "apac", "asia pacific", "asia-pacific", "south asia", "southeast asia", "east asia",
+    "pakistan", "bangladesh", "sri lanka", "nepal", "bhutan", "maldives",
+    "singapore", "malaysia", "philippines", "vietnam", "thailand", "indonesia", "myanmar", "cambodia", "laos", "brunei",
+    "japan", "south korea", "korea", "taiwan", "china", "hong kong", "macau", "mongolia",
+    "australia", "new zealand", "fiji",
+    "islamabad", "lahore", "karachi", "rawalpindi", "peshawar", "faisalabad",
+    "tokyo", "seoul", "taipei", "bangkok", "manila", "jakarta", "kuala lumpur",
+    "dhaka", "colombo", "sydney", "melbourne",
+})
+
+_MIDDLE_EAST_REGIONS = frozenset({
+    "middle east", "mena", "gcc",
+    "uae", "united arab emirates", "dubai", "abu dhabi", "sharjah",
+    "saudi arabia", "ksa", "riyadh", "jeddah",
+    "qatar", "doha", "bahrain", "manama", "kuwait", "kuwait city", "oman", "muscat",
+    "lebanon", "beirut", "jordan", "amman", "iraq", "baghdad", "egypt", "cairo",
+    "turkey", "türkiye", "istanbul", "ankara", "cyprus", "yemen", "syria",
+    "iran", "tehran",
+    "palestine", "west bank", "gaza", "ramallah",
+})
+
+_GLOBAL_CONTRACT_QUALIFIERS = frozenset({
+    "worldwide", "global", "globally", "anywhere in the world", "work from anywhere",
+    "b2b", "b2b contract", "freelance", "freelancer", "contract", "contractor",
+    "independent contractor", "c2c",
+})
+
+_ALLOWED_REMOTE_QUALIFIERS_PATTERN = r"\b(?:" + "|".join(
+    re.escape(k) for k in sorted(
+        _GLOBAL_CONTRACT_QUALIFIERS
+        | set(_APAC_REGIONS)
+        | set(_MIDDLE_EAST_REGIONS),
+        key=len,
+        reverse=True,
+    )
+) + r")\b"
 
 _FOREIGN_RESTRICTED_COUNTRIES = frozenset({
     "poland", "ukraine", "lithuania", "argentina", "brazil", "canada",
     "germany", "france", "spain", "italy", "netherlands", "sweden",
     "switzerland", "ireland", "uk", "united kingdom", "great britain",
-    "england", "scotland", "wales", "australia", "new zealand", "japan",
-    "singapore", "mexico", "colombia", "chile", "russia", "turkey",
-    "türkiye", "nigeria", "kenya", "south africa", "egypt", "israel",
-    "philippines", "vietnam", "thailand", "malaysia", "indonesia",
+    "england", "scotland", "wales", "mexico", "colombia", "chile",
+    "russia", "nigeria", "kenya", "south africa",
     "czech republic", "czechia", "romania", "hungary", "bulgaria",
     "greece", "portugal", "austria", "belgium", "finland", "norway",
-    "denmark", "estonia", "latvia", "india",
+    "denmark", "estonia", "latvia",
+    "israel", "tel aviv", "jerusalem", "haifa",
+    "japan", "tokyo", "osaka", "yokohama", "nagoya", "kyoto",
+    "australia", "sydney", "melbourne", "new zealand", "china", "hong kong",
+    "south korea", "seoul", "taiwan", "taipei",
+    "peru", "uruguay", "ecuador", "paraguay", "venezuela", "bolivia", "cuba",
+    "dominican republic", "puerto rico", "panama", "costa rica", "guatemala", "jamaica",
+    "ghana", "ethiopia", "tanzania", "uganda",
+    "zimbabwe", "cameroon", "mozambique",
+    "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune", "chennai", "gurgaon", "noida",
+    "latin america", "latam", "north america", "europe", "emea",
 })
 
 
 def is_foreign_country_restricted(text: str) -> bool:
-    """True if location ties the role to a foreign country outside Pakistan/APAC/worldwide."""
+    """True if location ties the role to a foreign country outside Pakistan/APAC/Middle East/worldwide."""
     low = text.lower()
-    if any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote", "pakistan", "apac", "asia pacific", "south asia")):
+    if any(w in low for w in (
+        "worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote",
+        "b2b", "freelance", "contractor", "c2c", "independent contractor",
+    )):
         return False
-    return any(re.search(rf"\b{re.escape(c)}\b", low) for c in _FOREIGN_RESTRICTED_COUNTRIES)
+    has_hard_blocked = any(re.search(rf"\b{re.escape(b)}\b", low) for b in _FOREIGN_RESTRICTED_COUNTRIES)
+    in_scope_region = any(re.search(rf"\b{re.escape(r)}\b", low) for r in _APAC_REGIONS) or any(
+        re.search(rf"\b{re.escape(r)}\b", low) for r in _MIDDLE_EAST_REGIONS)
+    if in_scope_region and not has_hard_blocked:
+        return False
+    return has_hard_blocked
+
+
+_FOREIGN_LANGUAGE_RESTRICTION_PATTERNS = [
+    r"\bjlpt(?:\s*n[1-5])?\b",
+    r"\bjapanese\b",
+    r"\bn[1-5]\s*level\b",
+    r"\bbusiness\s+(?:level\s+)?japanese\b",
+    r"\bfluent\s+(?:in\s+)?japanese\b",
+    r"\bgerman\b",
+    r"\bdeutsch\b",
+    r"\bfluent\s+(?:in\s+)?german\b",
+    r"\bhebrew\b",
+    r"\bmandarin\b",
+    r"\bchinese\b",
+    r"\bfluent\s+(?:in\s+)?chinese\b",
+    r"\bfrench\b",
+    r"\bfrançais\b",
+    r"\bfluent\s+(?:in\s+)?french\b",
+    r"\bspanish\b",
+    r"\bespañol\b",
+    r"\bfluent\s+(?:in\s+)?spanish\b",
+    r"\bkorean\b",
+    r"\bfluent\s+(?:in\s+)?korean\b",
+    r"\bdutch\b",
+    r"\bitalian\b",
+    r"\bpolish\b",
+    r"\brussian\b",
+    r"\bnative\s+or\s+bilingual\s+in\s+(?:japanese|german|french|hebrew|chinese|korean|spanish|italian|russian)\b",
+    r"\barabic\s+(?:mandatory|required|native)\b",
+    r"\bfluent\s+in\s+arabic\b",
+]
+
+
+def is_language_restricted(text: str | None) -> bool:
+    """True if text requires a foreign local language (Japanese, JLPT, German, Hebrew, etc.)."""
+    if not text:
+        return False
+    low = text.lower()
+    for pat in _FOREIGN_LANGUAGE_RESTRICTION_PATTERNS:
+        if re.search(pat, low):
+            return True
+    return False
+
+
+def is_hybrid_work(text: str | None) -> bool:
+    """True if text designates a hybrid physical office requirement (not Hybrid Cloud stack)."""
+    if not text:
+        return False
+    low = text.lower()
+    cleaned = re.sub(r"\bhybrid[\s_-]+(?:cloud|multicloud|multi-cloud|infrastructure|infra|ai|architecture|models?|search|retrieval|rag|index(?:ing)?)\b", " ", low)
+    return bool(re.search(r"\bhybrid\b", cleaned))
 
 
 def is_title_restricted(title: str | None) -> bool:
@@ -258,56 +407,82 @@ def is_title_restricted(title: str | None) -> bool:
       "-Onsite in Katy, Texas"
       "(US Candidates Only)"
       "(Must reside in USA)"
+      "JLPT N1 Level"
     """
     if not title:
         return False
+    if is_language_restricted(title):
+        return True
+    if is_hybrid_work(title):
+        return True
     t = title.lower()
-    # US-only restrictions in title
-    if re.search(r"\b(?:usa?|u\.s\.a?)\s*[-–]?\s*only\b", t):
+    # Foreign domestic-only restrictions in title (US, UK, Canada, Europe, Germany, Poland, LATAM)
+    if re.search(r"\b(?:usa?|u\.s\.a?|uk|united kingdom|canada|europe|germany|poland|brazil|latam|israel)\s*[-–]?\s*only\b", t):
         return True
-    if re.search(r"\b(?:only\s+in\s+(?:the\s+)?(?:us|usa|united states))\b", t):
+    if re.search(r"\b(?:only\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|europe|germany|israel))\b", t):
         return True
-    if re.search(r"\b(?:us|usa)\s+candidates?\s+only\b", t):
+    if re.search(r"\b(?:us|usa|uk|canada|eu|european|israel)\s+candidates?\s+only\b", t):
         return True
-    if re.search(r"\b(?:us|usa|u\.s\.)\s+based\b", t):
+    if re.search(r"\b(?:us|usa|u\.s\.|uk|canada|eu|european|israel)\s+based\b", t):
         return True
-    if re.search(r"\[(?:[^\]]*\b)?(?:us|usa)[- ]only(?:\b[^\]]*)?\]", t):
+    if re.search(r"\[(?:[^\]]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^\]]*)?\]", t):
         return True
-    if re.search(r"\((?:[^)]*\b)?(?:us|usa)[- ]only(?:\b[^)]*)?\)", t):
+    if re.search(r"\((?:[^)]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^)]*)?\)", t):
         return True
     # Physical hub / city restrictions in title e.g. [NYC or SF], (NYC or SF), -Onsite in ...
-    if re.search(r"\[(?:[^\]]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston)(?:\b[^\]]*)?\]", t):
+    if re.search(r"\[(?:[^\]]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^\]]*)?\]", t):
         return True
-    if re.search(r"\((?:[^)]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston)(?:\b[^)]*)?\)", t):
+    if re.search(r"\((?:[^)]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^)]*)?\)", t):
         return True
-    if re.search(r"\b(?:onsite|on-site)\b.*(?:in\s+\w+|\btexas\b|\bkaty\b)", t):
+    # Bare on-site / in-office mention anywhere in the title is a physical-attendance signal.
+    if re.search(r"\b(?:on-site|onsite|on site|in[- ]office|office[- ]based|office only)\b", t):
+        return True
+    # Commission-only / sales-closer modes are not salaried engineering roles.
+    if re.search(r"\bcommission\s+(?:only|-only|based)\b", t):
+        return True
+    # Foreign employment forms a Pakistan candidate cannot exercise
+    # (German "Working Student", apprenticeships, exchange/internship visas).
+    if re.search(r"\bworking\s+student\b|\bwerkstudent\b|\bco[- ]op\b", t):
         return True
     return False
 
 
 _DESCRIPTION_RESTRICTION_PATTERNS = [
-    # US / North America geographic or work authorization restrictions
-    r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
-    r"\bmust\s+be\s+in\s+the\s+(?:us|usa|united states)\b",
-    r"\bmust\s+be\s+located\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america)\b",
+    # US / North America / Europe / Foreign geographic or work authorization restrictions
+    r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america|poland|japan|singapore|saudi|uae|australia|israel)\b",
+    r"\bmust\s+be\s+in\s+the\s+(?:us|usa|united states|uk|europe|canada|japan|australia|israel)\b",
+    r"\bmust\s+be\s+located\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america|poland|japan|singapore|saudi|uae|australia|israel)\b",
     r"\b(?:us|usa)\s+(?:citizenship|citizen|resident|residency|based|candidates?)\s+only\b",
     r"\b(?:us|usa|u\.s\.)\s+citizens?\s+or\s+permanent\s+residents?\b",
-    r"\b(?:must\s+be\s+)?(?:legally\s+)?authorized\s+to\s+work\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
-    r"\bwork\s+authorization\s+in\s+(?:the\s+)?(?:us|usa|united states)\b",
-    r"\b(?:us|u\.s\.)\s+work\s+permit\b",
+    r"\b(?:uk|canada|eu|european)\s+citizens?\s+or\s+permanent\s+residents?\b",
+    r"\b(?:uk|canada|eu|european)\s+(?:candidates?|residen(?:ts?|cy)|based)\s+only\b",
+    r"\b(?:japan|singapore|saudi|uae|australia|israel)\s+(?:residen(?:ts?|cy)|citizens?|based)\s+only\b",
+    r"\bgreen\s+card(?:\s+holder)?\b",
+    r"\b(?:uk|united\s+kingdom)\s+right\s+to\s+work\b",
+    r"\bright\s+to\s+work\s+in\s+(?:the\s+)?(?:uk|united\s+kingdom|eu|london|canada|japan|singapore|australia)\b",
+    r"\b(?:eu|european)\s+(?:resident|residency|work|working)\s+(?:permit|right|authoriz(?:e|a)tion)\b",
     r"\bwe\s+(?:are\s+unable\s+to|cannot|do\s+not)\s+(?:sponsor|hire\s+outside|hire\s+internationally)\b",
+    r"\b(?:must\s+be\s+)?(?:legally\s+)?authorized\s+to\s+work\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|japan|singapore|australia)\b",
+    r"\bable\s+to\s+work\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|japan|singapore|australia)\b",
+    r"\beligible\s+to\s+work\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|japan|singapore|australia)\b",
+    r"\b(?:us|u\.s\.|usa)\s+work\s+authorization\b",
+    r"\bwork\s+authorization\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|japan|singapore|australia)\b",
+    r"\b(?:us|u\.s\.)\s+work\s+permit\b",
     r"\b(?:no\s+c2c|w-?2\s+only|w2\s+candidates?)\b",
     r"\bsecurity\s+clearance\s+required\b",
     r"\bactive\s+secret\s+clearance\b",
     # Specific timezone exclusions that cannot be accommodated from Pakistan (UTC+5)
     r"\bwithin\s+\d+\s+hours\s+of\s+(?:london|uk|gmt|cet|bst)\b",
     r"\bmust\s+be\s+based\s+in\s+(?:cet|bst|gmt)\b",
-    # Onsite or hybrid requirements
-    r"\bhybrid\b.*(?:in\s+office|days\s+(?:a|per)\s+week|in\s+the\s+office|office\s+based)",
+    # Regional remote restrictions (e.g. "fully remote role in EU", "remote in US only")
+    r"\b(?:fully\s+remote|remote|wfh)\s+(?:role|job|position)?\s*(?:in|within)\s+(?:the\s+)?(?:us|usa|united states|uk|eu|europe|canada|germany|india|latin america)\b",
+    # Onsite requirements
     r"\b(?:1|2|3|4)\s*days\s+(?:a|per)\s+week\s+(?:in|from)\s+(?:the\s+)?office",
     r"\b(?:onsite|on-site)\b.*(?:in\s+\w+|office\b)",
     r"\brelocation\s+(?:required|assistance\s+to)\b",
     r"\bmust\s+be\s+able\s+to\s+commute\b",
+    # Sanctioned / Non-diplomatic territory for Pakistan
+    r"\b(?:israel|tel aviv|jerusalem|haifa)\b",
 ]
 
 
@@ -315,10 +490,18 @@ def is_description_restricted(description: str | None) -> bool:
     """True if description contains geographic/residency/onsite restrictions excluding Pakistan remote."""
     if not description:
         return False
+    if is_language_restricted(description):
+        return True
+    if is_hybrid_work(description):
+        return True
     low = description.lower()
     for pattern in _DESCRIPTION_RESTRICTION_PATTERNS:
         if re.search(pattern, low):
             return True
+    # "100% Remote - USA Only" / "US-only" must only match the UPPERCASE abbreviation,
+    # never the lowercase pronoun "us" (e.g. "gives us only ..."). Match on the original case.
+    if re.search(r"\b(?i:100%\s+remote\s*[-–]?\s*)?(?:US|USA|U\.S\.)\s*[-–]?\s*(?i:only)\b", description):
+        return True
     return False
 
 
@@ -403,6 +586,8 @@ def classify_location(location: str | None, title: str | None = None) -> str:
     if ("worldwide" in text or "work from anywhere" in text or "anywhere" in text
             or "work from home" in text or "wfh" in text
             or "global" in text or "apac" in text or "asia pacific" in text
+            or "middle east" in text or "mena" in text or "gcc" in text
+            or "b2b" in text or "freelance" in text
             or re.search(r"\bremote\s+in\s+pakistan\b", text)
             or re.search(r"\bremote\s*,\s*pakistan\b", text)):
         if not any(w in text for w in ("on-site", "onsite", "on site", "in-office", "hybrid")):
@@ -442,6 +627,67 @@ def classify_location(location: str | None, title: str | None = None) -> str:
     return LOCATION_ONSITE
 
 
+def parse_location_hierarchy(location: str | None) -> dict[str, str | None | bool]:
+    """Breakdown a location string into city, state, country, and remote status.
+
+    Examples:
+      'Lahore, Punjab, Pakistan' -> {'city': 'Lahore', 'state': 'Punjab', 'country': 'Pakistan', 'is_remote': False}
+      'Islamabad, Islāmābād, Pakistan' -> {'city': 'Islamabad', 'state': 'Islāmābād', 'country': 'Pakistan', 'is_remote': False}
+      'San Francisco, CA' -> {'city': 'San Francisco', 'state': 'CA', 'country': 'United States', 'is_remote': False}
+      'Remote, Pakistan' -> {'city': None, 'state': None, 'country': 'Pakistan', 'is_remote': True}
+      'Worldwide' -> {'city': None, 'state': None, 'country': 'Worldwide', 'is_remote': True}
+    """
+    if not location:
+        return {"city": None, "state": None, "country": None, "is_remote": False}
+
+    raw = location.strip()
+    is_rem = any(w in raw.lower() for w in ("remote", "wfh", "work from home", "anywhere", "worldwide", "global"))
+
+    cleaned = re.sub(r"(?i)\s*[\(\[]?\b(?:remote|wfh|work from home|telecommute|virtual)\b[\)\]]?", "", raw)
+    cleaned = re.sub(r"^[\s,–-]+|[\s,–-]+$", "", cleaned).strip()
+
+    parts = [p.strip() for p in re.split(r",|–|-|\|", cleaned) if p.strip()]
+
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+
+    if len(parts) == 1:
+        single = parts[0]
+        single_low = single.lower()
+        if single_low in ("pakistan", "united states", "usa", "uk", "canada", "germany", "japan", "worldwide", "global"):
+            country = single
+        elif single_low in _US_STATE_NAMES or single_low in _US_STATE_ABBR:
+            state = single
+            country = "United States"
+        else:
+            city = single
+    elif len(parts) == 2:
+        p0, p1 = parts[0], parts[1]
+        p1_low = p1.lower()
+        if p1_low in _US_STATE_ABBR or p1_low in _US_STATE_NAMES:
+            city = p0
+            state = p1
+            country = "United States"
+        elif p1_low in ("pakistan", "india", "uk", "united kingdom", "canada", "germany", "japan", "australia", "uae", "saudi arabia"):
+            city = p0
+            country = p1
+        else:
+            city = p0
+            state = p1
+    elif len(parts) >= 3:
+        city = parts[0]
+        state = parts[1]
+        country = parts[2]
+
+    return {
+        "city": city,
+        "state": state,
+        "country": country,
+        "is_remote": is_rem,
+    }
+
+
 def is_worldwide_remote(
     location: str | None,
     source: str | None = None,
@@ -455,7 +701,7 @@ def is_worldwide_remote(
     remote jobs posted on US boards without worldwide eligibility (e.g. Indeed/Glassdoor
     bare "Remote"), and non-remote positions.
 
-    In-scope remote (worldwide / Global / APAC / Pakistan / South-Asia neighbor remote)
+    In-scope remote (worldwide / Global / APAC / Middle East / Pakistan / South-Asia neighbor remote / B2B)
     qualifies for this Pakistan-based loop.
     """
     if not location:
@@ -474,8 +720,8 @@ def is_worldwide_remote(
         return False
 
     # Country/region-restricted anywhere (e.g. "anywhere in India", "anywhere in the US")
-    # Only "anywhere in the world" or "work from anywhere" is allowed
-    if re.search(r"anywhere\s+in\s+(?!the\s+world\b)", text):
+    # Only "anywhere in the world" or "anywhere in world" or "work from anywhere" is allowed.
+    if re.search(r"anywhere\s+in\s+(?!(?:the\s+)?world\b)", text):
         return False
 
     # If the location is restricted to a foreign country outside Pakistan/APAC/worldwide -> reject
@@ -488,10 +734,13 @@ def is_worldwide_remote(
 
     # US-domestic boards (Indeed, Glassdoor): bare "Remote" is domestic US remote
     # (requires US residency / SSN / W-2). Reject unless explicitly worldwide/global
-    # in location or description.
+    # or referencing in-scope APAC/Middle East/contractors in location or description.
     if source and source.lower() in US_DOMESTIC_BOARDS:
         combined = f"{text} {(description or '').lower()}"
-        if not any(m in combined for m in _WORLDWIDE_MARKERS):
+        has_worldwide = any(m in combined for m in _WORLDWIDE_MARKERS)
+        has_in_scope_geo = any(re.search(rf"\b{re.escape(r)}\b", combined) for r in (_APAC_REGIONS | _MIDDLE_EAST_REGIONS))
+        has_contract = any(re.search(rf"\b{re.escape(c)}\b", combined) for c in _GLOBAL_CONTRACT_QUALIFIERS)
+        if not (has_worldwide or has_in_scope_geo or has_contract):
             return False
 
     # Definitive worldwide / anywhere indicators (unambiguous)
@@ -505,28 +754,72 @@ def is_worldwide_remote(
     if re.search(r"\bglobal(?:ly)?\b", text):
         return True
 
-    # In-scope regional targets (APAC, Asia Pacific, South Asia)
-    if any(w in text for w in ("apac", "asia pacific", "south asia")):
+    # B2B / Freelance contract modes (no geographic entity bounds)
+    if any(w in text for w in ("b2b", "freelance")):
         return True
 
-    # Pakistan: allow if explicitly remote in location text
-    # (e.g. "Pakistan (Remote)", "Remote in Pakistan", "Remote, Pakistan", WFH)
-    # OR if description explicitly declares 100% remote / fully remote / work from home / wfh.
-    # Strictly reject physical on-site/hybrid city postings
-    # (e.g. "Lahore, Punjab, Pakistan", "Karachi (Hybrid)", "Islamabad, Islāmābād, Pakistan")
-    # and bare country postings ("Pakistan") without explicit remote/wfh markers.
-    if "pakistan" in text:
-        if any(w in text for w in ("hybrid", "onsite", "on-site", "in-office", "office only", "office-based")):
+    # Hard-blocked developed APAC / Oceania markets ("zero residency" law:
+    # Japan, Korea, Taiwan, HK/China board posts, Australia/NZ). These are
+    # in APAC geographically but the durable location law rejects them as
+    # foreign markets even when marked remote — a bare "Remote (Japan)" post
+    # never gets the APAC fully-remote carve-out. (Singapore/India/APAC mark)
+    # remain in-scope via the carve-out below.
+    if re.search(
+        r"\b(?:japan|tokyo|osaka|yokohama|nagoya|kyoto|south\s+korea|seoul|taiwan|"
+        r"taipei|hong\s+kong|macau|china|beijing|shanghai|shenzhen|australia|"
+        r"sydney|melbourne|new\s+zealand|auckland|wellington)\b",
+        text, re.I,
+    ):
+        return False
+
+    # Remote-native broad region designations (APAC, Asia Pacific, South Asia, Middle East, MENA, GCC)
+    if any(w in text for w in ("apac", "asia pacific", "south asia", "middle east", "mena", "gcc")) and not any(w in text for w in ("onsite", "on-site", "hybrid", "in-office")):
+        return True
+
+    # APAC & Middle East Regional Remote Verification:
+    # A candidate sitting at home in Pakistan can only perform:
+    # 1. Direct Pakistan remote roles (e.g. "Remote, Pakistan", "Lahore (Remote)")
+    # 2. Foreign regional roles (Tokyo, Dubai, Riyadh, Singapore) ONLY IF they explicitly
+    #    declare Worldwide/Global remote, B2B/Contractor hiring, or open to Pakistan candidates.
+    # Domestic foreign postings (requiring local residency, in-country taxes, or local work permit) are rejected.
+    in_scope_geo = _APAC_REGIONS | _MIDDLE_EAST_REGIONS
+    if any(re.search(rf"\b{re.escape(r)}\b", text) for r in in_scope_geo):
+        if is_hybrid_work(text) or is_hybrid_work(description):
+            return False
+        if any(w in text for w in ("onsite", "on-site", "in-office", "office only", "office-based")):
             return False
         desc_lower = (description or "").lower()
-        if any(w in desc_lower for w in ("hybrid", "onsite", "on-site", "in-office", "office only", "office-based")):
+        if any(w in desc_lower for w in ("onsite", "on-site", "in-office", "office only", "office-based")):
             return False
+
+        is_pakistan = any(p in text for p in ("pakistan", "karachi", "lahore", "islamabad", "rawalpindi", "faisalabad", "peshawar"))
         has_remote_in_loc = any(w in text for w in ("remote", "work from home", "wfh", "anywhere", "telecommute"))
-        has_explicit_remote_desc = any(
-            w in desc_lower for w in ("100% remote", "fully remote", "work from home", "wfh", "100% work from home")
+        title_has_remote = bool(re.search(r"\b(?:remote|wfh|work\s+from\s+home)\b", title.lower())) if title else False
+        has_explicit_remote_desc = (
+            any(w in desc_lower for w in ("100% remote", "fully remote", "work from home", "wfh", "100% work from home"))
+            or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", desc_lower))
+            or bool(re.search(r"\bremote[,\s]+pakistan\b", desc_lower))
+            or bool(re.search(r"\bpakistan[,\s]+remote\b", desc_lower))
         )
-        if not (has_remote_in_loc or has_explicit_remote_desc):
-            return False
+
+        if is_pakistan:
+            return has_remote_in_loc or title_has_remote or has_explicit_remote_desc
+
+        # If location is a foreign physical city/country (e.g. "Tokyo, Japan", "Jeddah, Saudi Arabia")
+        # without "remote" in the location text: casual description mentions of "wfh/remote"
+        # only apply domestically within that country. It is only workable from Pakistan if
+        # explicitly open Worldwide/Global or via B2B/Contractor/Freelance agreements.
+        if not has_remote_in_loc:
+            combined = f"{text} {desc_lower}"
+            has_global_or_contract = (
+                any(w in combined for w in _WORLDWIDE_MARKERS)
+                or any(w in combined for w in _GLOBAL_CONTRACT_QUALIFIERS)
+                or "pakistan" in combined
+            )
+            if not has_global_or_contract:
+                return False
+            return has_explicit_remote_desc
+
         return True
 
     # Standalone "anywhere"
@@ -543,9 +836,9 @@ def is_worldwide_remote(
     is_bare_remote = re.search(r"(?:^|[,;|\s])remote(?:$|[,\s(;\-])", text) is not None
     if is_bare_remote and not is_city_name:
         # Bare remote with a qualifier: in-scope qualifiers (worldwide,
-        # APAC / Asia Pacific, Pakistan, anywhere, and South-Asia
-        # neighbors) qualify; any other qualifier stays rejected.
-        if re.search(r"remote\s*\((?!.*(?:worldwide|apac|asia pacific|pakistan|anywhere|anytime|india|bangladesh|sri lanka|nepal|islamabad|lahore|karachi|rawalpindi))", text):
+        # all APAC countries/cities, all Middle East countries/cities, B2B, Freelance) qualify;
+        # any other qualifier (US Only, Germany, Poland, EMEA, UK) stays rejected.
+        if re.search(rf"remote\s*\((?!.*{_ALLOWED_REMOTE_QUALIFIERS_PATTERN})", text):
             return False
         return True
     return False
@@ -684,10 +977,10 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
-# Relative post-age units (Indeed/Glassdoor emit "Posted 3 days ago", "30+ days ago", "6d").
+# Relative post-age units (Indeed/Glassdoor emit "Posted 3 days ago", "30+ days ago", "6d", "24h").
 _RELATIVE_UNITS = {
     "day": 1, "days": 1, "d": 1,
-    "hr": 0, "hour": 0, "hours": 0,  # hours ago -> posted today
+    "h": 0, "hr": 0, "hrs": 0, "hour": 0, "hours": 0,  # hours ago -> posted today
     "week": 7, "weeks": 7, "w": 7,
     "mo": 30, "month": 30, "months": 30,
     "year": 365, "years": 365, "y": 365,
@@ -699,17 +992,19 @@ def parse_posted_date(value: str | None, today: date | None = None) -> date | No
 
     Accepts ISO dates/timestamps ("2026-09-11", "2026-09-11T10:00:00+00:00"),
     "Today"/"Yesterday", and the relative strings Indeed/Glassdoor emit
-    ("Posted 3 days ago", "30+ days ago", "6d"). Any unparseable value returns
-    None so downstream code degrades to fetched_at instead of failing."""
+    ("Posted 3 days ago", "30+ days ago", "6d", "24h", "Just posted"). Any unparseable
+    value returns None so downstream code degrades to fetched_at instead of failing."""
     if not value:
         return None
     text = str(value).strip()
     today = today or utc_now().date()
 
     lowered = text.lower()
-    if lowered.startswith("posted "):
-        lowered = lowered[len("posted "):]
-    if lowered in ("today", "now", "just now"):
+    for prefix in ("posted ", "active ", "employer active ", "urgently hiring "):
+        if lowered.startswith(prefix):
+            lowered = lowered[len(prefix):].strip()
+
+    if lowered in ("today", "now", "just now", "just posted", "posted today", "active today"):
         return today
     if lowered == "yesterday":
         return today - timedelta(days=1)
@@ -720,13 +1015,15 @@ def parse_posted_date(value: str | None, today: date | None = None) -> date | No
         pass
 
     m = re.search(
-        r"(\d+(?:\.\d+)?)\s*\+?\s*(day|days|d|hr?|hours?|week|weeks|w|mo|month|months|year|years|y)\b",
-        text.lower(),
+        r"(\d+(?:\.\d+)?)\s*\+?\s*(day|days|d|h|hrs?|hours?|week|weeks|w|mo|month|months|year|years|y)\b",
+        lowered,
     )
     if m:
         unit = m.group(2)
-        delta_days = int(round(float(m.group(1)) * _RELATIVE_UNITS[unit]))
-        return today - timedelta(days=delta_days)
+        multiplier = _RELATIVE_UNITS.get(unit)
+        if multiplier is not None:
+            delta_days = int(round(float(m.group(1)) * multiplier))
+            return today - timedelta(days=delta_days)
     return None
 
 

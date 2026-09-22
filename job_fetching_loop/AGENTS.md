@@ -47,6 +47,11 @@ level up. A task inside this loop touches only this loop's spine.
 10. **Fail-closed on scrapers:** network/CAPTCHA failures → `record_failure` → circuit
     opens after threshold; never retry past `CIRCUIT_BREAKER_THRESHOLD`. seen-hash store
     TTL-evicts after `DEDUP_WINDOW_DAYS`.
+11. **Strict Target Location Integrity (Permanent Law):** ONLY fetch:
+    (a) **APAC & Middle East** fully remote roles (with zero domestic in-office/hybrid or local language requirements), OR
+    (b) **Global / Worldwide** roles with NO location restrictions (`Worldwide`, `Work from anywhere`, `Global remote`), OR
+    (c) **Worldwide Contractor / B2B / Freelance / C2C** roles.
+    Zero tolerance for domestic-only restrictions (US, UK, EU, Canada, Latin America, foreign in-country residency) or On-site / Hybrid mandates. Israel and non-diplomatic territories are strictly blocked. Foreign physical city postings (Tokyo, Riyadh, etc.) require explicit global/contractor qualifiers.
 
 ## 3. Budget & Stopping Conditions
 
@@ -164,3 +169,4 @@ Durable lessons from past beats (added via the §10 habit; keep each to one line
 - **On-site/Hybrid guard:** `is_remotely_workable` strictly rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical cities (Islamabad, Lahore, etc.) and bare `Pakistan` unless explicit remote/wfh is in location (or explicit 100% remote/WFH in description); never let casual description mentions override physical location. Drop LinkedIn redirects (`expired_jd_redirect`) as expired.
 - **Domestic-Only & Title Restriction Guard:** `is_title_restricted` catches `(100% Remote - USA Only)`, `[NYC or SF]`, `-Onsite`; `_is_us_restricted` strictly detects USA, state codes, and domestic residency requirements; `is_foreign_country_restricted` drops non-APAC foreign locations (Poland, Ukraine, UK, Germany, Brazil, etc.); `PythonOrgScraper` extracts real location line instead of hardcoding Worldwide.
 - **Description & Scraper-level Remote Integrity:** `WellfoundScraper` assigns real office locations (`locationNames`) if `remote == False` (stops Santa Clara/NYC on-site leaking); `ArbeitnowScraper` preserves real German/EU city locations instead of faking `Worldwide`; `is_description_restricted` checks for US work auth, clearance, hybrid mandates, and tight timezone exclusions across ALL sources.
+- **Strict Location & Language Law (Rule 11):** ONLY APAC & Middle East remote, Global roles with NO location bounds, or Worldwide B2B/Freelance/Contractor pass. Zero hybrid (except "Hybrid Cloud" infra stack), zero domestic residency (US/UK/EU/Japan/Saudi), zero non-English local language requirements (JLPT, German, Hebrew, etc.), and Israel strictly blocked. Foreign physical cities require explicit global/contractor qualifiers.

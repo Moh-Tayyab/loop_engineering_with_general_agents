@@ -161,3 +161,12 @@ def test_next_fetch_start_explicit_run_hour(monkeypatch):
     assert next_fetch_start(before) == datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc)
     # Or passed explicitly
     assert next_fetch_start(before, run_hour=7) == datetime(2026, 9, 16, 7, 0, tzinfo=timezone.utc)
+
+
+def test_linkedin_source_timeout_friday_gets_feed_headroom(monkeypatch):
+    monkeypatch.setenv("SCRAPE_TZ", "UTC")
+    friday = datetime(2026, 9, 18, 10, 0, tzinfo=timezone.utc)
+    tuesday = datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc)
+    assert cfg.source_timeout_s("linkedin", now=friday) >= 480.0
+    assert cfg.source_timeout_s("linkedin", now=tuesday) == 150.0
+    assert cfg.linkedin_browser_timeout_s() >= 480.0

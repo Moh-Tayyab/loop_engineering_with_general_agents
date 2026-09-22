@@ -19,6 +19,7 @@ Human-like behavior (to stay under Cloudflare's radar):
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import random
 import signal
@@ -95,14 +96,53 @@ class SourceUnavailable(Exception):
 # ── Browser launcher ─────────────────────────────────────────────────────────
 
 def _fingerprint() -> dict:
+    import platform
+    if platform.system() == "Linux":
+        ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+    else:
+        ua = random.choice(USER_AGENTS)
     return {
-        "user_agent": random.choice(USER_AGENTS),
+        "user_agent": ua,
         "viewport": random.choice(VIEWPORTS),
     }
 
 
 def _profile_dir(source: str) -> str:
     return str(cfg.RUNTIME_DIR / f"{source}-profile")
+
+
+STEALTH_INIT_SCRIPT = """
+(() => {
+    try {
+        const proto = Object.getPrototypeOf(navigator);
+        delete proto.webdriver;
+    } catch (e) {}
+    try {
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+            configurable: true,
+        });
+    } catch (e) {}
+
+    if (!window.chrome) {
+        window.chrome = {
+            app: { isInstalled: false },
+            runtime: {},
+            loadTimes: function() {},
+            csi: function() {},
+        };
+    }
+
+    try {
+        const origPermissions = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters && parameters.name === 'notifications'
+                ? Promise.resolve({ state: Notification.permission })
+                : origPermissions(parameters)
+        );
+    } catch (e) {}
+})();
+"""
 
 
 @asynccontextmanager
@@ -132,16 +172,16 @@ async def launch_browser(
         if persistent:
             user_data_dir = _profile_dir(source)
             cfg.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            use_channel = None if headless else channel
             try:
                 browser = await pw.chromium.launch_persistent_context(
                     user_data_dir,
                     headless=headless,
                     args=launch_args,
-                    channel=None if headless else channel,
-                    user_agent=fp["user_agent"],
+                    channel=use_channel,
+                    ignore_default_args=["--enable-automation"],
                     viewport=fp["viewport"],
                     locale="en-US",
-                    timezone_id="UTC",
                 )
             except Exception as e:
                 log.info("[%s] persistent launch fallback: %s", source, e)
@@ -149,6 +189,7 @@ async def launch_browser(
                     user_data_dir,
                     headless=headless,
                     args=launch_args,
+                    ignore_default_args=["--enable-automation"],
                     user_agent=fp["user_agent"],
                     viewport=fp["viewport"],
                     locale="en-US",
@@ -174,6 +215,7 @@ async def launch_browser(
                 timezone_id="UTC",
             )
             try:
+                await context.add_init_script(STEALTH_INIT_SCRIPT)
                 yield context
             finally:
                 try:
@@ -194,8 +236,12 @@ async def launch_browser(
 _CAPTCHA_CHALLENGE_PATTERNS = [
     # Cloudflare managed challenge (blocking) — form/verification UI present
     "challenge-form",
-    "cf-chl-",
     "id=\"challenge-running\"",
+    # Indeed / Cloudflare bot detection & verification
+    "additional verification required",
+    "troubleshooting cloudflare errors",
+    "bot-detection-anonymous",
+    "just a moment...",
     # hCaptcha / reCAPTCHA widgets actively rendered
     "h-captcha",
     "g-recaptcha",
@@ -210,6 +256,44 @@ _CAPTCHA_CHALLENGE_PATTERNS = [
 async def has_captcha(page) -> str | None:
     """Return the matching challenge pattern, or None if the page is clean."""
     try:
+        # If job cards are present, the page is definitely clean and displaying search results!
+        try:
+            if hasattr(page, "query_selector") and callable(page.query_selector):
+                cards = await page.query_selector("div.cardOutline, div.job_seen_beacon, td.resultContent, li[data-test='jobListing'], article[data-test='job-listing-card'], li.JobsList_jobListItem__wjTHv")
+                if cards and type(cards).__name__ not in ("AsyncMock", "MagicMock", "Mock", "NonCallableMagicMock"):
+                    return None
+        except Exception:
+            pass
+
+        raw_url = getattr(page, "url", None)
+        if isinstance(raw_url, str):
+            url_low = raw_url.lower()
+            if "bot-detection" in url_low:
+                return "bot-detection-url"
+
+        if hasattr(page, "title") and callable(page.title):
+            try:
+                title = await page.title()
+                if isinstance(title, str) and "just a moment..." in title.lower():
+                    # Check if Turnstile has already been solved on this page
+                    try:
+                        token = await page.evaluate("() => document.querySelector('[name=cf-turnstile-response]')?.value")
+                        if token and len(token) > 20:
+                            return None
+                    except Exception:
+                        pass
+                    return "cf-title-challenge"
+            except Exception:
+                pass
+
+        try:
+            token = await page.evaluate("() => document.querySelector('[name=cf-turnstile-response]')?.value")
+            if token and len(token) > 20:
+                # Turnstile is completed
+                return None
+        except Exception:
+            pass
+
         return await page.evaluate(
             """() => {
                 const patterns = %s;
@@ -245,7 +329,8 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
     """Human-in-the-loop CAPTCHA solve.
 
     The browser stays OPEN and HEADED. Prints a prompt so the human solves the
-    challenge in the visible window; returns True once the challenge marker is
+    challenge in the visible window; also attempts human-like mouse movement and click
+    on Cloudflare Turnstile if detected; returns True once the challenge marker is
     gone, False if the timeout expires first.
 
     The solved session (cookies) persists in the source's profile dir, so this
@@ -255,12 +340,50 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
     waited = 0.0
     log.warning("CAPTCHA detected on %s — solve it in the open browser window (%s)", source, url)
     log.warning("  waiting up to %ds for manual solve...", int(timeout))
+
+    last_turnstile_click = 0.0
+
     while time.monotonic() < deadline:
-        await asyncio.sleep(3)
-        waited += 3
+        await asyncio.sleep(2.0)
+        waited += 2.0
+
+        # Attempt human-like Turnstile click if frame is present and cooldown elapsed
+        if time.monotonic() - last_turnstile_click > 10.0:
+            try:
+                frames = getattr(page, "frames", None)
+                if isinstance(frames, (list, tuple)):
+                    for f in frames:
+                        f_url = getattr(f, "url", None)
+                        if isinstance(f_url, str) and "challenges.cloudflare.com" in f_url:
+                            el = await f.frame_element()
+                            box = await el.bounding_box()
+                            if box:
+                                target_x = box["x"] + random.uniform(27.0, 33.0)
+                                target_y = box["y"] + (box["height"] / 2.0) + random.uniform(-2.5, 2.5)
+                                log.info("[%s] Human mouse moving to Cloudflare Turnstile (%d, %d)...",
+                                         source, int(target_x), int(target_y))
+                                await human_mouse_move(page, target_x, target_y, steps=random.randint(22, 35))
+                                await asyncio.sleep(random.uniform(0.2, 0.45))
+                                if hasattr(page, "mouse") and hasattr(page.mouse, "click"):
+                                    await page.mouse.click(target_x, target_y)
+                                log.info("[%s] Clicked Turnstile checkbox with human motion", source)
+                                last_turnstile_click = time.monotonic()
+                                try:
+                                    await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(3.0)
+                                break
+            except Exception as e:
+                log.debug("[%s] Turnstile click attempt error: %s", source, e)
+
         if not await has_captcha(page):
             log.info("CAPTCHA solved on %s after %ds — continuing with live session", source, int(waited))
-            await asyncio.sleep(1.5)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+            except Exception:
+                pass
+            await asyncio.sleep(2.0)
             return True
         if int(waited) % 15 == 0:
             log.info("  still waiting (%ds)...", int(waited))
@@ -270,13 +393,97 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
 
 # ── Human-like interaction helpers ───────────────────────────────────────────
 
+async def human_mouse_move(page, target_x: float, target_y: float, steps: int = 25) -> None:
+    """Move mouse to target coordinates with natural human-like path curvature, speed variance, and jitter."""
+    try:
+        cur_pos = getattr(page, "_mouse_pos", (random.randint(100, 300), random.randint(100, 300)))
+        x0, y0 = cur_pos
+        dx = target_x - x0
+        dy = target_y - y0
+
+        ctrl_x1 = x0 + dx * random.uniform(0.2, 0.4) + random.uniform(-25, 25)
+        ctrl_y1 = y0 + dy * random.uniform(0.1, 0.3) + random.uniform(-25, 25)
+        ctrl_x2 = x0 + dx * random.uniform(0.6, 0.8) + random.uniform(-15, 15)
+        ctrl_y2 = y0 + dy * random.uniform(0.7, 0.9) + random.uniform(-15, 15)
+
+        num_steps = max(10, steps + random.randint(-4, 8))
+        for i in range(1, num_steps + 1):
+            t = i / num_steps
+            bx = ((1 - t) ** 3) * x0 + 3 * ((1 - t) ** 2) * t * ctrl_x1 + 3 * (1 - t) * (t ** 2) * ctrl_x2 + (t ** 3) * target_x
+            by = ((1 - t) ** 3) * y0 + 3 * ((1 - t) ** 2) * t * ctrl_y1 + 3 * (1 - t) * (t ** 2) * ctrl_y2 + (t ** 3) * target_y
+            jitter_x = random.uniform(-0.8, 0.8) if i < num_steps else 0
+            jitter_y = random.uniform(-0.8, 0.8) if i < num_steps else 0
+            await page.mouse.move(bx + jitter_x, by + jitter_y)
+            speed_factor = math.sin(t * math.pi)
+            step_delay = max(0.004, random.uniform(0.008, 0.02) * (1.2 - 0.4 * speed_factor))
+            await asyncio.sleep(step_delay)
+
+        page._mouse_pos = (target_x, target_y)
+    except Exception:
+        try:
+            await page.mouse.move(target_x, target_y)
+            page._mouse_pos = (target_x, target_y)
+        except Exception:
+            pass
+
+
+async def human_hover(page, element_or_selector) -> None:
+    """Hover over an element like a real user before clicking or reading."""
+    try:
+        box = None
+        if isinstance(element_or_selector, str):
+            el = await page.query_selector(element_or_selector)
+            if el:
+                box = await el.bounding_box()
+        elif hasattr(element_or_selector, "bounding_box"):
+            box = await element_or_selector.bounding_box()
+
+        if box:
+            target_x = box["x"] + box["width"] * random.uniform(0.25, 0.75)
+            target_y = box["y"] + box["height"] * random.uniform(0.25, 0.75)
+            await human_mouse_move(page, target_x, target_y, steps=random.randint(18, 30))
+            await asyncio.sleep(random.uniform(0.2, 0.5))
+    except Exception:
+        pass
+
+
+async def human_click(page, element_or_selector) -> None:
+    """Human-like hover, pause, and click."""
+    try:
+        await human_hover(page, element_or_selector)
+        await asyncio.sleep(random.uniform(0.08, 0.22))
+        if hasattr(element_or_selector, "click"):
+            await element_or_selector.click(timeout=2500)
+        elif isinstance(element_or_selector, str):
+            await page.click(element_or_selector, timeout=2500)
+        await asyncio.sleep(random.uniform(0.3, 0.8))
+    except Exception:
+        try:
+            if hasattr(element_or_selector, "click"):
+                await element_or_selector.click(timeout=1500)
+            elif isinstance(element_or_selector, str):
+                await page.click(element_or_selector, timeout=1500)
+        except Exception:
+            pass
+
+
 async def human_scroll(page, max_scrolls: int = 3) -> None:
-    """Natural, variable-speed page scrolling a person would do."""
+    """Natural, micro-step variable scrolling with eye-scanning mouse movements and pauses."""
     try:
         for _ in range(random.randint(1, max_scrolls)):
-            await page.mouse.move(random.randint(200, 1400), random.randint(150, 600))
-            await page.mouse.wheel(0, random.randint(150, 500))
-            await asyncio.sleep(random.uniform(0.4, 1.2))
+            vp = page.viewport_size or {"width": 1280, "height": 800}
+            scan_x = random.uniform(vp["width"] * 0.25, vp["width"] * 0.7)
+            scan_y = random.uniform(vp["height"] * 0.25, vp["height"] * 0.75)
+            await human_mouse_move(page, scan_x, scan_y, steps=random.randint(15, 25))
+
+            total_delta = random.randint(150, 420)
+            bursts = random.randint(4, 7)
+            delta_per_burst = total_delta / bursts
+            for _ in range(bursts):
+                await page.mouse.wheel(0, delta_per_burst + random.uniform(-8, 8))
+                await asyncio.sleep(random.uniform(0.04, 0.08))
+
+            await asyncio.sleep(random.uniform(0.5, 1.4))
     except Exception:
         pass
 
@@ -286,15 +493,27 @@ async def human_delay(lo: float = 1.5, hi: float = 4.0) -> None:
     await asyncio.sleep(random.uniform(lo, hi))
 
 
+async def human_read_pause(min_s: float = 1.5, max_s: float = 3.5) -> None:
+    """Simulate human reading time over job description text."""
+    await asyncio.sleep(random.uniform(min_s, max_s))
+
+
 async def warm_up(page, home_url: str, source: str) -> None:
     """Visit the homepage first and linger like a real user — going straight
     to a search URL is a common automation fingerprint."""
     try:
         await page.goto(home_url, timeout=30_000, wait_until="domcontentloaded")
+        if await has_captcha(page):
+            timeout = cfg.captcha_solve_timeout()
+            if timeout > 0:
+                if not await await_captcha_solve(page, source, page.url, timeout):
+                    raise CaptchaTimeout(source, page.url, timeout)
+            else:
+                raise CaptchaDetected(source, page.url)
         await check_captcha(page, source)
         await human_scroll(page)
         await human_delay()
-    except CaptchaDetected:
+    except (CaptchaDetected, CaptchaTimeout):
         raise
     except Exception:
         pass
