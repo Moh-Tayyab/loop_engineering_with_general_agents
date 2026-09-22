@@ -18,21 +18,16 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 32 — morning triage: root+video 1 red on `main` (ffprobe-seam test), fix verified in PR #10
+- **Date:** 2026-09-22
+- **Trigger:** weekday 9am heartbeat (morning triage)
+- **Status:** Triage (no code): reproduced 1 red on `main` — `test_clip_is_real_video_rejects_empty_and_audio_only` fails on any host without ffprobe (env-dependent; CI installs ffmpeg so green). CLEAR FIX already shipped as open PR #10 (verified 5/5 clip tests on branch) but blocked: its test-gate run is `action_required` — a human must approve the workflow run + merge. Stale issues #1/#3/#4/#6 all already have fixes in open PRs #5/#9 (human merge gate, §10 item 3). Beat 31 pending inside PR #10. `PASS`
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 32 | 2026-09-22 | weekday 9am heartbeat | **Morning triage (no code):** reproduced root+video 1 red on `main` — `_clip_is_real_video` ffprobe-seam (`test_clip_is_real_video_rejects_empty_and_audio_only` fails w/o ffprobe; env-dependent). Fix verified in open PR #10 (5/5 clip tests on branch); its test-gate run `action_required` — human approval + merge needed | PASS — triage only; no code |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -74,7 +69,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    Use `docs/PRODUCTION_RUNBOOK.md`.
 2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix), **#9 (issue #6 fix, supersedes #7/#8), #10 (hermetic clip tests)** — merge or close. All OPEN with fixes complete; the two `action_required` test-gate runs (#10/#11) need a human to Approve the workflow run in the Actions UI.
 4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
