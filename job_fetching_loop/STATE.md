@@ -23,17 +23,24 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 75 — End-to-End Scraper Location & Description Restriction Hardening
-- **Date:** 2026-09-17
-- **Trigger:** user report — location mismatch continuing; positions fetched that candidate in Pakistan cannot work from home
-- **Status:** Fixed `WellfoundScraper` converting on-site jobs (`remote: False`) into "Remote" by using real `locationNames` (Santa Clara, NYC); fixed `ArbeitnowScraper` hardcoding "Worldwide" for German/EU city positions (Berlin, Munich, etc.); added `is_description_restricted` checking US work authorization, W-2 only, security clearance, hybrid/in-office mandates, and tight timezone exclusions across all sources; wired into `is_worldwide_remote` & `is_remotely_workable`. +3 regression tests. `PASS` — 297 green, exit 0.
+- **Beat #:** 76 — morning triage (no new code)
+- **Date:** 2026-09-24
+- **Trigger:** weekday heartbeat (schedule)
+- **Status:** Done — triaged test-gate + open issues; NO code change warranted.
+  Findings: all test-gate runs green (`action_required` = 0s approval-queue artifacts,
+  not failures); PR #13 (this loop, beats 104–118) has been through checker re-reviews
+  today — residual MEDIUM (short-clause US-restriction false drop) documented on its
+  branch STATE §10(13)/(14) and rework bound exhausted → human gate. No new failure
+  needs an in-loop fix. `PASS`
 
 ## 3. Beat Log
 
 compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge).
+compressed at 2026-09-24: beats 51–56 all PASS (timeout guard, LinkedIn 24h filter, volume expansion, on-site purge, prod audit, EPIPE shield); 228→242 tests green.
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 76 | 2026-09-24 | heartbeat | **Morning triage (no code):** test-gate green (0s `action_required` = approval-queue artifacts); PR #13 (beats 104–118) residual MEDIUM at human gate on its branch §10(13)/(14); no new in-loop fix | PASS — no code, §10 updated |
 | 75 | 2026-09-17 | user report (location mismatch frustration) | **Description & Scraper-level Remote Hardening:** `WellfoundScraper` keeps on-site locations when `remote: False`; `ArbeitnowScraper` preserves real German/EU city locations; `is_description_restricted` filters US auth, hybrid, clearance, and tight timezones; +3 tests | PASS — 297 tests, exit 0 |
 | 74 | 2026-09-17 | user report (US-only/foreign jobs in sheet) | **Strict Pakistan Remote Verification & Domestic Purge:** `is_title_restricted` catches US-only/hub titles; `_is_us_restricted` and `is_foreign_country_restricted` filter non-APAC foreign remote; `PythonOrgScraper` parses real location line instead of faking Worldwide; +4 regression tests | PASS — 294 tests, exit 0 |
 | 73 | 2026-09-17 | user report (on-site jobs in output) | **Strict Remote Gate & Pakistan Onsite Elimination:** `is_remotely_workable` rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical Pakistan cities & bare country without explicit remote markers; LinkedIn drops non-remote title/loc; +3 regression tests | PASS — 290 tests, exit 0 |
@@ -53,12 +60,6 @@ compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, s
 | 59 | 2026-09-17 | user request (source & regex filter) | **Source Exclusion & US Regex Hardening:** Confirmed zero reliance/inclusion of AI-Jobs, Upwork, Toptal; updated `_is_us_restricted` and `_US_RESTRICTED_RE` to strictly drop `Remote - US/USA/United States` variants; 249 tests green | PASS — 249 tests, exit 0 |
 | 58 | 2026-09-17 | user request (prod gaps) | **Outage Honesty, Timeout Double-Count Shield & Topology Alignment:** Propagated HTTP/network failures across all curated & HTTP scrapers (no swallowed outage errors); added `cancel_event` to prevent daemon threads from double-counting circuit breaker failures on timeout; aligned `JOB_LOOP_PRIMARY=local` across configs; added regression tests; 249 tests green | PASS — 249 tests, exit 0 |
 | 57 | 2026-09-16 | user request (universal 24h) | **Universal 24h Cutoff:** Removed 10-day relaxation for curated boards in `src/main.py`; enforced strict `cutoff_date = posted_after.date()` for every platform; added regression test; 243 tests green | PASS — 243 tests, exit 0 |
-| 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |
-| 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |
-| 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |
-| 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
-| 52 | 2026-09-16 | manual (volume scaling) | **High-volume platform expansion:** Added `ArbeitnowScraper` (250+ JSON API) & `PythonOrgScraper` (PSF RSS); multi-tag RemoteOK & Jobicy data-science; expanded tech context in matcher; 17 live sources; 234 tests green | PASS — 234 tests, exit 0 |
-| 51 | 2026-09-16 | manual (prod hardening) | **Per-source timeout guard:** `run_source()` daemon worker capped `SOURCE_TIMEOUT_S=150`; timeout → circuit failure + verdict + DLQ (real runs) + loop continues. LinkedIn guest pass 45s monotonic, browser pass 90s `asyncio.wait_for`. Live: linkedin 135s/4 jobs (was >180s hang), indeed capped 150s. Scaffolds 4/5 still blocked | PASS — 228 tests, exit 0; checker APPROVED |
 
 ## 4. Budget & Stopping Conditions
 
@@ -78,6 +79,11 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 ## 10. Next Actionable Tasks (job loop)
 
+0. **PR #13 (beats 104–118, Rule-11 F1–F4 + prod remediation) — human gate:** open since
+   2026-09-24, checker re-reviewed twice; residual MEDIUM (short-clause `_US_RESTRICTED_RE`
+   false drop on Worldwide roles) documented on the `job-fetching-loop` branch STATE
+   §10(13)/(14) with a suggested pin-gated group-walk fix; rework bound exhausted → a human
+   approves/merges or delegates the one-line fix. Also pending human: PRs #9/#10/#11/#12.
 1. ~~**Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/revoke`~~ (Done 2026-09-16). **Next:** Update `.env` and GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` with the newly generated token.
 2. Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.
 3. Local crontab is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
