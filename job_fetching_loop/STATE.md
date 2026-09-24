@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 108 — BairesDev foreign-location FP (B3 too loose) + metro foreign list
+- **Beat #:** 109 — Push Beats 104–108 to origin (cloud was 3 commits stale)
 - **Date:** 2026-09-24
-- **Trigger:** senior-engineer new run — accuracy audit of Sep 23–24 production output
-- **Status:** Found 3 FPs (Germany/Chile/Greater Rio BairesDev) passing daily via bare `"worldwide"` marketing in B3; Rio also slipped digest (`\bbrazil\b` miss). Fixed: `_has_strong_worldwide_eligibility` (eligibility phrases only), metro foreign cities, daily+digest foreign/strong-worldwide parity. Purged 3 jobs from `output/jobs_2026-09-2{3,4}.{json,csv}`. Suite **300 pass** | PASS — 300 tests, exit 0
+- **Trigger:** backlog #2 — "Push so weekday Actions can run"
+- **Status:** `git push origin job-fetching-loop` → `02955e9..68de118` OK; remote HEAD = local; secret scan on range clean; branch in sync. Next cloud cron picks up B3 fix + accuracy remediation | PASS
 
 ## 3. Beat Log
 
@@ -39,6 +39,7 @@ compressed at 2026-09-22 (beat 104, §9 cap 20): beats 63–89 all PASS except 8
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 109 | 2026-09-24 | backlog #2 push | Pushed `job-fetching-loop` 02955e9→68de118 (Beats 104–108) so cloud cron runs fixed filters | PASS — remote synced, secrets clean |
 | 108 | 2026-09-24 | audit Sep 23–24 output | **B3 tighten + foreign metros:** bare worldwide marketing no longer overrides Germany/Chile/Rio; `_has_strong_worldwide_eligibility`; daily/digest parity; purge 3 BairesDev FPs from output | PASS — 300 tests, exit 0 |
 | 107 | 2026-09-22 | user — yes next beat | **Commit Beat 105–106** accuracy-gap remediation + LinkedIn dry-run smoke + worktree drift (workflow keywords, test isolation, snippet-cap) | PASS — 298 tests, exit 0; run 3/3 ceiling → stop |
 | 106 | 2026-09-22 | backlog #10 smoke | Live `--dry-run` after Beat 105: LinkedIn guest 45s budget → 71 jobs, 2 detail_drops (B4), purity clean; Indeed → CAPTCHA (human) | PASS (LinkedIn only; Indeed/Glassdoor pending human CAPTCHA) |
@@ -80,7 +81,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 0. ~~**(Beat 96, BLOCKING)** Telegram ISP block~~ — Beat 104 state shows `daily:telegram: 2026-09-22` marked sent; re-verify with manual `send_daily` if unsure.
 1. ~~**Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/replay`~~ (Done 2026-09-16). Ensure `.env` + GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` hold the new token.
-2. Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.
+2. ~~Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.~~ — Pushed Beat 109 (2026-09-24); cloud HEAD = `68de118`.
 3. Local systemd timer is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
 4. Indeed/Glassdoor remain local-headed only; cloud never waits on CAPTCHA. Circuit breakers may open daily on CAPTCHA timeouts (Rule 10 — expected).
 5. Exclusive 3-platform production (Beat 79): linkedin, indeed, glassdoor only.
