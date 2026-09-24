@@ -573,3 +573,43 @@ def test_linkedin_guest_url_includes_start_param(monkeypatch):
     ))
     assert captured, "no guest requests captured"
     assert any("start=" in u for u in captured)
+
+
+# ── PR #13 finding 1: desc-level US-city over-match must not drop Worldwide ──
+
+def test_pr13_worldwide_desc_us_office_mentions_stay_open():
+    # Reviewer repros: casual US-office prose on a Worldwide role must pass.
+    assert not _is_us_restricted("Remote-first, hubs in Austin and Berlin")
+    assert not _is_us_restricted("Remote engineers welcome; offices in Seattle and London")
+    assert not _is_us_restricted("Remote role; we also have an office in Boston")
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote-first, hubs in Austin and Berlin", title="AI Engineer",
+    )
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote engineers welcome; offices in Seattle and London",
+        title="AI Engineer",
+    )
+
+
+def test_pr13_residency_pins_still_restrict_us_cities():
+    # Residency-pin constructions remain restricted (no recall leak).
+    assert _is_us_restricted("Remote - Austin")            # _US_RESTRICTED_RE
+    assert _is_us_restricted("Chicago - Remote")
+    assert _is_us_restricted("Remote in Austin")
+    assert _is_us_restricted("Must be based in Austin")
+    assert _is_us_restricted("Austin only")
+    assert _is_us_restricted("Austin-based team")
+    assert _is_us_restricted("Candidates based in New York City")
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="Must be based in Austin", title="AI Engineer",
+    )
+
+
+def test_pr13_link_health_timeout_default_is_budget_sized():
+    import inspect
+    from src.models import check_link_health
+    sig = inspect.signature(check_link_health)
+    assert sig.parameters["timeout_s"].default <= 1.5

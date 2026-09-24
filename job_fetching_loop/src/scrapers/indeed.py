@@ -65,7 +65,6 @@ class IndeedScraper(BaseScraper):
             for kw in keywords:
                 from urllib.parse import quote_plus
                 ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
-                keyword_yielded = False
                 # B6: paginate Indeed (start=0,10,20) — first page only capped recall.
                 for start in (0, 10, 20):
                     url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ia_filter + f"&start={start}"
@@ -95,7 +94,6 @@ class IndeedScraper(BaseScraper):
                         for card in cards:
                             job = await self._parse_card(card, kw, days, page=page)
                             if job:
-                                keyword_yielded = True
                                 yield job
                         if not cards:
                             break
@@ -106,7 +104,6 @@ class IndeedScraper(BaseScraper):
                         errors.append(e)
                         log.warning("[indeed] error scraping %r: %s", kw, e)
                         break
-                del keyword_yielded
             await page.close()
         if not any_success and errors:
             raise errors[0]

@@ -149,6 +149,26 @@ def test_indeed_missing_date_fail_closed():
 
 # ── Glassdoor Scraper Tests ───────────────────────────────────────────────────
 
+def test_glassdoor_missing_location_not_fabricated():
+    """PR #13 nit / A2: missing location element must stay None, never 'Remote'."""
+    scraper = GlassdoorScraper()
+    mock_title = MockElement(text="AI Engineer", attrs={"href": "/partner/jobListing.htm?jobListingId=555", "title": "AI Engineer"})
+    mock_desc = MockElement(text="Fully remote role for our global team.")
+    mock_date = MockElement(text="24h")
+    card = MockElement(
+        children={
+            "a[data-test='job-title']": mock_title,
+            "div.JobCard_jobDescription__v_1k2": mock_desc,
+            "div[data-test='job-age']": mock_date,
+        },
+    )
+    job = asyncio.run(scraper._parse_card(card, "AI"))
+    assert job is not None
+    assert job.location is None
+    from src.models import is_worldwide_remote
+    assert not is_worldwide_remote(job.location, source="glassdoor", description=job.description)
+
+
 def test_glassdoor_parse_card_full_data():
     scraper = GlassdoorScraper()
     mock_title = MockElement(text="Senior Computer Vision Engineer", attrs={"href": "/partner/jobListing.htm?jobListingId=1009876543&pos=101"})

@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 114 — PR #13 review (job loop CI-gate PR)
+- **Beat #:** 115 — PR #13 CHANGES REQUESTED rework (MEDIUM #1 + #2 + LOW nits)
 - **Date:** 2026-09-24
-- **Trigger:** pull_request event — review job-fetching-loop→main (PR #13)
-- **Status:** **DONE** — Reviewed Beats 104–112 diff: 305 tests green locally; posted `CHANGES REQUESTED (comment)` review with 2 MEDIUM findings (desc-level US-city over-match drops Worldwide roles; per-job `check_link_health` HEAD is a cloud budget/fingerprint risk) + LOW nits. No code touched. Next: human gate on findings before merge.
+- **Trigger:** user — run next beat (after PR #13 review verdict)
+- **Status:** **MAKER DONE** — Fixed desc-level `_is_us_restricted` city over-match (residency-pin only), moved `check_link_health` HEAD after dedup (timeout 1.5s, 405-response close), Glassdoor A2 fail-closed location, dead `keyword_yielded` removed. 4 new regression tests. Full suite EXIT 0, matrix/parity fails=0, reviewer repros all open + pins still restrict. Awaiting Checker.
 
 ## 3. Beat Log
 
@@ -43,6 +43,7 @@ systemd Persistent catch-up (Telegram ISP-blocked that day).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 115 | 2026-09-24 | user — run next beat / PR#13 rework | Fixed MEDIUM #1 residency-pin-only city restrict; MEDIUM #2 HEAD-after-dedup + 1.5s timeout + response close; Glassdoor A2; dead var; 4 regression tests | **MAKER DONE** — suite EXIT 0, matrix/parity fails=0; awaiting Checker |
 | 114 | 2026-09-24 | PR #13 review (job→main) | Reviewed Beats 104–112 diff; 305 tests green; posted CHANGES REQUESTED(comment): desc-level `_is_us_restricted` drops Worldwide roles naming a US office; per-job `check_link_health` HEAD budget risk; LOW nits (service path hardcode, catch-up stamp, has_captcha card-clean, dead vars, Glassdoor location fabrication, stale STATE "uncommitted" text) | **DONE** — review sent; findings to human gate |
 | 113 | 2026-09-24 | user — option c (stop) | Run stop after Beat 112; listed 5 open human-owned gaps | **STOPPED** — 2/3 beats; no further work |
 | 112 | 2026-09-24 | user — 100% production ready | Commit+push Beat 111 F1–F4 (4 files) to origin; video gitignore hygiene (`loop.log`, `.agents/`, `skills-lock.json`) | **PASS** — HEAD=origin, 305 tests, secrets clean |

@@ -211,8 +211,9 @@ class GlassdoorScraper(BaseScraper):
             if any(w in comb for w in ("remote", "work from home", "wfh")):
                 if location and "remote" not in location.lower():
                     location = f"{location} (Remote)"
-                elif not location:
-                    location = "Remote"
+                # A2 (PR #13 nit): NEVER invent "Remote" when the location
+                # element is missing — same fail-closed contract as Indeed.
+                # Leave None → domestic-board / unknown-location gates drop it.
         # Posted date: "24h", "1d", "30d+", "Just now", etc.
         posted_date = None
         date_el = await card.query_selector("div[data-test='job-age'], span[data-test='job-age'], div.JobCard_listingAge__jJsuc, [data-test='job-age']")

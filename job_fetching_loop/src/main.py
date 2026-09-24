@@ -451,11 +451,11 @@ def _run_source_impl(
                      source_name, raw.title[:60])
             _record_reject(rejects, source_name, raw.title, "recency", "no parseable posted date")
             continue
-        from src.models import check_link_health, is_valid_job_url
-        if not is_valid_job_url(raw.url) or not check_link_health(raw.url):
-            log.info("[%s] dropping job with invalid, profile or dead URL: %s (%s)",
+        from src.models import is_valid_job_url
+        if not is_valid_job_url(raw.url):
+            log.info("[%s] dropping job with invalid or profile URL: %s (%s)",
                      source_name, raw.url, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "url", f"invalid/dead URL: {raw.url}")
+            _record_reject(rejects, source_name, raw.title, "url", f"invalid URL: {raw.url}")
             continue
 
         if cfg.scrape_remote_only() and not is_remotely_workable(
@@ -484,6 +484,15 @@ def _run_source_impl(
         is_new, reason = dedup_job(normalized, seen, extra_ids=batch_ids, extra_recent=batch_recent)
         if not is_new:
             _record_reject(rejects, source_name, raw.title, "dedup", reason or "duplicate")
+            continue
+        # PR #13 finding 2: network health HEAD only for jobs that survived
+        # every gate AND dedup — cuts HEADs to unique survivors and keeps the
+        # source wall-clock inside budget (1.5s timeout inside the helper).
+        from src.models import check_link_health
+        if not check_link_health(raw.url):
+            log.info("[%s] dropping job with dead URL: %s (%s)",
+                     source_name, raw.url, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "url", f"dead URL: {raw.url}")
             continue
         new_jobs.append(normalized)
         batch_ids.add(normalized.id)

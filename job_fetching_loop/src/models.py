@@ -61,12 +61,16 @@ def is_valid_job_url(url: str | None) -> bool:
     return True
 
 
-def check_link_health(url: str, timeout_s: float = 3.0) -> bool:
+def check_link_health(url: str, timeout_s: float = 1.5) -> bool:
     """True if link is alive (or health is indeterminate); False only on definitive death.
 
     Fail-closed only for proof of death (404/410). Network flake / timeout /
     TLS weirdness must NOT drop a valid Rule-11 job (symmetric with
-    `is_expired_job`: unknown stays, known-dead goes)."""
+    `is_expired_job`: unknown stays, known-dead goes).
+
+    PR #13 finding 2: default timeout is 1.5s (was 3.0) so a per-job HEAD
+    cannot blow the source/run budget; callers should invoke this only for
+    jobs that already survived every other gate."""
     if not is_valid_job_url(url):
         return False
     import os
@@ -74,14 +78,27 @@ def check_link_health(url: str, timeout_s: float = 3.0) -> bool:
     # In unmocked pytest runs, do not make live outbound requests on dummy test domains
     if os.environ.get("PYTEST_CURRENT_TEST") and getattr(requests.head, "__module__", "") == "requests.api":
         return True
+
+    def _close(r) -> None:
+        close = getattr(r, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
     try:
         headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         resp = requests.head(url, headers=headers, timeout=timeout_s, allow_redirects=True)
-        if resp.status_code == 405:
-            resp = requests.get(url, headers=headers, timeout=timeout_s, stream=True)
-        if resp.status_code in (404, 410):
-            return False
-        return True
+        try:
+            if resp.status_code == 405:
+                _close(resp)  # PR #13: never leak the HEAD response
+                resp = requests.get(url, headers=headers, timeout=timeout_s, stream=True)
+            if resp.status_code in (404, 410):
+                return False
+            return True
+        finally:
+            _close(resp)
     except requests.exceptions.HTTPError:
         # 4xx other than 404/410 still answers — treat as alive enough to keep
         return True
@@ -936,13 +953,26 @@ def _is_us_restricted(text: str) -> bool:
                 return True
             if any(re.search(rf"\b{re.escape(city)}\b", grp_low) for city in _US_MAJOR_CITIES):
                 return True
-    # A3: bare "Remote - Austin" style where the city is the only qualifier
-    # (already covered via _US_RESTRICTED_RE groups); also catch a US city
-    # sitting next to Remote outside the paren/dash forms, e.g. "Remote, Chicago".
-    if re.search(r"\bremote\b", low):
-        for city in _US_MAJOR_CITIES:
-            if re.search(rf"\b{re.escape(city)}\b", low):
-                return True
+    # A3 / PR #13 finding 1: a US city restricts only inside a residency-pin
+    # construction — never via casual co-occurrence with "remote" anywhere in
+    # the text. "Remote - Austin" / "Chicago - Remote" already match via
+    # _US_RESTRICTED_RE above; here we cover "Remote in Austin", "Remote
+    # Austin", "based in Austin", "Austin-based", "Austin only". Prose like
+    # "hubs in Austin" / "offices in Seattle" on a Worldwide description must
+    # stay open (Rule 11(b) recall — reviewer repro on PR #13).
+    for city in _US_MAJOR_CITIES:
+        c = re.escape(city)
+        if re.search(
+            rf"(?i)(?:\bremote\s+(?:in|at)\s+{c}\b"
+            rf"|\bremote\s+{c}\b"
+            rf"|\bremote\s+(?:role|job|position|work|team)\s+in\s+{c}\b"
+            rf"|\bbased\s+in\s+{c}\b|\blocated\s+in\s+{c}\b"
+            rf"|\breside(?:s|ing)?\s+in\s+{c}\b|\bliving\s+in\s+{c}\b"
+            rf"|\bmust\s+be\s+(?:based\s+)?in\s+{c}\b"
+            rf"|\b{c}\s+only\b|\b{c}[\s-]+based\b)",
+            low,
+        ):
+            return True
     return False
 
 
