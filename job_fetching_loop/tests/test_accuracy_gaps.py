@@ -176,6 +176,39 @@ def test_worldwide_desc_overrides_city_location():
     )
 
 
+# ── Beat 108: bare "worldwide" marketing must NOT override foreign location ──
+
+def test_bare_worldwide_marketing_does_not_override_foreign_location():
+    # BairesDev boilerplate (live FP Sep 23–24): "impact worldwide" ≠ eligibility.
+    marketing = (
+        "At BairesDev® we deliver solutions to giants. Our diverse team works "
+        "remotely on roles that drive significant impact worldwide."
+    )
+    assert not is_worldwide_remote("Germany", source="linkedin", description=marketing)
+    assert not is_worldwide_remote("Chile", source="linkedin", description=marketing)
+    assert not is_worldwide_remote("Greater Rio de Janeiro", source="linkedin", description=marketing)
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Greater Rio de Janeiro", source="linkedin",
+        description=marketing, title="Senior AI Engineer - Remote Work",
+    )
+    # Strong eligibility phrasing still overrides a foreign HQ label (Rule 11).
+    strong = "Fully remote — work from anywhere in the world, no location requirements."
+    assert is_worldwide_remote("Germany", source="linkedin", description=strong)
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Germany", source="linkedin",
+        description=strong, title="AI Engineer",
+    )
+
+
+def test_foreign_metro_without_country_token():
+    # "Greater Rio de Janeiro" never matches \bbrazil\b — needs the metro list.
+    assert is_foreign_country_restricted("Greater Rio de Janeiro")
+    assert is_foreign_country_restricted("Rio de Janeiro")
+    assert is_foreign_country_restricted("São Paulo")
+    assert not is_foreign_country_restricted("Pakistan")
+    assert not is_foreign_country_restricted("Singapore")
+
+
 # ── A1/A2: fail-closed location (scraper level) ──────────────────────────────
 
 def test_post_location_fail_closed_empty():

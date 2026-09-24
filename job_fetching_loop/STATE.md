@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 107 — Commit Beat 105–106 (close run; 3/3 beat ceiling)
-- **Date:** 2026-09-22
-- **Trigger:** user — "yes next beat"
-- **Status:** Staged + committed all Beat 105 accuracy-gap code/tests + Beat 106 smoke STATE + related worktree (workflow keywords/cache comment, conftest SCRAPE_RUN_HOUR isolation, snippet-cap test 2000). Secret scan clean; `.env`/`output/`/`.slc/` ignored. Tests 298 exit 0 pre-commit. Run ceiling hit after this beat — stop and report | PASS — 298 tests, exit 0
+- **Beat #:** 108 — BairesDev foreign-location FP (B3 too loose) + metro foreign list
+- **Date:** 2026-09-24
+- **Trigger:** senior-engineer new run — accuracy audit of Sep 23–24 production output
+- **Status:** Found 3 FPs (Germany/Chile/Greater Rio BairesDev) passing daily via bare `"worldwide"` marketing in B3; Rio also slipped digest (`\bbrazil\b` miss). Fixed: `_has_strong_worldwide_eligibility` (eligibility phrases only), metro foreign cities, daily+digest foreign/strong-worldwide parity. Purged 3 jobs from `output/jobs_2026-09-2{3,4}.{json,csv}`. Suite **300 pass** | PASS — 300 tests, exit 0
 
 ## 3. Beat Log
 
@@ -39,6 +39,7 @@ compressed at 2026-09-22 (beat 104, §9 cap 20): beats 63–89 all PASS except 8
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 108 | 2026-09-24 | audit Sep 23–24 output | **B3 tighten + foreign metros:** bare worldwide marketing no longer overrides Germany/Chile/Rio; `_has_strong_worldwide_eligibility`; daily/digest parity; purge 3 BairesDev FPs from output | PASS — 300 tests, exit 0 |
 | 107 | 2026-09-22 | user — yes next beat | **Commit Beat 105–106** accuracy-gap remediation + LinkedIn dry-run smoke + worktree drift (workflow keywords, test isolation, snippet-cap) | PASS — 298 tests, exit 0; run 3/3 ceiling → stop |
 | 106 | 2026-09-22 | backlog #10 smoke | Live `--dry-run` after Beat 105: LinkedIn guest 45s budget → 71 jobs, 2 detail_drops (B4), purity clean; Indeed → CAPTCHA (human) | PASS (LinkedIn only; Indeed/Glassdoor pending human CAPTCHA) |
 | 105 | 2026-09-22 | user — fix all accuracy gaps small pieces | **A1–C5 remediation:** fail-closed location (A1/A2/A9), US cities+title/desc/lang/TZ+daily-weekly parity (A3–A8), hiring markers+no fake dates+full-desc digest (A10–A12), hybrid precision+Israel market+B3 worldwide override (B1–B3), detail-drop visibility (B4), parse_drift+pagination (B5–B6), circuit ops alert+.env sync+score-sorted top5+rejected.jsonl (C1–C5). New `tests/test_accuracy_gaps.py` | PASS — 298 tests, Checker APPROVED |

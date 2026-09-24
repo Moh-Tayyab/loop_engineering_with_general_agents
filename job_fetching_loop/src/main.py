@@ -181,6 +181,12 @@ def is_remotely_workable(
     if location_type != LOCATION_REMOTE:
         return False
     if location is not None:
+        # Beat 108: daily must match digest — foreign location labels are out
+        # unless the description carries strong worldwide-eligibility phrasing
+        # (is_worldwide_remote applies the same B3 escape via is_foreign…).
+        from src.models import is_foreign_country_restricted, _has_strong_worldwide_eligibility
+        if is_foreign_country_restricted(location) and not _has_strong_worldwide_eligibility(description):
+            return False
         return is_worldwide_remote(location, source=source, description=description, title=title)
     if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
         return False

@@ -44,6 +44,7 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
         is_hybrid_work,
         is_foreign_country_restricted,
         _is_us_restricted,
+        _has_strong_worldwide_eligibility,
     )
 
     url = job.url or ""
@@ -78,9 +79,10 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
     if is_description_restricted(desc):
         return False
 
-    # Location checks
+    # Location checks — foreign labels allowed only with strong worldwide eligibility
+    # (Beat 108 parity with daily / B3; bare "impact worldwide" marketing does not count).
     loc = job.location or ""
-    if is_foreign_country_restricted(loc):
+    if is_foreign_country_restricted(loc) and not _has_strong_worldwide_eligibility(desc):
         return False
     if _is_us_restricted(loc) or _is_us_restricted(desc):
         return False

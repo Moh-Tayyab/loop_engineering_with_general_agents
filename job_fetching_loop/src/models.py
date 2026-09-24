@@ -364,7 +364,33 @@ _FOREIGN_RESTRICTED_COUNTRIES = frozenset({
     "zimbabwe", "cameroon", "mozambique",
     "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune", "chennai", "gurgaon", "noida",
     "latin america", "latam", "north america", "europe", "emea",
+    # Beat 108: metro names whose country token is absent from the location label
+    # ("Greater Rio de Janeiro" never matches \bbrazil\b — BairesDev FP).
+    "rio de janeiro", "sao paulo", "são paulo", "buenos aires", "santiago",
+    "mexico city", "bogota", "bogotá", "lima", "montreal", "toronto", "vancouver",
+    "london", "paris", "berlin", "munich", "frankfurt", "hamburg", "amsterdam",
+    "rotterdam", "madrid", "barcelona", "milan", "rome", "lisbon", "dublin",
+    "zurich", "geneva", "vienna", "prague", "warsaw", "budapest", "bucharest",
+    "athens", "helsinki", "stockholm", "copenhagen", "oslo", "lyon", "brussels",
 })
+
+
+def _has_strong_worldwide_eligibility(description: str | None) -> bool:
+    """Beat 108: description proves *job eligibility*, not marketing reach.
+
+    Bare "worldwide" ("impact worldwide", "clients worldwide") must NOT override
+    a physical foreign location — that reopened Germany/Chile/Rio BairesDev FPs.
+    Only explicit open-to-the-world phrasing qualifies (Rule 11c / B3).
+    """
+    d = (description or "").lower()
+    return any(m in d for m in (
+        "work from anywhere", "anywhere in the world", "anywhere in world",
+        "global remote", "globally remote", "worldwide remote", "remote worldwide",
+        "open worldwide", "eligible worldwide", "candidates worldwide",
+        "applicants worldwide", "no location requirement",
+        "no geographic restriction", "location-agnostic", "location agnostic",
+        "hire from anywhere", "hiring from anywhere", "work from anywhere in",
+    ))
 
 
 def is_foreign_country_restricted(text: str) -> bool:
@@ -874,16 +900,13 @@ def is_worldwide_remote(
     if re.search(r"anywhere\s+in\s+(?!(?:the\s+)?world\b)", text):
         return False
 
-    # B3: explicit worldwide markers in the DESCRIPTION override a physical-city
-    # location label (HQ city ≠ residency pin). Residency language is already
-    # rejected by is_description_restricted above; Israel location stays hard-blocked.
-    desc_low_b3 = (description or "").lower()
+    # B3 (Beat 108 tightened): only *eligibility* phrasing in the DESCRIPTION
+    # overrides a physical-city location label (HQ city ≠ residency pin).
+    # Bare "worldwide" marketing copy does NOT qualify — Residency language is
+    # already rejected by is_description_restricted above; Israel stays hard-blocked.
     if (
         description
-        and any(m in desc_low_b3 for m in (
-            "worldwide", "work from anywhere", "anywhere in the world",
-            "global remote", "globally remote", "anywhere in world",
-        ))
+        and _has_strong_worldwide_eligibility(description)
         and not _is_us_restricted(text)
         and not re.search(r"\b(?:israel|tel aviv|jerusalem|haifa)\b", text)
         and not is_hybrid_work(text)
