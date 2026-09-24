@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 115 — PR #13 CHANGES REQUESTED rework (MEDIUM #1 + #2 + LOW nits)
+- **Beat #:** 116 — PR #13 re-review of Beat 115 rework (commit 3eb382f)
 - **Date:** 2026-09-24
-- **Trigger:** user — run next beat (after PR #13 review verdict)
-- **Status:** **MAKER DONE** — Fixed desc-level `_is_us_restricted` city over-match (residency-pin only), moved `check_link_health` HEAD after dedup (timeout 1.5s, 405-response close), Glassdoor A2 fail-closed location, dead `keyword_yielded` removed. 4 new regression tests. Full suite EXIT 0, matrix/parity fails=0, reviewer repros all open + pins still restrict. Awaiting Checker.
+- **Trigger:** pull_request event (rework pushed to head)
+- **Status:** **CHECKER REVIEWED** — 309 tests green, EXIT 0; reviewer repros all fixed, pins still restrict. **CHANGES REQUESTED (residual):** MEDIUM#1 class not fully closed — `_US_RESTRICTED_RE` hyphen alternative + `_US_MAJOR_CITIES` group-walk still drops Worldwide roles whose description uses a hyphen/period form ("Remote-first team with offices in Seattle and London", "Remote-first hubs in Austin and Berlin" → False). MEDIUM#2 linked. Also fixed retired `checker` model (`mimo-v2.5-free` → `mimo-v2.6-flash-free`) in shared infra + both AGENTS.md lessons. Verdict posted to PR #13.
 
 ## 3. Beat Log
 
@@ -41,8 +41,14 @@ compressed at 2026-09-24 (beat 109, §9 cap 20): beats 90–96 all PASS — Paki
 integrity, live pipeline, AI matcher, anti-bot Turnstile, 3-platform verify, pk.indeed,
 systemd Persistent catch-up (Telegram ISP-blocked that day).
 
+compressed at 2026-09-24 (beat 116, §9 cap 20): beats 97–100b — rule-11 guardrails
+(window/Location/feed/link-health), digest empty-body fail-closed, India/JP/KR/Bangalore
+blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects, digest
+20/20.
+
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
 | 115 | 2026-09-24 | user — run next beat / PR#13 rework | Fixed MEDIUM #1 residency-pin-only city restrict; MEDIUM #2 HEAD-after-dedup + 1.5s timeout + response close; Glassdoor A2; dead var; 4 regression tests | **MAKER DONE** — suite EXIT 0, matrix/parity fails=0; awaiting Checker |
 | 114 | 2026-09-24 | PR #13 review (job→main) | Reviewed Beats 104–112 diff; 305 tests green; posted CHANGES REQUESTED(comment): desc-level `_is_us_restricted` drops Worldwide roles naming a US office; per-job `check_link_health` HEAD budget risk; LOW nits (service path hardcode, catch-up stamp, has_captcha card-clean, dead vars, Glassdoor location fabrication, stale STATE "uncommitted" text) | **DONE** — review sent; findings to human gate |
 | 113 | 2026-09-24 | user — option c (stop) | Run stop after Beat 112; listed 5 open human-owned gaps | **STOPPED** — 2/3 beats; no further work |
@@ -58,11 +64,6 @@ systemd Persistent catch-up (Telegram ISP-blocked that day).
 | 103 | 2026-09-21 | user audio — live accuracy | Monday 3-day scrape; remote-badge cards; 100% Rule 11 | PASS — 268 tests |
 | 102 | 2026-09-21 | user audio — kill bot detection | Native Chrome stealth + Bezier Turnstile; live 5/5 Indeed + 5/5 Glassdoor | PASS — 268 tests |
 | 101 | 2026-09-21 | user — digest hallucinations | `is_valid_digest_job` gate; purged 93 invalid seen; digest W39 12/12 | PASS — 268 tests |
-| 100 | 2026-09-18 | user — 4-phase guardrails | Window fail-closed; location white/blacklist; feed `/in/` reject; link health | PASS — 266 tests |
-| 100b | 2026-09-18 | user — digest leaked on-site | Empty feed bodies blinded Rule 11; fail-closed empty body; digest 20→17 | PASS — 265 tests |
-| 99 | 2026-09-18 | user — `India (Remote)` | India off APAC carve-out → foreign blocklist; purged output | PASS — 262 tests |
-| 98 | 2026-09-18 | user — profile URLs + onsite | Reject `/in/`; on-site before remote tokens; recruiter titles; purged 19 | PASS — 262 tests |
-| 97 | 2026-09-18 | user — Bangalore + JP/KR | Feed DOM rework + developed-APAC hard-block; digest 20/20 | PASS — digest 20/20 |
 
 ## 4. Budget & Stopping Conditions
 
@@ -95,7 +96,8 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
-13. **(Beat 114, HUMAN review findings on PR #13)** Before merge: (a) decide/fix desc-level `_is_us_restricted` over-match (Worldwide + "office in Austin/Seattle"... → dropped); (b) benchmark `check_link_health` per-job HEAD on a live sweep (cloud budget); §10 opts: let a human decide, then file a follow-up beat.
+13. **(Beat 115–116, HUMAN, PR #13 residual)** Before merging: close the residual MEDIUM#1 class — `_US_RESTRICTED_RE` hyphen alternative (models.py:301) + `_US_MAJOR_CITIES` group-walk (models.py:965) still drop Worldwide roles with hyphen/period description forms ("Remote-first team with offices in Seattle and London", "Remote-first hubs in Austin and Berlin"). Pin-gate the group city check; extend `test_pr13_worldwide_desc_us_office_mentions_stay_open` with the no-comma/hyphen cases.
+14. **(Beat 116, SHARED INFRA)** `checker` subagent model was retired (`opencode/mimo-v2.5-free`); fixed `.opencode/agent/checker.md` → `opencode/mimo-v2.6-flash-free` + both loops' AGENTS.md §11 lesson updated. Takes effect next session — verify a real Checker spawn works before the next maker–checker cycle.
 
 ## 11. Human Gate Decisions (job loop)
 

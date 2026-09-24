@@ -151,7 +151,7 @@ let a human approve — the rules file is the highest-leverage write in the syst
 Durable lessons from past beats (added via the §10 habit; keep each to one line):
 
 - **Use `opencode/*` free models for cheap/read-only subagents.** `anthropic/claude-haiku-4-5-20251001`
-  404s in this env; the checker runs on `opencode/mimo-v2.5-free`.
+  404s in this env; the checker runs on `opencode/mimo-v2.6-flash-free` (updated from `mimo-v2.5-free` 2026-09-24, that model id retired).
 - **A read-only checker must deny `edit` AND `bash` entirely.** A bash allowlist of "read-only" command
   patterns is bypassable (`pytest; rm -rf x`, `git diff > out.txt`); pass the diff and test results to it.
 - **Keep the nesting guard.** `subagent_depth: 1` + global `permission.task: deny`; grant `task` explicitly
