@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 116 — PR #13 re-review of Beat 115 rework (commit 3eb382f)
+- **Beat #:** 117 — Residual MEDIUM fix (Beat 116 rework): pin-gated state/abbr + short-group geo walk
 - **Date:** 2026-09-24
-- **Trigger:** pull_request event (rework pushed to head)
-- **Status:** **CHECKER REVIEWED** — 309 tests green, EXIT 0; reviewer repros all fixed, pins still restrict. **CHANGES REQUESTED (residual):** MEDIUM#1 class not fully closed — `_US_RESTRICTED_RE` hyphen alternative + `_US_MAJOR_CITIES` group-walk still drops Worldwide roles whose description uses a hyphen/period form ("Remote-first team with offices in Seattle and London", "Remote-first hubs in Austin and Berlin" → False). MEDIUM#2 linked. Also fixed retired `checker` model (`mimo-v2.5-free` → `mimo-v2.6-flash-free`) in shared infra + both AGENTS.md lessons. Verdict posted to PR #13.
+- **Trigger:** Checker — CHANGES REQUESTED (residual) on Beat 115 rework
+- **Status:** **MAKER DONE** — `_US_RESTRICTED_RE` group-walk geo checks now only fire on ≤4-word location qualifiers; full-text state names + postal abbrevs pin-gated (based/located/reside/living/must-be/remote-in/X-only/X-based). All 5 reviewer repros open ("Remote-first hubs in Austin and Berlin", "Remote-first team with offices in Seattle and London", "We are remote-first. Offices in New York…", "hubs in Austin, TX", "offices in Seattle, WA"); pins still restrict. 309 passed EXIT 0, matrix/parity fails=0. Pushing for re-review.
 
 ## 3. Beat Log
 
@@ -48,6 +48,7 @@ blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects,
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 117 | 2026-09-24 | Checker residual CR on Beat 115 | Pin-gated group-walk (≤4-word qualifiers) + full-text state/abbr residency pins; 5 new repro/pin asserts | **MAKER DONE** — 309 passed, matrix/parity fails=0; push for re-review |
 | 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
 | 115 | 2026-09-24 | user — run next beat / PR#13 rework | Fixed MEDIUM #1 residency-pin-only city restrict; MEDIUM #2 HEAD-after-dedup + 1.5s timeout + response close; Glassdoor A2; dead var; 4 regression tests | **MAKER DONE** — suite EXIT 0, matrix/parity fails=0; awaiting Checker |
 | 114 | 2026-09-24 | PR #13 review (job→main) | Reviewed Beats 104–112 diff; 305 tests green; posted CHANGES REQUESTED(comment): desc-level `_is_us_restricted` drops Worldwide roles naming a US office; per-job `check_link_health` HEAD budget risk; LOW nits (service path hardcode, catch-up stamp, has_captcha card-clean, dead vars, Glassdoor location fabrication, stale STATE "uncommitted" text) | **DONE** — review sent; findings to human gate |

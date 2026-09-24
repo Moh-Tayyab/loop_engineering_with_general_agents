@@ -927,14 +927,38 @@ def _is_us_restricted(text: str) -> bool:
     if re.search(r"\b(?:us|u\.s\.)\s*(?:only|based|resident|citizen|candidates?)\b", low):
         return True
 
+    # PR #13 residual: state names / postal abbrevs restrict only inside
+    # residency-pin constructions — never on casual prose ("Offices in New
+    # York, London" on a Worldwide role must stay open). Short location
+    # strings ("Remote - Texas", "TX - Remote") still hit via
+    # _US_RESTRICTED_RE's group-walk below; whole-string location tokens are
+    # is_worldwide_remote's job (single_low in _US_STATE_NAMES there).
     for state in _US_STATE_NAMES:
-        if re.search(rf"\b{re.escape(state)}\b", low):
+        s = re.escape(state)
+        if re.search(
+            rf"(?i)(?:\bbased\s+in\s+{s}\b|\blocated\s+in\s+{s}\b"
+            rf"|\breside(?:s|ing)?\s+in\s+{s}\b|\bliving\s+in\s+{s}\b"
+            rf"|\bmust\s+be\s+(?:based\s+|located\s+)?in\s+{s}\b"
+            rf"|\bremote\s+(?:in|at)\s+{s}\b"
+            rf"|\b{s}\s+only\b|\b{s}[\s-]+based\b)",
+            low,
+        ):
             return True
 
-    # Postal abbreviation preceded by comma or in
-    m_abbr = re.search(r"(?:,\s*|\bin\s+)([a-z]{2})\b", low)
-    if m_abbr and m_abbr.group(1) in _US_STATE_ABBR:
-        return True
+    # Postal abbreviation: pin forms only ("based in TX", "must be in CA",
+    # "in TX only"). Comma/remote forms ("Remote, TX", "TX - Remote") are
+    # already covered by _US_RESTRICTED_RE's group-walk. Bare "Austin, TX"
+    # in office-prose must NOT restrict a Worldwide description.
+    m_abbr = re.search(
+        rf"(?i)(?:based|located|reside(?:s|ing)?|living)\s+in\s+([a-z]{{2}})\b"
+        rf"|\bmust\s+be\s+(?:based\s+)?in\s+([a-z]{{2}})\b"
+        rf"|\bin\s+([a-z]{{2}})\s+only\b",
+        low,
+    )
+    if m_abbr:
+        for g in m_abbr.groups():
+            if g and g.lower() in _US_STATE_ABBR:
+                return True
 
     m = _US_RESTRICTED_RE.search(text)
     if m:
@@ -946,6 +970,13 @@ def _is_us_restricted(text: str) -> bool:
                 return True
             if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
                 return True
+            # PR #13 residual MEDIUM: the hyphen alt captures the whole trailing
+            # clause ("Remote-first hubs in Austin and Berlin" → group includes
+            # a city). Geo walks only fire on SHORT location qualifiers
+            # ("Austin", "US Only", "New York", "TX") — never on prose (≤4
+            # words); otherwise Worldwide descriptions naming a US office drop.
+            if len(grp_low.split()) > 4:
+                continue
             two_letter_words = set(re.findall(r"\b[a-z]{2}\b", grp_low))
             if any(w in _US_STATE_ABBR for w in two_letter_words):
                 return True

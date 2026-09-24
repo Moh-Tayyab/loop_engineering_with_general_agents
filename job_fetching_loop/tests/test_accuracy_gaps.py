@@ -582,6 +582,14 @@ def test_pr13_worldwide_desc_us_office_mentions_stay_open():
     assert not _is_us_restricted("Remote-first, hubs in Austin and Berlin")
     assert not _is_us_restricted("Remote engineers welcome; offices in Seattle and London")
     assert not _is_us_restricted("Remote role; we also have an office in Boston")
+    # Residual MEDIUM (re-review): hyphen/period forms must not walk cities
+    # inside the greedy _US_RESTRICTED_RE group either.
+    assert not _is_us_restricted("Remote-first team with offices in Seattle and London")
+    assert not _is_us_restricted("Remote-first hubs in Austin and Berlin")
+    assert not _is_us_restricted("We are remote-first. Offices in New York, London, Singapore.")
+    # Same class: state name / abbr in casual office prose must stay open.
+    assert not _is_us_restricted("hubs in Austin, TX and Berlin")
+    assert not _is_us_restricted("offices in Seattle, WA and London")
     assert is_remotely_workable(
         LOCATION_REMOTE, "Worldwide", source="linkedin",
         description="Remote-first, hubs in Austin and Berlin", title="AI Engineer",
@@ -589,6 +597,20 @@ def test_pr13_worldwide_desc_us_office_mentions_stay_open():
     assert is_remotely_workable(
         LOCATION_REMOTE, "Worldwide", source="linkedin",
         description="Remote engineers welcome; offices in Seattle and London",
+        title="AI Engineer",
+    )
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote-first team with offices in Seattle and London",
+        title="AI Engineer",
+    )
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote-first hubs in Austin and Berlin", title="AI Engineer",
+    )
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="We are remote-first. Offices in New York, London, Singapore.",
         title="AI Engineer",
     )
 
@@ -602,6 +624,15 @@ def test_pr13_residency_pins_still_restrict_us_cities():
     assert _is_us_restricted("Austin only")
     assert _is_us_restricted("Austin-based team")
     assert _is_us_restricted("Candidates based in New York City")
+    # Short qualifier groups still geo-walk (≤4 words).
+    assert _is_us_restricted("Remote - Austin, TX")
+    assert _is_us_restricted("Remote (New York)")
+    assert _is_us_restricted("Remote - California")
+    # State / abbr pins still restrict (full-text residency pins).
+    assert _is_us_restricted("Must reside in California")
+    assert _is_us_restricted("Candidates based in Texas preferred")
+    assert _is_us_restricted("Must be in CA")
+    assert _is_us_restricted("Candidates in NY only")
     assert not is_remotely_workable(
         LOCATION_REMOTE, "Remote", source="linkedin",
         description="Must be based in Austin", title="AI Engineer",
