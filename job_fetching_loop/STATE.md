@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 113 — Run stop (user: "c")
+- **Beat #:** 114 — PR #13 review (job loop CI-gate PR)
 - **Date:** 2026-09-24
-- **Trigger:** user — stop; remaining gaps are human-owned
-- **Status:** **STOPPED** — Beat 111 code + Beat 112 commit/push verified; user chose option C (stop). Open items handed to human: CI gate PR, external WIP restore/drop, Indeed/Glassdoor CAPTCHA, weekly spot-check, Actions schedule confirm. 2/3 beats used. STATE edit uncommitted.
+- **Trigger:** pull_request event — review job-fetching-loop→main (PR #13)
+- **Status:** **DONE** — Reviewed Beats 104–112 diff: 305 tests green locally; posted `CHANGES REQUESTED (comment)` review with 2 MEDIUM findings (desc-level US-city over-match drops Worldwide roles; per-job `check_link_health` HEAD is a cloud budget/fingerprint risk) + LOW nits. No code touched. Next: human gate on findings before merge.
 
 ## 3. Beat Log
 
@@ -43,6 +43,7 @@ systemd Persistent catch-up (Telegram ISP-blocked that day).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 114 | 2026-09-24 | PR #13 review (job→main) | Reviewed Beats 104–112 diff; 305 tests green; posted CHANGES REQUESTED(comment): desc-level `_is_us_restricted` drops Worldwide roles naming a US office; per-job `check_link_health` HEAD budget risk; LOW nits (service path hardcode, catch-up stamp, has_captcha card-clean, dead vars, Glassdoor location fabrication, stale STATE "uncommitted" text) | **DONE** — review sent; findings to human gate |
 | 113 | 2026-09-24 | user — option c (stop) | Run stop after Beat 112; listed 5 open human-owned gaps | **STOPPED** — 2/3 beats; no further work |
 | 112 | 2026-09-24 | user — 100% production ready | Commit+push Beat 111 F1–F4 (4 files) to origin; video gitignore hygiene (`loop.log`, `.agents/`, `skills-lock.json`) | **PASS** — HEAD=origin, 305 tests, secrets clean |
 | 111 | 2026-09-24 | user — continue / fix accuracy gaps | Fixed Beat 110 F1–F3 + **F4 drop Hybrid Cloud carve-out** + F1 residuals (`not only` / `the only thing` / `non-US persons only`); 305 tests, matrix 34/34, parity 34/34 | **PASS** — Checker R4 `APPROVED`; not committed |
@@ -93,6 +94,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
+13. **(Beat 114, HUMAN review findings on PR #13)** Before merge: (a) decide/fix desc-level `_is_us_restricted` over-match (Worldwide + "office in Austin/Seattle"... → dropped); (b) benchmark `check_link_health` per-job HEAD on a live sweep (cloud budget); §10 opts: let a human decide, then file a follow-up beat.
 
 ## 11. Human Gate Decisions (job loop)
 
