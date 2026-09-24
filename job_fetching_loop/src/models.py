@@ -383,14 +383,30 @@ def _has_strong_worldwide_eligibility(description: str | None) -> bool:
     Only explicit open-to-the-world phrasing qualifies (Rule 11c / B3).
     """
     d = (description or "").lower()
-    return any(m in d for m in (
+    if any(m in d for m in (
         "work from anywhere", "anywhere in the world", "anywhere in world",
-        "global remote", "globally remote", "worldwide remote", "remote worldwide",
+        "global remote", "globally remote", "worldwide remote",
         "open worldwide", "eligible worldwide", "candidates worldwide",
         "applicants worldwide", "no location requirement",
         "no geographic restriction", "location-agnostic", "location agnostic",
         "hire from anywhere", "hiring from anywhere", "work from anywhere in",
-    ))
+        "100% remote worldwide", "fully remote worldwide",
+        "remote worldwide role", "remote worldwide team",
+        "remote worldwide position", "remote worldwide job",
+        "remote worldwide opportunity", "remote, worldwide",
+        "remotely worldwide", "hire remotely worldwide",
+        # Beat 110 R4: verb-first forms only with a job-subject left context —
+        # bare "is remote worldwide" matched marketing ("tooling is remote
+        # worldwide") and re-opened foreign metros (Checker R4 MAJOR).
+        "role is remote worldwide", "position is remote worldwide",
+        "job is remote worldwide", "title is remote worldwide",
+        "opportunity is remote worldwide", "work is remote worldwide",
+        "remote worldwide is available", "remote worldwide is open",
+    )):
+        return True
+    # Bare "remote worldwide" is marketing-speak ("remote worldwide clients")
+    # and must NOT unlock a foreign physical city (Beat 110 São Paulo/Lagos FP).
+    return False
 
 
 def is_foreign_country_restricted(text: str) -> bool:
@@ -474,9 +490,14 @@ def is_hybrid_work(text: str | None) -> bool:
     if not text:
         return False
     low = text.lower()
-    # Tech-stack / figure-of-speech carve-outs first
+    # Beat 111 (user): Hybrid cloud couples on-prem/private infra with public
+    # cloud — not fully remote-workable for Pakistan (needs private network /
+    # local rack access). Was a stack carve-out; now explicitly restricted.
+    if re.search(r"\bhybrid[\s_-]+(?:cloud|multicloud|multi-cloud)\b", low):
+        return True
+    # Tech-stack / figure-of-speech carve-outs (hybrid cloud handled above)
     cleaned = re.sub(
-        r"\bhybrid[\s_-]+(?:cloud|multicloud|multi-cloud|infrastructure|infra|"
+        r"\bhybrid[\s_-]+(?:infrastructure|infra|"
         r"ai|architecture|models?|search|retrieval|rag|index(?:ing)?|storage|"
         r"native|approach|strategy|method|pattern|mix|modeling|modelling)\b",
         " ", low,
@@ -531,6 +552,9 @@ def is_title_restricted(title: str | None) -> bool:
     if is_hybrid_work(title):
         return True
     t = title.lower()
+    # Underscore is a word char — normalize before every title token match
+    # so "AI_Engineer_Onsite" / "ML Engineer_Hybrid" behave like spaces (R4).
+    t_norm = t.replace("_", " ")
     # Foreign domestic-only restrictions in title (US, UK, Canada, Europe, Germany, Poland, LATAM)
     # A4: extend to APAC/ME foreign markets that previously slipped ("India Only", "Japan Only").
     _title_only_countries = (
@@ -541,33 +565,82 @@ def is_title_restricted(title: str | None) -> bool:
         "|south africa|russia|ukraine|argentina|chile|peru|vietnam|thailand"
         "|malaysia|indonesia|philippines|new zealand"
     )
-    if re.search(rf"\b(?:{_title_only_countries})\s*[-–]?\s*only\b", t):
+    if re.search(rf"\b(?:{_title_only_countries})\s*[-–]?\s*only\b", t_norm):
         return True
-    if re.search(rf"\bonly\s+in\s+(?:the\s+)?(?:{_title_only_countries})\b", t):
+    if re.search(rf"\bonly\s+in\s+(?:the\s+)?(?:{_title_only_countries})\b", t_norm):
         return True
-    if re.search(rf"\b(?:{_title_only_countries}|eu|european|emirates)\s+candidates?\s+only\b", t):
+    if re.search(rf"\b(?:{_title_only_countries}|eu|european|emirates)\s+candidates?\s+only\b", t_norm):
         return True
-    if re.search(r"\b(?:us|usa|u\.s\.|uk|canada|eu|european|israel)\s+based\b", t):
+    if re.search(r"\b(?:us|usa|u\.s\.|uk|canada|eu|european|israel)\s+based\b", t_norm):
         return True
-    if re.search(r"\[(?:[^\]]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^\]]*)?\]", t):
+    if re.search(r"\[(?:[^\]]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^\]]*)?\]", t_norm):
         return True
-    if re.search(r"\((?:[^)]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^)]*)?\)", t):
+    if re.search(r"\((?:[^)]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^)]*)?\)", t_norm):
         return True
     # Physical hub / city restrictions in title e.g. [NYC or SF], (NYC or SF), -Onsite in ...
-    if re.search(r"\[(?:[^\]]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^\]]*)?\]", t):
+    if re.search(r"\[(?:[^\]]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^\]]*)?\]", t_norm):
         return True
-    if re.search(r"\((?:[^)]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^)]*)?\)", t):
+    if re.search(r"\((?:[^)]*\b)?(?:nyc|sf|new york|san francisco|london|berlin|austin|seattle|boston|tel aviv|jerusalem)(?:\b[^)]*)?\)", t_norm):
         return True
     # Bare on-site / in-office mention anywhere in the title is a physical-attendance signal.
-    if re.search(r"\b(?:on-site|onsite|on site|in[- ]office|office[- ]based|office only)\b", t):
+    if re.search(r"\b(?:on-site|onsite|on site|in[- ]office|office[- ]based|office only)\b", t_norm):
         return True
     # Commission-only / sales-closer modes are not salaried engineering roles.
-    if re.search(r"\bcommission\s+(?:only|-only|based)\b", t):
+    if re.search(r"\bcommission\s+(?:only|-only|based)\b", t_norm):
         return True
     # Foreign employment forms a Pakistan candidate cannot exercise
     # (German "Working Student", apprenticeships, exchange/internship visas).
-    if re.search(r"\bworking\s+student\b|\bwerkstudent\b|\bco[- ]op\b", t):
+    if re.search(r"\bworking\s+student\b|\bwerkstudent\b|\bco[- ]op\b", t_norm):
         return True
+    # Beat 110: bare hybrid work-mode token in titles ("ML Engineer (Hybrid)",
+    # "ML Engineer - Hybrid", …). Hybrid Cloud already rejected via
+    # is_hybrid_work(title) above (Beat 111 — stack carve-out removed).
+    # Stack words (Search/RAG/AI/Models) stay allowed.
+    cleaned_title = re.sub(
+        r"\bhybrid[\s_-]+(?:infrastructure|infra|"
+        r"ai|architecture|models?|search|retrieval|rag|index(?:ing)?|storage|"
+        r"native|approach|strategy|method|pattern|mix|modeling|modelling)\b",
+        " ", t_norm,
+    )
+    cleaned_title = re.sub(r"\bhybrid\s+of\b", " ", cleaned_title)
+    if re.search(r"\bhybrid\b", cleaned_title):
+        return True
+    # Beat 110/111: non-engineering talent titles — only when the title is NOT an
+    # engineering role (HR-tech eng titles like "Software Engineer - Recruiting
+    # Solutions" must stay open). Do NOT count analyst/devops/mlops/sre here —
+    # "DevOps Recruiter" / "Talent Acquisition Analyst" are still talent roles.
+    # Match "engineering" too ("Engineering Manager - Recruiting Solutions").
+    # Strip order (Checker B110 F2/F3):
+    #   1. forward compound discipline+Recruiter, but not when "solutions" follows
+    #      (underscore form "Software_Engineer_Recruiting_Solutions" must stay open)
+    #   2. inverse head+separator+discipline ("Technical Recruiter - Engineering");
+    #      separator REQUIRED so "Recruiting Software Engineer" stays open.
+    if re.search(
+        r"\b(?:technical\s+)?recruiter(?:s)?\b|\brecruit(?:er|ing|ers)\b"
+        r"|\btalent[\s_]+(?:acquisition|intelligence|partner|scout|lead|specialist)\b"
+        r"|\bheadhunter\b",
+        t_norm,
+    ):
+        t_eng = t_norm
+        if "solution" not in t_norm:
+            t_eng = re.sub(
+                r"\b(?:engineering|engineers?|developers?|architects?|scientists?|"
+                r"researchers?|programmers?)\s+(?:technical\s+)?(?:recruiter|recruiting)\b",
+                " ", t_norm,
+            )
+        t_eng = re.sub(
+            r"\b(?:technical\s+)?(?:recruiter(?:s)?|recruit(?:er|ing|ers)"
+            r"|talent[\s_]+(?:acquisition|intelligence|partner|scout|lead|specialist)"
+            r"|headhunter)\s*[-–,:/]\s*"
+            r"(?:\w+\s+){0,5}(?:engineering|engineers?|developers?|architects?|"
+            r"scientists?|researchers?|programmers?)\b",
+            " ", t_eng,
+        )
+        if not re.search(
+            r"\b(?:engineer(?:ing)?|developer|architect|scientist|researcher|programmer)\b",
+            t_eng,
+        ):
+            return True
     return False
 
 
@@ -599,6 +672,12 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\b(?:us|usa|u\.s\.)\s+citizens?\s+or\s+permanent\s+residents?\b",
     r"\b(?:uk|canada|eu|european)\s+citizens?\s+or\s+permanent\s+residents?\b",
     r"\b(?:uk|canada|eu|european)\s+(?:candidates?|residen(?:ts?|cy)|based)\s+only\b",
+    # Beat 110: "UK based candidates only" (word order = based + candidates + only)
+    r"\b(?:uk|united\s+kingdom|canada|eu|european)\s+based\s+(?:candidates?|engineers?|developers?|applicants?)\s+only\b",
+    # Beat 110: ITAR / export-control "US person(s)/personnel" — matched on the
+    # ORIGINAL case below (lowercase "us person" is the English pronoun).
+    r"\b(?:must\s+be\s+(?:a\s+)?)(?:u\.?s\.?)\s*persons?\b",
+    r"\b(?:u\.?s\.?)\s*citizen(?:s|ship)?\s+only\b",
     r"\b(?:japan|singapore|saudi|uae|australia|israel)\s+(?:residen(?:ts?|cy)|citizens?|based)\s+only\b",
     r"\bgreen\s+card(?:\s+holder)?\b",
     r"\b(?:uk|united\s+kingdom)\s+right\s+to\s+work\b",
@@ -620,6 +699,9 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\bus\s+(?:eastern|central|pacific|mountain)\b",
     r"\b(?:eastern|central|pacific|mountain)\s+(?:time|hours?|zone)\b",
     r"\b(?:est|cst|mst|pst)\s+(?:time|hours?|zone|business)\b",
+    # Beat 110: zone trails the phrase ("business hours EST") — searched on
+    # lowercased text, so patterns must be lowercase.
+    r"\bbusiness\s+hours?\s+(?:est|cst|mst|pst|et|ct|mt|pt)\b",
     r"\b(?:eastern|central|pacific|mountain)\s*\(\s*(?:est|cst|mst|pst)\s*\)",
     r"\bmust\s+overlap\b",
     r"\b\d+\s+hours?\s+(?:of\s+)?(?:timezone\s+)?overlap\b",
@@ -650,6 +732,10 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     rf"\bin\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
     rf"\bbased\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
     rf"\b(?:must|required)\s+be\s+based\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    # Beat 110: soft residency preference still pins geography ("Based in India preferred")
+    rf"\bbased\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+preferred\b",
+    rf"\b(?:reside|residing|living|located)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+preferred\b",
+    rf"\bprefer(?:ably)?\s+(?:based|located|living)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
 ]
 
 
@@ -669,7 +755,127 @@ def is_description_restricted(description: str | None) -> bool:
     # never the lowercase pronoun "us" (e.g. "gives us only ..."). Match on the original case.
     if re.search(r"\b(?i:100%\s+remote\s*[-–]?\s*)?(?:US|USA|U\.S\.)\s*[-–]?\s*(?i:only)\b", description):
         return True
+    # Beat 110 R4: ITAR "US person(s)/personnel" and "US business hours" —
+    # US token case-sensitive (pronoun protection); trailing words case-insensitive.
+    # Polarity is evaluated PER SENTENCE (Checker R4 MAJOR): unrelated negation in
+    # another sentence ("No agencies please.") must not suppress a later hard pin
+    # ("US PERSONS ONLY."). A hard "only" in the same sentence always restricts.
+    # U\.S(?:\.A)?\. covers both "U.S." and "U.S.A." (bare U\.S\. missed U.S.A.).
+    _us_tok = r"(?:US|USA|U\.S(?:\.A)?\.)"
+    if re.search(rf"\b{_us_tok}\s*(?i:persons?|personnel)\b", description) or re.search(
+        rf"\b{_us_tok}\s+(?i:business\s+hours?)\b", description
+    ):
+        _us_open_neg = re.compile(
+            r"(?i)"
+            r"\bnot\s+(?:a\s+)?(?:required|requirement|mandatory|necessary|needed)\b"
+            r"|\bisn't\s+required\b|\baren't\s+required\b"
+            r"|\bshall\s+not\s+be\s+required\b|\bnot\s+mandatory\b"
+            r"|\bno\s+(?:us\s+|u\.s\.(?:\.a)?\s*)?(?:persons?|citizenship|requirement)\b"
+            r"|\bdoes\s+not\s+require\b|\bdo(?:es)?\s+not\s+require\b|\bdon't\s+require\b"
+            r"|\brequirement\s*:\s*none\b|\brequirement\s+is\s+none\b|\bnone\s+required\b"
+            r"|\bwithout\s+(?:a\s+)?(?:us\s+|u\.s\.(?:\.a)?\s*)?persons?\b"
+            # Consume full "non-US persons" so strip does not leave a bare
+            # "persons only" that would trip the persons-ONLY pin (R4 residual).
+            r"|\bnon[-\s]?(?:us|u\.s\.(?:\.a)?)\s+(?:persons?|personnel)\b"
+            r"|\bnon[-\s]?(?:us|u\.s\.(?:\.a)?)\b"
+        )
+        _us_hard = re.compile(
+            r"(?i)\bonly\b|\bmust\s+(?:be|work|have|possess)\b"
+            r"|\bis\s+required\b|\bare\s+required\b|\brequires?\b"
+        )
+        _restricted_any = False
+        # Protect U.S. / U.S.A. periods so the sentence splitter does not cut
+        # "U.S. persons only" into "U.S." + "persons only" (R4 regression).
+        # Pattern is U + "." + S + optional("."+A) + "."  — not U\.S\.A?\. which
+        # demanded a third period after a bare "U.S.".
+        _protected = re.sub(
+            r"\bU\.S(?:\.A)?\.", lambda m: m.group(0).replace(".", "\x01"), description, flags=re.I
+        )
+        for _seg in re.split(r"(?<=[.!?])\s+|\n+", _protected):
+            _seg = _seg.replace("\x01", ".")
+            if not (
+                re.search(rf"\b{_us_tok}\s*(?i:persons?|personnel)\b", _seg)
+                or re.search(rf"\b{_us_tok}\s+(?i:business\s+hours?)\b", _seg)
+            ):
+                continue
+            # Beat 111 F1: open-neg must not suppress a DIFFERENT hard pin in
+            # the same clause ("…not required; must work US business hours").
+            # Strip open-neg phrases first, then look for an independent hard
+            # pin on the remainder — so "does not require US person" stays open
+            # (bare `require` was the open-neg itself, not a second pin).
+            # After strip: only count a persons-ONLY pin (not bare "only",
+            # which survives inside "not only" / "the only thing").
+            if re.search(_us_open_neg, _seg):
+                _rest = _us_open_neg.sub(" ", _seg)
+                _not_only = re.search(r"(?i)\bnot\s+only\b", _rest)
+                # US token REQUIRED on the pin: optional US made "Open to
+                # non-US persons only" restrict after stripping non-US.
+                if not _not_only and re.search(
+                    r"(?i)\b(?:us|usa|u\.s(?:\.a)?\.?)\s+persons?\s+only\b"
+                    r"|\bonly\s+(?:us|usa|u\.s(?:\.a)?\.?)\s+persons?\b",
+                    _rest,
+                ):
+                    return True
+                if re.search(
+                    r"(?i)\bmust\s+(?:be|work|have|possess)\b"
+                    r"|\bis\s+required\b|\bare\s+required\b|\brequires?\b",
+                    _rest,
+                ):
+                    return True
+                continue
+            # No open-neg: hard pin or bare mention → restrict.
+            if re.search(r"(?i)\bonly\b", _seg) and not re.search(
+                r"(?i)\bnot\s+only\b", _seg
+            ):
+                return True
+            if re.search(_us_hard, _seg):
+                return True
+            # Bare US person/hours mention with no open-negation → restrict
+            # (original fail-closed behavior; pronouns never reach here — US token).
+            _restricted_any = True
+        return _restricted_any
     return False
+
+
+def _usa_token_polarity_open(text: str) -> bool:
+    """True when every sentence with a bare USA/U.S.A./United States token is
+    open-negated (R4 polarity) and has no hard pin.
+
+    Shared with is_description_restricted's US-person block so daily
+    (_is_us_restricted) and digest stay in lockstep on "not required" forms.
+    """
+    _open_neg = re.compile(
+        r"(?i)"
+        r"\bnot\s+(?:a\s+)?(?:required|requirement|mandatory|necessary|needed)\b"
+        r"|\bisn't\s+required\b|\baren't\s+required\b"
+        r"|\bshall\s+not\s+be\s+required\b|\bnot\s+mandatory\b"
+        r"|\bno\s+(?:us\s+|u\.s\.(?:\.a)?\s*)?(?:persons?|citizenship|requirement)\b"
+        r"|\bdoes\s+not\s+require\b|\bdo(?:es)?\s+not\s+require\b|\bdon't\s+require\b"
+        r"|\brequirement\s*:\s*none\b|\brequirement\s+is\s+none\b|\bnone\s+required\b"
+        r"|\bwithout\s+(?:a\s+)?(?:us\s+|u\.s\.(?:\.a)?\s*)?persons?\b"
+        r"|\bnon[-\s]?(?:us|u\.s\.(?:\.a)?)\b"
+    )
+    _hard = re.compile(
+        r"(?i)\bonly\b|\bmust\s+(?:be|work|have|possess)\b"
+        r"|\bis\s+required\b|\bare\s+required\b|\brequires?\b"
+    )
+    _usa_tok = re.compile(r"(?i)\b(?:usa|united states(?:\s+of\s+america)?|u\.s\.a)\b")
+    _protected = re.sub(
+        r"\bU\.S(?:\.A)?\.", lambda m: m.group(0).replace(".", "\x01"), text, flags=re.I
+    )
+    _found = False
+    for _seg in re.split(r"(?<=[.!?])\s+|\n+", _protected):
+        _seg = _seg.replace("\x01", ".")
+        if not _usa_tok.search(_seg):
+            continue
+        _found = True
+        if re.search(r"(?i)\bonly\b", _seg) and not re.search(r"(?i)\bnot\s+only\b", _seg):
+            return False
+        if _hard.search(_seg):
+            return False
+        if not _open_neg.search(_seg):
+            return False
+    return _found
 
 
 def _is_us_restricted(text: str) -> bool:
@@ -694,9 +900,13 @@ def _is_us_restricted(text: str) -> bool:
             or re.search(r"\bremote\b.*\b97458\b", low)):
         return True
 
-    # Tokens / phrases indicating USA restriction
+    # Tokens / phrases indicating USA restriction.
+    # R4 residual: bare USA/U.S.A./United States token respects sentence-scoped
+    # polarity — "U.S.A. person status is not required" is open (is_description_restricted
+    # already agrees); geo pins and hard "only"/must forms still restrict.
     if re.search(r"\b(?:usa|united states(?:\s+of\s+america)?|u\.s\.a)\b", low):
-        return True
+        if not _usa_token_polarity_open(text):
+            return True
     if re.search(r"\b(?:us|u\.s\.)\s*(?:only|based|resident|citizen|candidates?)\b", low):
         return True
 

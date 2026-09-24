@@ -137,7 +137,8 @@ def test_hiring_marker_requires_colon_for_position():
 def test_hybrid_figurative_not_rto():
     # Worldwide role whose body says "hybrid of monorepo and polyrepo" must KEEP
     assert not is_hybrid_work("Our platform uses a hybrid of monorepo and polyrepo.")
-    assert not is_hybrid_work("Hybrid Cloud Engineer")
+    # Beat 111: Hybrid cloud = private+public infra coupling — drop for PK remote.
+    assert is_hybrid_work("Hybrid Cloud Engineer")
     assert is_worldwide_remote(
         "Worldwide",
         description="Our platform uses a hybrid of monorepo and polyrepo. Fully remote.",
@@ -147,6 +148,12 @@ def test_hybrid_figurative_not_rto():
     assert is_hybrid_work("This role is hybrid — 2 days per week in the office")
     assert is_hybrid_work("Work model: hybrid")
     assert is_hybrid_work("Hybrid work arrangement required")
+    # Hybrid cloud e2e must not pass as worldwide remote
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Build hybrid cloud platforms. Fully remote worldwide.",
+        title="Hybrid Cloud Engineer",
+    )
 
 
 # ── B2: Israel market mention vs Israel role ─────────────────────────────────
@@ -301,6 +308,245 @@ def test_record_reject_appends_row():
         "ts": sink[0]["ts"],
     }]
     _record_reject(None, "x", "y", "z", "w")  # no-op
+
+
+# ── Beat 110: residual Rule-11 leak hunt ─────────────────────────────────────
+
+def test_strong_eligibility_rejects_remote_worldwide_marketing():
+    from src.models import _has_strong_worldwide_eligibility
+    # Marketing "remote worldwide clients" must NOT unlock a foreign city.
+    assert not _has_strong_worldwide_eligibility("remote worldwide clients")
+    assert not _has_strong_worldwide_eligibility("remote worldwide")
+    # Explicit eligibility phrasing still qualifies.
+    assert _has_strong_worldwide_eligibility("worldwide remote team")
+    assert _has_strong_worldwide_eligibility("100% remote worldwide team")
+    assert _has_strong_worldwide_eligibility("Fully remote worldwide.")
+    assert _has_strong_worldwide_eligibility("Work from anywhere in the world")
+    assert _has_strong_worldwide_eligibility("remote worldwide opportunity")
+    assert _has_strong_worldwide_eligibility("remote, worldwide")
+    assert _has_strong_worldwide_eligibility("We hire remotely worldwide")
+    assert _has_strong_worldwide_eligibility("This role is remote worldwide")
+    assert _has_strong_worldwide_eligibility("The position is remote worldwide")
+    # R4: marketing subjects must NOT unlock foreign cities via "is remote worldwide".
+    assert not _has_strong_worldwide_eligibility("tooling is remote worldwide")
+    assert not _has_strong_worldwide_eligibility(
+        "Our platform is remote worldwide for enterprises"
+    )
+
+
+def test_foreign_metros_with_remote_worldwide_marketing_rejected():
+    # Physical foreign cities reject bare "remote worldwide" marketing via
+    # fallthrough + tightened B3 (no foreign-set entry required — Beat 110).
+    for loc in (
+        "São Paulo", "London", "Toronto", "Mexico City", "Bogotá",
+        "Warsaw", "Chile", "Buenos Aires", "Lima", "Cape Town", "Lagos",
+        "Istanbul",
+    ):
+        assert not is_remotely_workable(
+            LOCATION_REMOTE, loc, source="linkedin",
+            description="remote worldwide clients", title="AI Engineer",
+        ), loc
+        assert not is_remotely_workable(
+            LOCATION_REMOTE, loc, source="linkedin",
+            description="remote worldwide", title="AI Engineer",
+        ), loc
+    # Strong eligibility still allows an HQ city when the body proves WFA.
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "São Paulo", source="linkedin",
+        description="Work from anywhere — worldwide remote team", title="AI Engineer",
+    )
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "São Paulo", source="linkedin",
+        description="This role is remote worldwide", title="AI Engineer",
+    )
+    # R4 MAJOR: marketing "tooling is remote worldwide" must not unlock São Paulo.
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "São Paulo", source="linkedin",
+        description="tooling is remote worldwide", title="AI Engineer",
+    )
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "São Paulo", source="linkedin",
+        description="Our platform is remote worldwide for enterprises", title="AI Engineer",
+    )
+    # Bare physical cities with a normal body stay rejected.
+    for loc in ("Cape Town", "Lagos", "Dhaka", "Istanbul"):
+        assert not is_remotely_workable(
+            LOCATION_REMOTE, loc, source="linkedin",
+            description="Great role", title="AI Engineer",
+        ), loc
+
+
+def test_title_hybrid_and_recruiter_rejected():
+    assert is_title_restricted("ML Engineer (Hybrid)")
+    assert is_title_restricted("ML Engineer - Hybrid")
+    assert is_title_restricted("Software Engineer - Hybrid (NYC)")
+    assert is_title_restricted("Hybrid ML Engineer")
+    assert is_title_restricted("Hybrid - ML Engineer")
+    assert is_title_restricted("ML Engineer Hybrid")
+    assert is_title_restricted("ML Engineer: Hybrid")
+    assert is_title_restricted("Technical Recruiter")
+    assert is_title_restricted("Senior Recruiter")
+    assert is_title_restricted("Talent Acquisition Specialist")
+    assert is_title_restricted("DevOps Recruiter")
+    assert is_title_restricted("MLOps Recruiter")
+    assert is_title_restricted("SRE Recruiter")
+    assert is_title_restricted("Talent Acquisition Analyst")
+    assert is_title_restricted("Recruiting Analyst")
+    assert is_title_restricted("ML Engineer_Hybrid")
+    assert is_title_restricted("DevOps_Recruiter")
+    assert is_title_restricted("Talent_Acquisition_Analyst")
+    # R4: underscore on-site titles must restrict (t_norm used for onsite gate).
+    assert is_title_restricted("AI_Engineer_Onsite")
+    assert is_title_restricted("Onsite_AI_Engineer")
+    # R4: discipline+Recruiter compounds are talent titles, not eng roles.
+    assert is_title_restricted("Engineering Recruiter")
+    assert is_title_restricted("Developer Recruiter")
+    # Beat 111: Hybrid Cloud dropped (private infra coupling); Search/RAG/AI stack open.
+    assert is_title_restricted("Hybrid Cloud Engineer")
+    assert is_title_restricted("Staff Hybrid Cloud Architect")
+    assert not is_title_restricted("Senior ML Engineer - Hybrid Search")
+    assert not is_title_restricted("AI Engineer - Hybrid RAG")
+    assert not is_title_restricted("Staff Engineer - Hybrid AI")
+    assert not is_title_restricted("ML Engineer - Hybrid Models")
+    assert not is_title_restricted("Senior Machine Learning Engineer")
+    # HR-tech engineering titles stay open (recruiter word is the product domain).
+    assert not is_title_restricted("Software Engineer, Talent Acquisition Platform")
+    assert not is_title_restricted("Software Engineer - Recruiting Solutions")
+    assert not is_title_restricted("Recruiting Software Engineer")
+    assert not is_title_restricted("Engineering Manager - Recruiting Solutions")
+    assert not is_title_restricted("Senior Engineering Manager, Talent Acquisition Platform")
+    assert not is_title_restricted("Data Engineering Lead - Recruiting Solutions")
+    assert not is_title_restricted("Software_Engineer_Recruiting_Solutions")
+    # F2: recruiter/talent head + separator + discipline is a talent title.
+    assert is_title_restricted("Technical Recruiter - Engineering")
+    assert is_title_restricted("Recruiter, Engineering")
+    assert is_title_restricted("Senior Recruiter - Software Engineering")
+    assert is_title_restricted("Talent Acquisition - Cloud Engineering")
+    # F3: underscore country-only forms match t_norm.
+    assert is_title_restricted("AI_Engineer_India_Only")
+    assert is_title_restricted("ML_Engineer_US_Only")
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="Great role", title="Technical Recruiter",
+    )
+
+
+def test_description_residency_preference_and_us_person():
+    assert is_description_restricted("UK based candidates only")
+    assert is_description_restricted("Must be a US person")
+    assert is_description_restricted("US person only")
+    assert is_description_restricted("US persons only")
+    assert is_description_restricted("U.S. persons only")
+    assert is_description_restricted("Must be US persons")
+    assert is_description_restricted("export-controlled US persons only")
+    # Title-case / uppercase trailing words still restrict (US token is case-sensitive).
+    assert is_description_restricted("U.S. Persons only")
+    assert is_description_restricted("U.S. persons only")
+    assert is_description_restricted("US Persons only")
+    assert is_description_restricted("US PERSONS ONLY")
+    assert is_description_restricted("US Business Hours EST")
+    assert is_description_restricted("Must Work US Business Hours")
+    # Zone-trailing pin without US prefix (lowered-text pattern).
+    assert is_description_restricted("Must work business hours EST")
+    assert is_description_restricted("Flexible within business hours EST")
+    assert is_description_restricted("Based in India preferred")
+    assert is_description_restricted("Preferably based in Poland")
+    assert is_description_restricted("US business hours EST")
+    assert is_description_restricted("Must work US business hours")
+    # Lowercase "us" is the English pronoun — must NOT restrict.
+    assert not is_description_restricted("Give us person-hours estimate")
+    assert not is_description_restricted("Show us personnel are friendly")
+    assert not is_description_restricted("Contact us business hours")
+    # Polarity / open-to-all phrasing must NOT restrict (R3).
+    assert not is_description_restricted("US person status is not required")
+    assert not is_description_restricted("No US person requirement")
+    assert not is_description_restricted("This role does not require US person status")
+    assert not is_description_restricted("open to non-US persons")
+    assert not is_description_restricted("US and non-US persons welcome")
+    assert not is_description_restricted("US business hours not required")
+    # R4: negation synonyms.
+    assert not is_description_restricted("US person status is not a requirement")
+    assert not is_description_restricted("US person status isn't required")
+    assert not is_description_restricted("US person requirement: none")
+    assert not is_description_restricted("US person is not mandatory")
+    assert not is_description_restricted("US person status shall not be required")
+    # R4 MAJOR: sentence-scoped polarity — other-sentence negation must not
+    # suppress a hard US pin later in the description.
+    assert is_description_restricted("No agencies please. US PERSONS ONLY.")
+    assert is_description_restricted(
+        "We do not require prior experience. US PERSONS ONLY."
+    )
+    assert is_description_restricted("No degree required. Must work US business hours.")
+    assert is_description_restricted("Free of charge training. US persons only.")
+    assert is_description_restricted(
+        "This role does not require a degree. US persons only."
+    )
+    assert is_description_restricted(
+        "US person status is not required, but US PERSONS ONLY may apply"
+    )
+    # F1: same-clause open-neg must not suppress a different hard pin.
+    assert is_description_restricted(
+        "US person status is not required; candidates must work US business hours"
+    )
+    assert is_description_restricted(
+        "US person status is not required, and must work US business hours"
+    )
+    assert is_description_restricted(
+        "US person status isn't required; role requires US business hours"
+    )
+    # Pure open-neg (no second hard pin) stays open — including "does not require".
+    assert not is_description_restricted("This role does not require US person status")
+    assert not is_description_restricted("US person status is not required")
+    # F1 residual (Checker R1 + R2): bare "only" after strip must not fire on
+    # "not only" / "the only thing"; non-US persons strip must not leave a
+    # bare "persons only" pin. Only a US-token persons-ONLY pin counts.
+    assert not is_description_restricted(
+        "US person status is not required; not only US persons may apply"
+    )
+    assert not is_description_restricted(
+        "US person status is the only thing not required"
+    )
+    assert not is_description_restricted(
+        "Open to non-US persons only for global roles"
+    )
+    assert not is_description_restricted("open to non US persons only")
+    # Pakistan / global remote body stays open.
+    assert not is_description_restricted("Open to candidates in Pakistan only.")
+    assert not is_description_restricted(
+        "We are an all-remote global team building AI tools."
+    )
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="UK based candidates only", title="AI Engineer",
+    )
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="US business hours EST", title="AI Engineer",
+    )
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="US PERSONS ONLY", title="AI Engineer",
+    )
+
+
+def test_usa_person_open_negation_not_us_restricted():
+    # R4 residual: bare U.S.A. token in _is_us_restricted must honor polarity
+    # so daily (_is_us_restricted) and digest do not re-reject an open description.
+    open_desc = "U.S.A. person status is not required"
+    assert not _is_us_restricted(open_desc)
+    assert not is_description_restricted(open_desc)
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description=open_desc, title="AI Engineer",
+    )
+    # Hard / geo forms still restricted via the same token.
+    assert _is_us_restricted("U.S.A. persons only")
+    assert _is_us_restricted("Must reside in the United States")
+    assert _is_us_restricted("Remote (U.S.A. only)")
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Remote", source="linkedin",
+        description="U.S.A. persons only", title="AI Engineer",
+    )
 
 
 # ── B6: pagination params present in guest URL ───────────────────────────────

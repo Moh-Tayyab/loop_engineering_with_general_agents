@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 109 — Push Beats 104–108 to origin (cloud was 3 commits stale)
+- **Beat #:** 112 — Production finalization: commit+push Beat 111 + video gitignore hygiene
 - **Date:** 2026-09-24
-- **Trigger:** backlog #2 — "Push so weekday Actions can run"
-- **Status:** `git push origin job-fetching-loop` → `02955e9..68de118` OK; remote HEAD = local; secret scan on range clean; branch in sync. Next cloud cron picks up B3 fix + accuracy remediation | PASS
+- **Trigger:** user — make it 100% production ready
+- **Status:** **PASS** — Committed Beat 111 F1–F4 + STATE on `job-fetching-loop`; pushed to origin (HEAD synced); video `loop.log`/`.agents/`/`skills-lock.json` ignored (hygiene commit). 305 tests EXIT 0; external WIP parked, not committed.
 
 ## 3. Beat Log
 
@@ -43,6 +43,9 @@ systemd Persistent catch-up (Telegram ISP-blocked that day).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 112 | 2026-09-24 | user — 100% production ready | Commit+push Beat 111 F1–F4 (4 files) to origin; video gitignore hygiene (`loop.log`, `.agents/`, `skills-lock.json`) | **PASS** — HEAD=origin, 305 tests, secrets clean |
+| 111 | 2026-09-24 | user — continue / fix accuracy gaps | Fixed Beat 110 F1–F3 + **F4 drop Hybrid Cloud carve-out** + F1 residuals (`not only` / `the only thing` / `non-US persons only`); 305 tests, matrix 34/34, parity 34/34 | **PASS** — Checker R4 `APPROVED`; not committed |
+| 110 | 2026-09-24 | user — residual leak hunt | R4 fixes + `_usa_token_polarity_open` in `_is_us_restricted`; 305 tests green | **CHANGES REQUESTED** — same-clause open-neg suppresses hard pin; recruiter inverse (`Technical Recruiter - Engineering`) opens; underscore country/`Software_Engineer_Recruiting_Solutions` inconsistent. Frozen, uncommitted |
 | 109 | 2026-09-24 | backlog #2 push | Pushed `job-fetching-loop` 02955e9→68de118 (Beats 104–108) so cloud cron runs fixed filters | PASS — remote synced, secrets clean |
 | 108 | 2026-09-24 | audit Sep 23–24 output | **B3 tighten + foreign metros:** bare worldwide marketing no longer overrides Germany/Chile/Rio; `_has_strong_worldwide_eligibility`; daily/digest parity; purge 3 BairesDev FPs from output | PASS — 300 tests, exit 0 |
 | 107 | 2026-09-22 | user — yes next beat | **Commit Beat 105–106** accuracy-gap remediation + LinkedIn dry-run smoke + worktree drift | PASS — 298 tests, exit 0; run 3/3 ceiling → stop |
@@ -87,6 +90,8 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 8. ~~Restore LinkedIn feed **description body capture** (Beat 100b)~~ — A9 now fail-closes missing JD bodies in guest path (Beat 105); authenticated feed body capture still worth a live Friday check.
 9. **Human spot-check (weekly):** open `output/jobs_*.json` + latest Telegram digest; sample 5 jobs — confirm Rule 11 (APAC/ME remote, Global, or Worldwide contractor only), live URLs, and description_snippet length ≤ 2000. Log pass/fail in beat log.
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
+11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
+12. **(Beat 112)** Next: human spot-check weekly output (§10 task 9); Indeed/Glassdoor CAPTCHA still needs human once; restore-or-drop parked external WIP.
 
 ## 11. Human Gate Decisions (job loop)
 

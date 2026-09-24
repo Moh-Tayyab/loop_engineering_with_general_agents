@@ -320,10 +320,10 @@ def test_is_title_restricted_cases():
     assert is_title_restricted("SDR - AI Voice Company (Commission Only - Remote & On-Site)")
     assert is_title_restricted("Working Student – Innovation, AI & Entrepreneurship")
     assert is_title_restricted("Software Engineer - Hybrid (NYC)")
-    # "Hybrid Cloud" is a stack (on-prem + cloud infra), not a work mode
-    assert not is_title_restricted("Hybrid Cloud Engineer")
-    assert not is_title_restricted("Staff Hybrid Cloud Architect")
-    assert not is_title_restricted("Hybrid-Cloud Engineer")
+    # Beat 111: Hybrid cloud needs private/on-prem coupling — not remote for PK
+    assert is_title_restricted("Hybrid Cloud Engineer")
+    assert is_title_restricted("Staff Hybrid Cloud Architect")
+    assert is_title_restricted("Hybrid-Cloud Engineer")
     # Legitimate non-restricted titles
     assert not is_title_restricted("AI agent engineer")
     assert not is_title_restricted("Senior Software Engineer")
