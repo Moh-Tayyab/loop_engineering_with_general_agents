@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -84,6 +85,12 @@ def session_is_valid(state: Any, now: float | None = None) -> bool:
             expires = float(raw_exp)
         except (TypeError, ValueError):
             continue
+        # Non-finite (inf/nan) expiry is corrupt — reject the cookie rather
+        # than treat a corrupt file as a forever-valid session (fail-closed).
+        # OverflowError from int→float is deliberately NOT caught here: it is
+        # the corruption signal load() self-heals on (Beat 133, human-gated).
+        if not math.isfinite(expires):
+            continue
         if expires < 0 or expires > now_s:
             return True
     return False  # every cookie expired
@@ -146,7 +153,19 @@ def load(source: str, base_dir: Path | None = None) -> dict | None:
         except OSError:
             pass
         return None
-    if not session_is_valid(state):
+    try:
+        valid = session_is_valid(state)
+    except OverflowError:
+        # Corrupt expiry (e.g. 1000-digit integer) — treat the whole file as
+        # corruption: self-heal (unlink) and fall back to a fresh launch,
+        # per the never-raise contract (Beat 133, human-approved bound fix).
+        log.warning("corrupt session expiry for %s — removing %s", source, path)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if not valid:
         log.info("session for %s missing/expired — fresh launch needed", source)
         return None
     return state
@@ -220,7 +239,13 @@ def attempt_login(
         return None
 
     state = outcome.get("state")
-    if not session_is_valid(state):
+    try:
+        usable = session_is_valid(state)
+    except OverflowError:
+        # Corrupt expiry from a bad do_login result must not escape the
+        # fail-closed boundary either (same signal as load(), no file yet).
+        usable = False
+    if not usable:
         log.warning("login for %s returned no usable session", source)
         return None
 

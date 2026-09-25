@@ -61,6 +61,28 @@ def test_load_non_utf8_is_corruption_and_removed(tmp_path):
     assert not bad.exists()  # self-healing ran
 
 
+def test_load_oversized_expiry_is_corruption_and_removed(tmp_path):
+    # Human-approved bound fix (Beat 133): a 1000-digit expires makes
+    # float(int) raise OverflowError — must self-heal (None + unlink), not escape.
+    bad = tmp_path / "indeed-session.json"
+    payload = (
+        '{"cookies": [{"name": "a", "value": "b", "expires": '
+        + "9" * 1000
+        + '}], "origins": []}'
+    )
+    bad.write_text(payload, encoding="utf-8")
+    assert session.load("indeed", base_dir=tmp_path) is None
+    assert not bad.exists()  # self-healing ran
+
+
+def test_nonfinite_expiry_rejected(tmp_path):
+    # inf/nan expiry from a corrupt file must not count as a valid session.
+    corrupt = {"cookies": [{"name": "a", "value": "b", "expires": 1e999}], "origins": []}
+    assert session.session_is_valid(corrupt) is False
+    corrupt["cookies"][0]["expires"] = float("nan")
+    assert session.session_is_valid(corrupt) is False
+
+
 def test_expired_cookies_are_invalid(tmp_path):
     dead = _state(expires=time.time() - 60)
     assert session.session_is_valid(dead) is False
@@ -186,6 +208,14 @@ def test_attempt_login_persist_failure_returns_none(monkeypatch, tmp_path):
     monkeypatch.setattr(session, "save", _boom)
     state = _state(expires=time.time() + 7200)
     assert session.attempt_login("indeed", lambda: state, base_dir=tmp_path) is None
+    assert list(tmp_path.glob("*")) == []
+
+
+def test_attempt_login_corrupt_expiry_returns_none(monkeypatch, tmp_path):
+    # Same OverflowError signal on the do_login path must not escape.
+    _local_env(monkeypatch)
+    evil = {"cookies": [{"name": "a", "value": "b", "expires": 10**400}], "origins": []}
+    assert session.attempt_login("indeed", lambda: evil, base_dir=tmp_path) is None
     assert list(tmp_path.glob("*")) == []
 
 
