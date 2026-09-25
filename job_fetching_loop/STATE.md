@@ -22,10 +22,12 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 140 — Checker dispatch for PR #16 re-review + adversarial §6 (after workflow model fix)
+- **Beat #:** 141 — PR #16 review of head `333e8bb` after Beat 140
 - **Date:** 2026-09-25
-- **Trigger:** user — "model already updated (2fed239); proceed with checker review on PR #16"
-- **Status:** **2× CHANGES REQUESTED on the rework head (re-review round 2); adversarial still running → rework 2/2 NEXT RUN (§7 bound — one retry left, then human gate).** Dispatch done: published `2fed239`→main as `4e5d38f` (issue_comment triggers read the default branch), re-triggered `/opencode check` (`5833222378`) — model fix verified live (job runs, past the 24s death). **Findings to consolidate:** (a) BOTH reviewers: `open_until` merged lexicographically — mixed tz offsets can keep the earlier deadline and reopen early → compare parsed instants + two-deadline regression; (b) BOTH: coexistence merge crashes on malformed state (`sources.indeed = null` / composite `None` → `AttributeError`, and it pops legacy first so history is lost) → guard non-dict values + regression; (c) autonomous P1: **dry-run still mutates runtime paths** — `.slc/`+`.runtime`+`output` mkdirs (`main.py:780,803`) and corrupt `state.json` quarantine-rename during `LoopState()` construction (`state.py:157`) predate the dry-run branch → assess pre-existing vs in-scope, gate or document; (d) LOW: trailing whitespace `STATE.md:126` (my task-19 line). Verified in-scope fixes from round 1 pass (375 green). **Next run: consolidate (a)–(d) into rework 2/2, full suite, push, request final re-review — do NOT open a 3rd rework (§7).**
+- **Trigger:** pull_request #16 — review current Phase 2 diff
+- **Status:** **CHANGES REQUESTED** — posted summary review; 375 tests, compileall, and diff checks pass. Reproduced P1s: mixed-timezone deadline merge, malformed coexistence crash/history loss, overlong DNS label acceptance, and dry-run path/state mutations. Independent checker spawn blocked by the runner free-tier gate.
+- **Action:** Reviewed `origin/main...333e8bb`; ran the full job-loop pytest suite, compileall, `git diff --check`, and targeted probes; no production code changed.
+- **Result:** **CHANGES REQUESTED** — human gate after rework bound 2/2 (§7); fix the findings and request final re-review.
 
 ## 3. Beat Log
 
@@ -61,9 +63,11 @@ recompressed at 2026-09-25 (beat 137, §9 cap): beats 134–135 merged (verdicts
 recompressed at 2026-09-25 (beat 139, §9 cap): beats 126–127 merged (verdicts kept).
 recompressed at 2026-09-25 (beat 140, §9 cap): beats 129–130 merged (verdicts kept).
 recompressed at 2026-09-25 (beat 138, §9 cap): beats 110–113 merged (111–113 PASS; 110 CHANGES REQUESTED).
+recompressed at 2026-09-25 (beat 141, §9 cap): beats 114–115 merged (114 CR; 115 Maker done, verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 141 | 2026-09-25 | pull_request #16 — current-head review | Reviewed `origin/main...333e8bb`; full job-loop pytest, compileall, diff check, and targeted probes; posted summary review | **CHANGES REQUESTED** — P1 deadline merge, malformed-state crash/history loss, DNS label validation, and dry-run purity; 375 tests pass; rework 2/2 human gate |
 | 140 | 2026-09-25 | user — proceed with checker review (model fix 2fed239) | Published `2fed239`→main as `4e5d38f` (issue_comment runs use default branch — fix was PR-branch-only); `/opencode check` re-triggered (`5833222378`); round-1 fixes confirmed passing (375) | **CHANGES REQUESTED ×2 (round 2)** — lexical `open_until` merge, malformed-state merge crash, dry-run mkdir/quarantine writes, WS nit; adversarial in flight → **rework 2/2 next run (§7, last retry)** |
 | 139 | 2026-09-25 | user — continue (Beat 138 CR) | `pick_domain_key`: registry source + empty domain list → None (fail-closed, no plain-key fallback); migration → `cfg.default_domain()` hardcoded host (env-independent, runs under broken env); legacy+composite merge (totals sum, consecutive max, later deadline); +4/−1 regressions; P1 repro re-verified | **MAKER DONE (rework 1/2)** — 375 passed EXIT 0; `1095508` pushed → checker re-review; adversarial §6 blocked on task 19 |
 | 138 | 2026-09-25 | pull_request #16 — Phase 2 (A2) checker | Isolated repro: all-invalid nonempty `INDEED_DOMAINS` returns `[]`; `pick_domain_key` falls back to plain `indeed`, and Indeed uses hard-coded `pk.indeed.com`. Full 372-test gate passed. | **CHANGES REQUESTED** — P1 fail-open registry fallback; Maker fix + regression required; review 5317951401 |
@@ -83,7 +87,7 @@ recompressed at 2026-09-25 (beat 138, §9 cap): beats 110–113 merged (111–11
 | 120–119 | 2026-09-25 | checker sync/user beats (§9 compress) | 120: CR on Beat 119; 119: foreign-aware group-walk + & clause charset, fixed _utc_today monkeypatch leak | **CHECKER CR; MAKER DONE** 311 green |
 | 118–117 | 2026-09-24 | checker sync/residual beats (§9 compress) | 118: re-reviewed Beat-117 (short-clause sibling drops residual → bound hit → human gate); 117: pin-gated group-walk + residency pins, +5 tests | **CHECKER CR** (non-blocking, PR #13); **MAKER DONE** 309 green |
 | 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
-| 115–114 | 2026-09-24 | user/checker beats (§9 compress) | 115: PR#13 rework — MEDIUM #1 residency-pin city restrict, MEDIUM #2 HEAD-after-dedup+timeout+close, Glassdoor A2, +4 tests; 114: PR #13 review — desc-level US-restriction false-drops, HEAD budget, LOW nits | **MAKER DONE** (309 green); **CR** findings → human gate |
+
 
 
 ## 4. Budget & Stopping Conditions
