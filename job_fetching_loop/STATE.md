@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 121 — Beat 120 Checker findings: comma/tempered clause capture + full-match walk
+- **Beat #:** 122 — Beat 121 Checker re-review
 - **Date:** 2026-09-25
-- **Trigger:** user — "Continue" on Beat 120 CHANGES REQUESTED (rework past §7 bound stays human-authorized)
-- **Status:** **MAKER DONE** — MEDIUM-1a: `,` joins the `_US_RESTRICTED_RE` clause charset (`Remote - Austin, Berlin` open); MEDIUM-1b: skip set is now `_NON_US_LOCALITY_TOKENS = FOREIGN | APAC | ME` (`Remote - Austin and Singapore` / `Remote - Seattle and Dubai` open; verified disjoint from all US pin sets); MEDIUM-2: `.search`→`.finditer` full walk + tempered group stop before any later `remote` word (`... Berlin; Remote - Dallas` and `... Berlin. This role is Remote - Dallas.` now restrict). +3 regression tests; `git diff --check` clean (test_digest trailing WS, test_models EOF). **312 passed** EXIT 0, secrets clean. Pushing for Checker re-review.
+- **Trigger:** pull_request sync — user-authorized continuation of PR #13
+- **Status:** **CHECKER REVIEWED — CHANGES REQUESTED (FAIL)** — 312 tests pass; hard US pins are bypassed by Worldwide/APAC markers, and foreign geography-only descriptions are accepted by the daily and weekly gates. Review posted; no production code changed; human gate remains.
 
 ## 3. Beat Log
 
@@ -48,6 +48,7 @@ blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects,
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 122 | 2026-09-25 | pull_request sync (`5caa5e4`) | Re-reviewed Beat 121; 312 tests, syntax, diff, and secret checks clean; reproduced marker-override US-pin fail-open and foreign geography-only description leaks in daily+digest | **FAIL — CHANGES REQUESTED (comment)** — two MEDIUM findings posted; no production code changed; human gate |
 | 121 | 2026-09-25 | user — continue (Beat 120 CR findings) | MEDIUM-1a `,` in clause charset; MEDIUM-1b `_NON_US_LOCALITY_TOKENS` = FOREIGN\|APAC\|ME; MEDIUM-2 `finditer` + tempered group stop; +3 tests; `diff --check` cleanups | **MAKER DONE** — 312 passed, repros open/pins restrict, secrets clean; push for re-review |
 | 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
 | 119 | 2026-09-25 | user — fix (a) then (b), past §7 bound | (a) foreign-locality-aware group-walk + `&` clause charset; (b) tradeoff-pinning tests; fixed `_utc_today` monkeypatch leak in test_main (UTC-roll suite break) | **MAKER DONE** — 311 passed, repros open/pins restrict, secrets clean; push for re-review |
@@ -99,8 +100,9 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
-13. ~~**(Beat 116–120, HUMAN, PR #13 residual)**~~ **Fixed Beat 121 (user-authorized continue):** MEDIUM-1a `,` joins clause charset (`Remote - Austin, Berlin` / `Remote - Seattle, London` open); MEDIUM-1b skip set = `_NON_US_LOCALITY_TOKENS` (FOREIGN|APAC|ME — `Remote - Austin and Singapore` / `Remote - Seattle and Dubai` open; disjoint from US pin sets); MEDIUM-2 `finditer` full walk + tempered group stop before later `remote` word (`...; Remote - Dallas` + `... is Remote - Dallas.` restrict). +3 regression tests; 312 green. Awaiting Checker re-review on PR #13.
+13. **(Beat 122, HUMAN, PR #13)** **CHANGES REQUESTED posted:** two MEDIUM fail-open paths remain: `_is_us_restricted` marker early-return bypasses hard US pins; `is_description_restricted` misses bare foreign geography pins. Human-owned rework required; no production code changed.
 14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
+15. **Proposed durable lesson (human approval):** Evaluate explicit Worldwide/APAC markers only after hard residency-pin detection; add mixed-marker and foreign-city/country-only regressions.
 
 ## 11. Human Gate Decisions (job loop)
 
