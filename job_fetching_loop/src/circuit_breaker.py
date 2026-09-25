@@ -126,17 +126,24 @@ class CircuitManager:
             if ":" in key or key not in defaults:
                 continue
             new_key = f"{key}:{defaults[key]}"
-            legacy = current.pop(key)
-            if new_key not in current:
-                current[new_key] = legacy
+            legacy = current.get(key)
+            if not isinstance(legacy, dict):
+                current.pop(key, None)
+                continue
+            existing = current.get(new_key)
+            if existing is None or not isinstance(existing, dict):
+                current[new_key] = current.pop(key)
             else:
-                self._merge_circuit_history(current[new_key], legacy)
+                legacy = current.pop(key)
+                self._merge_circuit_history(existing, legacy)
 
     @staticmethod
     def _merge_circuit_history(existing: dict[str, Any], legacy: dict[str, Any]) -> None:
         """Coexistence case (legacy + its composite both present): keep both
         histories — totals summed (disjoint windows of the same host),
         consecutive fails = max, open_until = later deadline (fail closed)."""
+        if not isinstance(existing, dict) or not isinstance(legacy, dict):
+            return
         for total in ("total_fails", "total_successes"):
             try:
                 existing[total] = int(existing.get(total, 0)) + int(legacy.get(total, 0))
@@ -150,8 +157,27 @@ class CircuitManager:
         except (TypeError, ValueError):
             pass
         eu_new, eu_old = existing.get("open_until"), legacy.get("open_until")
-        if eu_old and (not eu_new or str(eu_old) > str(eu_new)):
-            existing["open_until"] = eu_old
+        if eu_old:
+            if not eu_new:
+                existing["open_until"] = eu_old
+            else:
+                def _parse_ts(val: Any) -> datetime | None:
+                    if not isinstance(val, str):
+                        return None
+                    try:
+                        dt = datetime.fromisoformat(val)
+                        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        return None
+
+                dt_old, dt_new = _parse_ts(eu_old), _parse_ts(eu_new)
+                if dt_old and dt_new:
+                    if dt_old > dt_new:
+                        existing["open_until"] = eu_old
+                elif dt_old and not dt_new:
+                    existing["open_until"] = eu_old
+                elif str(eu_old) > str(eu_new):
+                    existing["open_until"] = eu_old
 
     def _sources(self) -> dict[str, Any]:
         current = self._container.state if isinstance(self._container, LoopState) else self._container

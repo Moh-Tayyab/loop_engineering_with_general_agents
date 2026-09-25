@@ -274,3 +274,32 @@ def test_glassdoor_apply_domain_from_registry(monkeypatch):
 def test_scraper_defaults_unchanged_without_registry():
     assert IndeedScraper()._BASE == "https://pk.indeed.com"
     assert GlassdoorScraper()._BASE == "https://www.glassdoor.com"
+
+
+def test_parse_domains_rejects_label_longer_than_63_chars():
+    long_label = "a" * 64 + ".example"
+    assert cfg.parse_domains(long_label) == []
+
+
+def test_migration_merges_open_until_chronologically_across_timezones():
+    # 11:00-02:00 is 13:00 UTC, which is later than 12:00+00:00 UTC
+    dt_legacy = "2026-10-01T11:00:00-02:00"
+    dt_comp = "2026-10-01T12:00:00+00:00"
+    state = {"sources": {
+        "indeed": {"open_until": dt_legacy},
+        "indeed:pk.indeed.com": {"open_until": dt_comp},
+    }}
+    CircuitManager(state)
+    assert state["sources"]["indeed:pk.indeed.com"]["open_until"] == dt_legacy
+
+
+def test_migration_handles_malformed_legacy_and_composite_records():
+    # None or non-dict records must not crash CircuitManager
+    state = {"sources": {
+        "indeed": None,
+        "glassdoor": "corrupt_string",
+        "indeed:pk.indeed.com": None,
+    }}
+    CircuitManager(state)
+    # indeed legacy is dropped, doesn't crash
+    assert "indeed" not in state["sources"]

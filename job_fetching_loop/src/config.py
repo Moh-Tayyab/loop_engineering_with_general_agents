@@ -177,7 +177,7 @@ def _valid_hostname(host: str) -> bool:
         return False
     labels = host.split(".")
     for label in labels:
-        if not label or label.startswith("-") or label.endswith("-"):
+        if not label or len(label) > 63 or label.startswith("-") or label.endswith("-"):
             return False
         if any(not (c.isalnum() or c == "-") for c in label):
             return False
