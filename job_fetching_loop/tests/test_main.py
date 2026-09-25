@@ -587,7 +587,12 @@ def test_seen_store_ttl_uses_utc(tmp_slc, monkeypatch):
     in a UTC+ timezone returns a different day than `fetched_at`."""
     import src.state as state_mod
 
-    state_mod._utc_today = lambda: datetime(2026, 9, 15, tzinfo=timezone.utc).date()
+    # MUST go through monkeypatch: a bare assignment leaks the pinned date to
+    # every later test in the suite (broke test_state_hygiene after UTC roll).
+    monkeypatch.setattr(
+        state_mod, "_utc_today",
+        lambda: datetime(2026, 9, 15, tzinfo=timezone.utc).date(),
+    )
     store = SeenStore()
     store.mark_exact("h1")
     assert store.seen_until["h1"] == "2026-09-15"

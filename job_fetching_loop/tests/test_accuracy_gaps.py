@@ -615,6 +615,47 @@ def test_pr13_worldwide_desc_us_office_mentions_stay_open():
     )
 
 
+def test_pr13_short_mixed_locality_clauses_stay_open():
+    # PR #13 human-gate fix (a): short ≤4-word clauses mixing a US locality
+    # with a FOREIGN one are multi-locality prose, not US residency pins.
+    short_mixed = [
+        "Remote - Austin and Berlin",
+        "Remote (New York, London)",
+        "Remote - Seattle & London",
+        "Remote - Texas and Germany",
+        "Remote - California or Ireland",
+        "Remote - France vs Texas",
+        "Remote - UK or California",
+    ]
+    for clause in short_mixed:
+        assert not _is_us_restricted(clause), clause
+        assert is_remotely_workable(
+            LOCATION_REMOTE, "Worldwide", source="linkedin",
+            description=clause, title="AI Engineer",
+        ), clause
+
+
+def test_pr13_mixed_locality_tradeoffs_pinned():
+    """PR #13 human-gate (b): documented, tested sacrifice + kept precision.
+
+    1. Recall-first tradeoff (accepted leak): a mixed enumeration is treated
+       as multi-locality even when the poster may have meant a US-only pin
+       ("Remote - Austin or Berlin" could be offering Austin as one option).
+       We accept that leak so Worldwide roles naming a US office survive.
+    2. Kept precision: all-US enumerations still restrict.
+    3. US-person / USA tokens are unaffected by the foreign-locality skip.
+    """
+    # (1) accepted leak — pinned so a future change is a conscious decision
+    assert not _is_us_restricted("Remote - Austin or Berlin")
+    assert not _is_us_restricted("Remote (Boston, Dublin)")
+    # (2) all-US enumeration still restricts
+    assert _is_us_restricted("Remote - Austin and Dallas")
+    assert _is_us_restricted("Remote (New York, Seattle)")
+    # (3) USA/US-person tokens stay unconditional
+    assert _is_us_restricted("Remote - US or Germany only")
+    assert _is_us_restricted("U.S.A. persons only")
+
+
 def test_pr13_residency_pins_still_restrict_us_cities():
     # Residency-pin constructions remain restricted (no recall leak).
     assert _is_us_restricted("Remote - Austin")            # _US_RESTRICTED_RE

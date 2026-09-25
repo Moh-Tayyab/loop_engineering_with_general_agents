@@ -300,8 +300,8 @@ _US_MAJOR_CITIES = frozenset({
 
 _US_RESTRICTED_RE = re.compile(
     r"(?i)(?:remote\s*\(([^)]*)\)"          # "Remote (US Only)" / "Remote (San Francisco)"
-    r"|remote\s*[-,–/]\s*([A-Za-z .]+)"  # "Remote - US Only" / "Remote - Texas" / "Remote / US"
-    r"|([A-Za-z .]+?)\s*[-,–/]\s*remote)"  # "Maryland – Remote" / "TX - Remote" / "US - Remote"
+    r"|remote\s*[-,–/]\s*([A-Za-z .&]+)"  # "Remote - US Only" / "Remote - Texas" / "Remote / US" / "Remote - Seattle & London"
+    r"|([A-Za-z .&]+?)\s*[-,–/]\s*remote)"  # "Maryland – Remote" / "TX - Remote" / "US - Remote"
 )
 
 US_DOMESTIC_BOARDS = frozenset({"indeed", "glassdoor", "ziprecruiter", "monster"})
@@ -970,6 +970,16 @@ def _is_us_restricted(text: str) -> bool:
                 return True
             if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
                 return True
+            # PR #13 human-gate fix (a): enumeration/foreign-aware group-walk.
+            # A captured clause naming a FOREIGN locality alongside a US one
+            # ("Remote - Austin and Berlin", "Remote (New York, London)",
+            # "Remote - Texas and Germany") is multi-locality prose on a
+            # Worldwide role — NOT a US residency pin. US-only qualifiers
+            # ("Remote - Austin", "Remote (New York)", "Remote - US Only")
+            # still restrict; USA/US-person tokens above stay unconditional.
+            if any(re.search(rf"\b{re.escape(f)}\b", grp_low)
+                   for f in _FOREIGN_RESTRICTED_COUNTRIES):
+                continue
             # PR #13 residual MEDIUM: the hyphen alt captures the whole trailing
             # clause ("Remote-first hubs in Austin and Berlin" → group includes
             # a city). Geo walks only fire on SHORT location qualifiers
