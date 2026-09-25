@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+import os
 
 import pytest
 
@@ -18,6 +20,21 @@ _DOMAIN_VARS = (
     "GLASSDOOR_DOMAINS_CLOUD",
     "JOB_LOOP_CLOUD",
 )
+
+
+@contextmanager
+def monkeypatch_context(env: dict[str, str]):
+    """Set env vars for the block, restoring on exit (migration tests)."""
+    saved = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
@@ -109,14 +126,41 @@ def test_migration_leaves_non_registry_sources_alone():
     assert not any(":" in k for k in state["sources"])
 
 
-def test_migration_does_not_clobber_existing_composite_key():
+def test_migration_merges_when_legacy_and_composite_coexist():
+    """Coexistence: keep BOTH histories (totals summed, consecutive = max,
+    open_until = later deadline) and drop the legacy key — CodeRabbit #3."""
+    later = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
     state = {"sources": {
-        "indeed": {"consecutive_fails": 5},
-        "indeed:pk.indeed.com": {"consecutive_fails": 1},
+        "indeed": {"consecutive_fails": 5, "total_fails": 7, "total_successes": 2},
+        "indeed:pk.indeed.com": {"consecutive_fails": 1, "total_fails": 3,
+                                 "total_successes": 4, "open_until": later},
     }}
     CircuitManager(state)
-    assert state["sources"]["indeed:pk.indeed.com"]["consecutive_fails"] == 1
+    merged = state["sources"]["indeed:pk.indeed.com"]
+    assert merged["consecutive_fails"] == 5
+    assert merged["total_fails"] == 10
+    assert merged["total_successes"] == 6
+    assert merged["open_until"] == later
     assert "indeed" not in state["sources"]
+
+
+def test_migration_targets_default_host_not_env_override():
+    """Legacy history belongs to the pre-Phase-2 host — a custom env override
+    set at upgrade time must not re-home it (CodeRabbit #1)."""
+    state = {"sources": {"indeed": {"consecutive_fails": 3}}}
+    with monkeypatch_context({"INDEED_DOMAINS": "custom.example"}):
+        CircuitManager(state)
+    assert list(state["sources"]) == ["indeed:pk.indeed.com"]
+    assert state["sources"]["indeed:pk.indeed.com"]["consecutive_fails"] == 3
+
+
+def test_migration_runs_even_with_all_invalid_env():
+    """Broken registry config must not silently skip migration (defect found
+    in Beat 138 checker repro)."""
+    state = {"sources": {"indeed": {"consecutive_fails": 4}}}
+    with monkeypatch_context({"INDEED_DOMAINS": "https://bad, no space"}):
+        CircuitManager(state)
+    assert list(state["sources"]) == ["indeed:pk.indeed.com"]
 
 
 def test_prune_unknown_keeps_composite_keys_for_known_sources():
@@ -149,6 +193,19 @@ def test_pick_domain_key_none_when_all_domain_circuits_open(monkeypatch):
     state = {"sources": {"indeed:one.example": {"consecutive_fails": 5, "open_until": future}}}
     mgr = CircuitManager(state)
     assert pick_domain_key(mgr, "indeed") is None
+
+
+def test_pick_domain_key_fail_closed_on_all_invalid_registry(monkeypatch):
+    """All-invalid non-empty registry → None (skip), never the plain key:
+    the plain-key fallback would scrape the hard-coded default host while
+    recording under the wrong circuit (checker P1, Beat 138)."""
+    monkeypatch.setenv("INDEED_DOMAINS", "https://evil.example, bad host")
+    mgr = CircuitManager({"sources": {}})
+    assert cfg.source_domains("indeed") == []
+    assert pick_domain_key(mgr, "indeed") is None
+    # glassdoor too
+    monkeypatch.setenv("GLASSDOOR_DOMAINS", ".., /etc/passwd")
+    assert pick_domain_key(mgr, "glassdoor") is None
 
 
 def test_pick_domain_key_plain_source_for_non_registry(monkeypatch):

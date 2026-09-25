@@ -204,6 +204,14 @@ def parse_domains(raw: str) -> list[str]:
     return out
 
 
+def default_domain(source: str) -> str | None:
+    """The pre-Phase-2 hard-coded host for a registry source (None otherwise).
+
+    Used by state migration: legacy circuit history was accumulated against
+    this host, so it must be the migration target regardless of env overrides."""
+    return _DEFAULT_DOMAINS.get(source.lower())
+
+
 def source_domains(source: str) -> list[str]:
     """Domains a browser source may scrape (A2 env registry + cloud/local split).
 

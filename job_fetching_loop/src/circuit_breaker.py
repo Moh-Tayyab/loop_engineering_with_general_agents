@@ -109,22 +109,49 @@ class CircuitManager:
 
     def _migrate_legacy_domain_keys(self) -> None:
         """Phase 2 (A2) state-shape migration: legacy plain `source` entries
-        for domain-scoped sources become `source:<default-domain>` in place,
-        carrying failure history. Runs once at construction; idempotent
-        (composite keys and non-registry sources are untouched)."""
+        for domain-scoped sources become `source:<pre-Phase-2 default host>`
+        in place, carrying failure history. Runs once at construction;
+        idempotent (composite keys and non-registry sources are untouched).
+
+        The target host is ALWAYS the hard-coded default (the host that
+        actually produced the legacy history), never the current env override —
+        so `INDEED_DOMAINS` set at upgrade time cannot re-home old failures."""
         current = self._sources()
         defaults: dict[str, str] = {}
         for src in cfg.DOMAIN_SOURCES:
-            domains = cfg.source_domains(src)
-            if domains:
-                defaults[src] = domains[0]
+            default = cfg.default_domain(src)
+            if default:
+                defaults[src] = default
         for key in list(current):
             if ":" in key or key not in defaults:
                 continue
             new_key = f"{key}:{defaults[key]}"
-            value = current.pop(key)
-            if new_key not in current:  # first write wins; never clobber
-                current[new_key] = value
+            legacy = current.pop(key)
+            if new_key not in current:
+                current[new_key] = legacy
+            else:
+                self._merge_circuit_history(current[new_key], legacy)
+
+    @staticmethod
+    def _merge_circuit_history(existing: dict[str, Any], legacy: dict[str, Any]) -> None:
+        """Coexistence case (legacy + its composite both present): keep both
+        histories — totals summed (disjoint windows of the same host),
+        consecutive fails = max, open_until = later deadline (fail closed)."""
+        for total in ("total_fails", "total_successes"):
+            try:
+                existing[total] = int(existing.get(total, 0)) + int(legacy.get(total, 0))
+            except (TypeError, ValueError):
+                pass
+        try:
+            existing["consecutive_fails"] = max(
+                int(existing.get("consecutive_fails", 0)),
+                int(legacy.get("consecutive_fails", 0)),
+            )
+        except (TypeError, ValueError):
+            pass
+        eu_new, eu_old = existing.get("open_until"), legacy.get("open_until")
+        if eu_old and (not eu_new or str(eu_old) > str(eu_new)):
+            existing["open_until"] = eu_old
 
     def _sources(self) -> dict[str, Any]:
         current = self._container.state if isinstance(self._container, LoopState) else self._container
@@ -215,12 +242,18 @@ def pick_domain_key(circuit: CircuitManager, source: str) -> str | None:
     Registry sources: first domain whose `source:domain` circuit is closed →
     that composite key (per-domain breakers — one domain's CAPTCHA/timeout no
     longer takes the whole source down). No available domain → None (skip).
+    A registry source whose configured domain list is EMPTY (all entries
+    failed validation) is a configuration error: return None (skip) — never
+    fall back to the plain source key, which would scrape the hard-coded
+    default host while recording under the wrong circuit.
     Non-registry sources: the plain source key when closed, else None."""
-    domains = cfg.source_domains(source)
-    if not domains:
-        return source if circuit.is_available(source) else None
-    for dom in domains:
-        key = domain_key(source, dom)
-        if circuit.is_available(key):
-            return key
-    return None
+    if source in cfg.DOMAIN_SOURCES:
+        domains = cfg.source_domains(source)
+        if not domains:
+            return None
+        for dom in domains:
+            key = domain_key(source, dom)
+            if circuit.is_available(key):
+                return key
+        return None
+    return source if circuit.is_available(source) else None
