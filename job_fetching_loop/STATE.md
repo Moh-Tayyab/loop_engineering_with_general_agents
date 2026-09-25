@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 131 — PR #15 final adversarial review after Beat 130
+- **Beat #:** 132 — PR #15 re-review after Beat 131
 - **Date:** 2026-09-25
-- **Trigger:** pull_request #15 at `169fddb`; full gate plus fail-closed probes
-- **Status:** **CHANGES REQUESTED — HUMAN GATE (rework 2/2 bound reached).** Full job-loop suite passed; focused session tests passed with 92% coverage. `load()` still lets `float()` raise `OverflowError` for an oversized corrupt cookie expiry, so fail-closed self-healing is incomplete. No third autonomous rework; owner review required.
+- **Trigger:** pull_request #15 at `c2321b3`; full gate plus fail-closed probes
+- **Status:** **CHANGES REQUESTED — HUMAN GATE (rework 2/2 bound reached).** Full job-loop suite passed; 19 session tests passed with 92% coverage. A malformed oversized cookie expiry still raises uncaught `OverflowError` from `load()` and leaves the corrupt file, so fail-closed self-healing remains incomplete. No third autonomous rework; owner review required.
 
 ## 3. Beat Log
 
@@ -52,9 +52,11 @@ recompressed at 2026-09-25 (beat 129, §9 cap): beats 101–103 merged (verdicts
 accuracy scrape + remote-badge cards, native-Chrome stealth + Bezier Turnstile live 5/5
 Indeed + 5/5 Glassdoor, digest-validity gate; all PASS 268 tests).
 recompressed at 2026-09-25 (beat 131, §9 cap): beats 104–106 merged (verdicts kept).
+recompressed at 2026-09-25 (beat 132, §9 cap): prior 109–107 row folded into the Beat 125 summary (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 132 | 2026-09-25 | PR #15 re-review (`c2321b3`) | Full suite exit 0; 19 session tests/92%; oversized corrupt expiry still raised `OverflowError` and remained on disk | **CHANGES REQUESTED — human gate; rework 2/2 exhausted, no third rework** |
 | 131 | 2026-09-25 | PR #15 final review (`169fddb`) | Full suite exit 0; 19 session tests/92% coverage; reproduced oversized corrupt expiry raising `OverflowError` in `load()` | **CHANGES REQUESTED — human gate; rework 2/2 exhausted, no third rework** |
 | 130 | 2026-09-25 | rework of Beat 129 checker CR (PR #15, bound 2/2) | Residual 1: `load()` → `read_bytes`+`json.loads` under `except ValueError` (non-UTF-8 = corruption → unlink); residual 2: `save()` wrapped in `attempt_login` (OSError → class-only log → None); +2 regressions; both checker repros hand-verified | **MAKER DONE** — 337 passed EXIT 0; **final verdict (12:01Z) = CR residual 3 (`OverflowError` expiry) → HUMAN GATE (§7, bound 2/2, no 3rd rework)** |
 | 129 | 2026-09-25 | pull_request #15 sync (`4aad984`) | Re-reviewed rework: 335-test gate + adversarial repros (0600 under umask, temp cleanup, `str(exc)` leak scan, decode/OSError/permission paths) | **CHANGES REQUESTED (2/2)** — R1+R2 confirmed fixed; `load()` non-UTF-8 raise + unguarded `save()` residuals → **Beat 130 (final rework)** |
@@ -74,7 +76,6 @@ recompressed at 2026-09-25 (beat 131, §9 cap): beats 104–106 merged (verdicts
 | 115–114 | 2026-09-24 | user/checker beats (§9 compress) | 115: PR#13 rework — MEDIUM #1 residency-pin city restrict, MEDIUM #2 HEAD-after-dedup+timeout+close, Glassdoor A2, +4 tests; 114: PR #13 review — desc-level US-restriction false-drops, HEAD budget, LOW nits | **MAKER DONE** (309 green); **CR** findings → human gate |
 | 113–111 | 2026-09-24 | user/backlog beats (§9 compress) | 113: run stop + 5 human gaps listed; 112: commit Beats 104–111 F1–F4 + gitignore hygiene; 111: Beat-110 F1–F4 + Hybrid Cloud carve-out fixes | **PASS** — Checker R4 APPROVED; 305 tests; 2/3-beat stop |
 | 110 | 2026-09-24 | user — residual leak hunt | R4 fixes + `_usa_token_polarity_open` in `_is_us_restricted`; 305 tests green | **CHANGES REQUESTED** — same-clause open-neg suppresses hard pin; recruiter inverse (`Technical Recruiter - Engineering`) opens; underscore country/`Software_Engineer_Recruiting_Solutions` inconsistent. Frozen, uncommitted |
-| 109–107 | 2026-09-22/24 | backlog/user beats (§9 compress) | 109: push Beats 104–108 to origin (cloud cron fixed filters); 108: B3 tighten + `_has_strong_worldwide_eligibility` + purge 3 BairesDev FPs; 107: commit accuracy remediation + LinkedIn dry-run smoke | PASS — 298–300 tests; remote synced |
 
 ## 4. Budget & Stopping Conditions
 
