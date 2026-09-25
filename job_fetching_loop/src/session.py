@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -89,14 +90,24 @@ def session_is_valid(state: Any, now: float | None = None) -> bool:
 
 
 def save(source: str, state: dict, base_dir: Path | None = None) -> Path:
-    """Atomically persist a storage_state (write temp file, then rename)."""
+    """Atomically persist a storage_state (unique temp file, then rename).
+
+    Checker R1 (PR #15): `storage_state` holds authentication cookies, so the
+    file must be owner-only (`0600`) regardless of umask — `mkstemp` creates
+    the temp file with mode 0600 and `os.replace` carries that mode over.
+    """
     if not isinstance(state, dict):
         raise TypeError("storage_state must be a dict")
     path = session_file(source, base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)  # no-op after a successful replace
     return path
 
 
@@ -112,7 +123,14 @@ def load(source: str, base_dir: Path | None = None) -> dict | None:
     except FileNotFoundError:
         return None
     except OSError as exc:
-        log.warning("cannot read session for %s: %s", source, exc)
+        # Path + class only — never the raw exception text (Checker R2 contract
+        # applies module-wide even though OSError text is path-only).
+        log.warning(
+            "cannot read session for %s at %s (%s)",
+            source,
+            path,
+            type(exc).__name__,
+        )
         return None
     try:
         state = json.loads(raw)
@@ -178,17 +196,21 @@ def attempt_login(
 
     exc = outcome.get("exc")
     if exc is not None:
-        msg = str(exc).lower()
+        # Checker R2 (PR #15): NEVER log `str(exc)` — arbitrary exception text
+        # can embed credentials (passwords/tokens in messages). Log only the
+        # fixed outcome and the exception class; match CAPTCHA markers on the
+        # private copy without emitting it.
+        kind = type(exc).__name__
         if isinstance(exc, (CaptchaDetected, CaptchaTimeout)) or any(
-            marker in msg for marker in _CAPTCHA_MARKERS
+            marker in str(exc).lower() for marker in _CAPTCHA_MARKERS
         ):
             log.warning(
-                "login for %s hit a CAPTCHA/challenge — aborting fail-closed: %s",
+                "login for %s hit a CAPTCHA/challenge (%s) — aborting fail-closed",
                 source,
-                exc,
+                kind,
             )
         else:
-            log.warning("login for %s failed: %s", source, exc)
+            log.warning("login for %s failed (%s)", source, kind)
         return None
 
     state = outcome.get("state")

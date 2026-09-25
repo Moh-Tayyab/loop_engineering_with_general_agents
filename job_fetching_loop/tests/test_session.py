@@ -1,7 +1,9 @@
-"""Phase 1 (Beat 126): storage_state session persistence + login guardrails."""
+"""Phase 1 (Beat 126/127): storage_state session persistence + login guardrails."""
 from __future__ import annotations
 
 import json
+import logging
+import stat
 import time
 
 import pytest
@@ -76,6 +78,13 @@ def test_save_is_atomic_no_tmp_left(tmp_path):
     assert leftovers == []
     # saved file is valid JSON
     json.loads((tmp_path / "indeed-session.json").read_text(encoding="utf-8"))
+
+
+def test_save_file_is_owner_only_0600(tmp_path):
+    # Checker R1 (PR #15): auth cookies must never be world-readable,
+    # regardless of the process umask (mkstemp forces 0600).
+    path = session.save("indeed", _state(), base_dir=tmp_path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 # ── attempt_login: A1 automation-runner refusal ──────────────────────────────
@@ -161,3 +170,31 @@ def test_attempt_login_rejects_non_callable(monkeypatch, tmp_path):
     _local_env(monkeypatch)
     with pytest.raises(TypeError):
         session.attempt_login("indeed", "not-callable", base_dir=tmp_path)
+
+
+# ── Checker R2 (PR #15): exception text must never reach the logs ────────────
+
+def _raiser(exc: Exception):
+    def _fn():
+        raise exc
+
+    return _fn
+
+
+def test_failed_login_never_logs_exception_text(monkeypatch, tmp_path, caplog):
+    _local_env(monkeypatch)
+    secret = "hunter2-super-secret-token"
+    # Both failure branches: generic crash AND the CAPTCHA-classified branch
+    # (message contains a captcha marker), each carrying a secret in the text.
+    for exc in (
+        RuntimeError(f"browser crashed; password={secret}"),
+        RuntimeError(f"cloudflare turnstile challenge; token={secret}"),
+    ):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="src.session"):
+            assert session.attempt_login(
+                "indeed", _raiser(exc), base_dir=tmp_path
+            ) is None
+        assert secret not in caplog.text  # fixed outcome only, never str(exc)
+        assert type(exc).__name__ in caplog.text  # class name IS logged
+    assert session.load("indeed", base_dir=tmp_path) is None  # nothing persisted
