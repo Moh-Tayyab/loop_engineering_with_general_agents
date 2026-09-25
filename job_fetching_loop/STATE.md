@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 134 — PR #15 final checker review (`0a0641c`)
+- **Beat #:** 135 — Beat 134 Human Gate resolution: attempt_login fail-closed hardening
 - **Date:** 2026-09-25
-- **Trigger:** pull_request — final checker review of the Beat 133 overflow fix
-- **Status:** **CHANGES REQUESTED — human gate; rework bound 2/2 exhausted.** Gate: 340 passed EXIT 0; focused session coverage 92%; `compileall` and `git diff --check` clean. Checker found two fail-closed escapes: a callback exception whose `__str__` raises (`src/session.py:228-231`) and a valid-cookie state that `save()` cannot JSON-serialize (`src/session.py:252-261`). No code changes made; further findings go to the human gate.
+- **Trigger:** user — human gate approval ("fulfill the requirements, will verify with opencode")
+- **Status:** **MAKER DONE — 342 passed EXIT 0; diff clean.** Fixed both Beat-134 probes: (1) `marker in exc_str`: exception `__str__` converted inside `try/except Exception` (adversarial exception whose `__str__` raises no longer escapes); (2) `save()` in `attempt_login` now catches `(OSError, TypeError, ValueError)` (non-serializable state fails-closed to None without raising). +2 regression tests in `test_session.py` (`test_attempt_login_exception_str_raising_returns_none`, `test_attempt_login_unserializable_state_returns_none`). Ready for final approval and merge of PR #15 (Phase 1 complete).
 
 ## 3. Beat Log
 
@@ -55,9 +55,11 @@ recompressed at 2026-09-25 (beat 131, §9 cap): beats 104–106 merged (verdicts
 recompressed at 2026-09-25 (beat 132, §9 cap): prior 109–107 row folded into the Beat 125 summary (verdicts kept).
 recompressed at 2026-09-25 (beat 133, §9 cap): beats 117–118 merged (verdicts kept).
 recompressed at 2026-09-25 (beat 134, §9 cap): beat 110 folded into 113–110 summary (verdict kept).
+recompressed at 2026-09-25 (beat 135, §9 cap): beats 119–120 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 135 | 2026-09-25 | user — human gate approval (fulfill requirements) | Safe `__str__` exc conversion + `(OSError, TypeError, ValueError)` save guard in `attempt_login`; +2 regressions; full suite 342 green | **MAKER DONE** — 342 passed EXIT 0; PR #15 ready to land |
 | 134 | 2026-09-25 | PR #15 final checker review (`0a0641c`) | 340-test gate + 92% focused coverage; adversarial probes found malformed `__str__` exception and non-JSON state escaping `attempt_login` | **CHANGES REQUESTED — human gate; rework 2/2 exhausted, no code changes** |
 | 133 | 2026-09-25 | user — approved option (a), bound exception | `load()` catches `OverflowError` → corrupt path (unlink+None); `attempt_login` guards same signal; non-finite expiries rejected (`math.isfinite`); +3 regressions (1000-digit expiry, inf/nan, corrupt `do_login`) | **MAKER DONE** — 340 passed EXIT 0; repro None+unlinked; pushed → final verdict pending |
 | 132 | 2026-09-25 | PR #15 re-review (`c2321b3`) | Full suite exit 0; 19 session tests/92%; oversized corrupt expiry still raised `OverflowError` and remained on disk | **CHANGES REQUESTED — human gate; rework 2/2 exhausted, no third rework** |
@@ -72,8 +74,7 @@ recompressed at 2026-09-25 (beat 134, §9 cap): beat 110 folded into 113–110 s
 | 123 | 2026-09-25 | user — continue (Beat 122 CR findings) | MEDIUM-A markers-after-pins in `_is_us_restricted`; MEDIUM-B sole-foreign-hyphen / foreign-enumeration / bare-`X only` desc patterns; +2 tests (daily+digest) | **MAKER DONE** — 314 passed, CI green on `960b80e`; **Checker blocked: reviewer cancelled 3× at `timeout-minutes: 20` → FREEZE (§7), no verdict**; run 3/3 → stop (§10 task 16) |
 | 122 | 2026-09-25 | pull_request sync (`5caa5e4`) | Re-reviewed Beat 121; 312 tests, syntax, diff, and secret checks clean; reproduced marker-override US-pin fail-open and foreign geography-only description leaks in daily+digest | **FAIL — CHANGES REQUESTED (comment)** — two MEDIUM findings posted; no production code changed; human gate |
 | 121 | 2026-09-25 | user — continue (Beat 120 CR findings) | MEDIUM-1a `,` in clause charset; MEDIUM-1b `_NON_US_LOCALITY_TOKENS` = FOREIGN\|APAC\|ME; MEDIUM-2 `finditer` + tempered group stop; +3 tests; `diff --check` cleanups | **MAKER DONE** — 312 passed, repros open/pins restrict, secrets clean; push for re-review |
-| 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
-| 119 | 2026-09-25 | user — fix (a) then (b), past §7 bound | (a) foreign-locality-aware group-walk + `&` clause charset; (b) tradeoff-pinning tests; fixed `_utc_today` monkeypatch leak in test_main (UTC-roll suite break) | **MAKER DONE** — 311 passed, repros open/pins restrict, secrets clean; push for re-review |
+| 120–119 | 2026-09-25 | checker sync/user beats (§9 compress) | 120: CR on Beat 119; 119: foreign-aware group-walk + & clause charset, fixed _utc_today monkeypatch leak | **CHECKER CR; MAKER DONE** 311 green |
 | 118–117 | 2026-09-24 | checker sync/residual beats (§9 compress) | 118: re-reviewed Beat-117 (short-clause sibling drops residual → bound hit → human gate); 117: pin-gated group-walk + residency pins, +5 tests | **CHECKER CR** (non-blocking, PR #13); **MAKER DONE** 309 green |
 | 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
 | 115–114 | 2026-09-24 | user/checker beats (§9 compress) | 115: PR#13 rework — MEDIUM #1 residency-pin city restrict, MEDIUM #2 HEAD-after-dedup+timeout+close, Glassdoor A2, +4 tests; 114: PR #13 review — desc-level US-restriction false-drops, HEAD budget, LOW nits | **MAKER DONE** (309 green); **CR** findings → human gate |

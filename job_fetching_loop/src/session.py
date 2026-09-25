@@ -226,8 +226,12 @@ def attempt_login(
         # fixed outcome and the exception class; match CAPTCHA markers on the
         # private copy without emitting it.
         kind = type(exc).__name__
+        try:
+            exc_str = str(exc).lower()
+        except Exception:
+            exc_str = ""
         if isinstance(exc, (CaptchaDetected, CaptchaTimeout)) or any(
-            marker in str(exc).lower() for marker in _CAPTCHA_MARKERS
+            marker in exc_str for marker in _CAPTCHA_MARKERS
         ):
             log.warning(
                 "login for %s hit a CAPTCHA/challenge (%s) — aborting fail-closed",
@@ -251,7 +255,7 @@ def attempt_login(
 
     try:
         saved = save(source, state, base_dir)
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         # Persist failure must not escape the fail-closed boundary (Checker
         # residual 2): class name only, per the R2 no-exception-text contract.
         log.warning(

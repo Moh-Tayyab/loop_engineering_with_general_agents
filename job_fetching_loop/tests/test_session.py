@@ -251,3 +251,32 @@ def test_failed_login_never_logs_exception_text(monkeypatch, tmp_path, caplog):
         assert secret not in caplog.text  # fixed outcome only, never str(exc)
         assert type(exc).__name__ in caplog.text  # class name IS logged
     assert session.load("indeed", base_dir=tmp_path) is None  # nothing persisted
+
+
+def test_attempt_login_exception_str_raising_returns_none(monkeypatch, tmp_path, caplog):
+    """An adversarial exception whose __str__ raises must not escape attempt_login."""
+    _local_env(monkeypatch)
+
+    class BadStrException(Exception):
+        def __str__(self):
+            raise RuntimeError("broken __str__")
+
+    with caplog.at_level(logging.WARNING, logger="src.session"):
+        assert session.attempt_login(
+            "indeed", _raiser(BadStrException()), base_dir=tmp_path
+        ) is None
+    assert "BadStrException" in caplog.text
+
+
+def test_attempt_login_unserializable_state_returns_none(monkeypatch, tmp_path, caplog):
+    """A valid-cookie state that fails JSON serialization must fail-closed without raising."""
+    _local_env(monkeypatch)
+    unserializable = _state(expires=time.time() + 3600)
+    unserializable["unserializable_key"] = {1, 2, 3}  # set is not JSON serializable
+
+    with caplog.at_level(logging.WARNING, logger="src.session"):
+        assert session.attempt_login(
+            "indeed", lambda: unserializable, base_dir=tmp_path
+        ) is None
+    assert "session persist failed" in caplog.text
+    assert list(tmp_path.glob("*")) == []
