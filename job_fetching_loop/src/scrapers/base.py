@@ -12,6 +12,10 @@ class BaseScraper(ABC):
     """Abstract base for all job sources."""
 
     name: str  # "linkedin", "indeed", etc.
+    # Phase 2 (A2): set by the orchestrator when running under a per-domain
+    # circuit (`source:domain`); registry scrapers build URLs from it, others
+    # ignore it.
+    active_domain: str | None = None
 
     @abstractmethod
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:

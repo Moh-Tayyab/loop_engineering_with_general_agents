@@ -85,6 +85,12 @@ class CircuitState:
         )
 
 
+def domain_key(source: str, domain: str | None) -> str:
+    """Per-domain circuit key (Phase 2 / A2): `source:domain`, or the plain
+    source key when the source has no domain scoping (legacy behaviour)."""
+    return f"{source}:{domain}" if domain else source
+
+
 class CircuitManager:
     """Manage circuit breakers for all sources, persisted via LoopState.
 
@@ -96,9 +102,29 @@ class CircuitManager:
     def __init__(self, state: LoopState | dict[str, Any]) -> None:
         self._container = state
         self._circuits: dict[str, CircuitState] = {}
+        self._migrate_legacy_domain_keys()
         for name, data in self._sources().items():
             if isinstance(data, dict):
                 self._circuits[name] = CircuitState.from_dict(name, data)
+
+    def _migrate_legacy_domain_keys(self) -> None:
+        """Phase 2 (A2) state-shape migration: legacy plain `source` entries
+        for domain-scoped sources become `source:<default-domain>` in place,
+        carrying failure history. Runs once at construction; idempotent
+        (composite keys and non-registry sources are untouched)."""
+        current = self._sources()
+        defaults: dict[str, str] = {}
+        for src in cfg.DOMAIN_SOURCES:
+            domains = cfg.source_domains(src)
+            if domains:
+                defaults[src] = domains[0]
+        for key in list(current):
+            if ":" in key or key not in defaults:
+                continue
+            new_key = f"{key}:{defaults[key]}"
+            value = current.pop(key)
+            if new_key not in current:  # first write wins; never clobber
+                current[new_key] = value
 
     def _sources(self) -> dict[str, Any]:
         current = self._container.state if isinstance(self._container, LoopState) else self._container
@@ -148,8 +174,13 @@ class CircuitManager:
     def prune_unknown(self, known: frozenset[str] | set[str]) -> list[str]:
         """Drop circuit entries for sources that no longer exist (post-purge).
 
-        Returns the source names removed. Safe no-op when nothing is stale."""
-        stale = [name for name in list(self._circuits) if name not in known]
+        Phase 2: composite `source:domain` keys compare by their base source
+        part, so per-domain entries survive pruning while entries for removed
+        sources (any domain) are still dropped. Returns the keys removed."""
+        stale = [
+            name for name in list(self._circuits)
+            if name.split(":", 1)[0] not in known
+        ]
         for name in stale:
             del self._circuits[name]
         if stale:
@@ -177,3 +208,19 @@ class CircuitManager:
                 "total_fail": c.total_fails,
             })
         return out
+
+def pick_domain_key(circuit: CircuitManager, source: str) -> str | None:
+    """Resolve the circuit key to run `source` under (Phase 2 / A2).
+
+    Registry sources: first domain whose `source:domain` circuit is closed →
+    that composite key (per-domain breakers — one domain's CAPTCHA/timeout no
+    longer takes the whole source down). No available domain → None (skip).
+    Non-registry sources: the plain source key when closed, else None."""
+    domains = cfg.source_domains(source)
+    if not domains:
+        return source if circuit.is_available(source) else None
+    for dom in domains:
+        key = domain_key(source, dom)
+        if circuit.is_available(key):
+            return key
+    return None

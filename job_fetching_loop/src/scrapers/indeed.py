@@ -46,10 +46,24 @@ class IndeedScraper(BaseScraper):
     _HOME = "https://pk.indeed.com/"
     _SEARCH = "https://pk.indeed.com/jobs?q={kw}&l=Remote&fromage={days}"
 
+    def _apply_domain(self) -> None:
+        """Phase 2 (A2): rebuild URL bases from the orchestrator-chosen or
+        first-registry domain (`INDEED_DOMAINS`). Falls back to the class
+        defaults above when the registry is empty."""
+        domains = cfg.source_domains(self.name)
+        domain = self.active_domain or (domains[0] if domains else None)
+        if not domain:
+            return
+        base = f"https://{domain}"
+        self._BASE = base
+        self._HOME = base + "/"
+        self._SEARCH = base + "/jobs?q={kw}&l=Remote&fromage={days}"
+
     def is_available(self) -> bool:
         return True
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        self._apply_domain()
         yield from asyncio.run(self._gather(keywords, posted_after))
 
     async def _gather(self, keywords, posted_after) -> list:

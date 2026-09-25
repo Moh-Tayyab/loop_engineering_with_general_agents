@@ -153,6 +153,81 @@ def source_enabled(name: str) -> bool:
     return name not in DEFAULT_DISABLED_SOURCES
 
 
+# ── Phase 2 (A2): per-source domain registry ─────────────────────────────────
+MAX_DOMAINS_PER_SOURCE = 15
+DOMAIN_SOURCES = ("indeed", "glassdoor")
+
+_DEFAULT_DOMAINS = {
+    "indeed": "pk.indeed.com",          # proven both local and in cloud cron
+    "glassdoor": "www.glassdoor.com",
+}
+_DOMAIN_ENV = {
+    "indeed": "INDEED_DOMAINS",
+    "glassdoor": "GLASSDOOR_DOMAINS",
+}
+
+
+def _valid_hostname(host: str) -> bool:
+    """Registry-entry check: hostname only — no scheme/path/port/space/`..`."""
+    if not host or len(host) > 253:
+        return False
+    if host.startswith(".") or host.endswith(".") or ".." in host:
+        return False
+    if not any(c.isalpha() for c in host):  # rejects IPs / all-numeric junk
+        return False
+    labels = host.split(".")
+    for label in labels:
+        if not label or label.startswith("-") or label.endswith("-"):
+            return False
+        if any(not (c.isalnum() or c == "-") for c in label):
+            return False
+    return True
+
+
+def parse_domains(raw: str) -> list[str]:
+    """Comma-separated hostnames → validated, deduped, order-preserving list.
+
+    Capped at `MAX_DOMAINS_PER_SOURCE` (15). Invalid tokens are dropped, not
+    raised: a malformed env value must shrink the list, never crash the run
+    (fail-closed to fewer domains).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for tok in raw.split(","):
+        host = tok.strip().lower()
+        if not _valid_hostname(host) or host in seen:
+            continue
+        seen.add(host)
+        out.append(host)
+        if len(out) >= MAX_DOMAINS_PER_SOURCE:
+            break
+    return out
+
+
+def source_domains(source: str) -> list[str]:
+    """Domains a browser source may scrape (A2 env registry + cloud/local split).
+
+    - `<SOURCE>_DOMAINS` (e.g. `INDEED_DOMAINS=a.com,b.com`) overrides everywhere.
+    - In the scheduled cloud runner (`JOB_LOOP_CLOUD=1`), `<SOURCE>_DOMAINS_CLOUD`
+      wins when set — the split lets cloud cron and local human runs use
+      different domains without code changes.
+    - No env → the pre-Phase-2 default (single proven domain): behaviour-
+      preserving unless you opt in.
+    - Non-registry sources → `[]` (no domain scoping; plain circuit keys).
+    """
+    base = _DOMAIN_ENV.get(source.lower())
+    if base is None:
+        return []
+    if is_cloud_runner():
+        cloud_raw = os.environ.get(f"{base}_CLOUD")
+        if cloud_raw is not None and cloud_raw.strip():
+            return parse_domains(cloud_raw)
+    raw = os.environ.get(base)
+    if raw is not None and raw.strip():
+        return parse_domains(raw)
+    return parse_domains(_DEFAULT_DOMAINS[source.lower()])
+
+
 def notify_telegram() -> bool:
     return os.environ.get("NOTIFY_TELEGRAM", "1") == "1" and bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
 
