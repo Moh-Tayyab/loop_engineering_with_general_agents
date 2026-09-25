@@ -775,3 +775,53 @@ def test_pr13_link_health_timeout_default_is_budget_sized():
     from src.models import check_link_health
     sig = inspect.signature(check_link_health)
     assert sig.parameters["timeout_s"].default <= 1.5
+
+
+# ── CodeRabbit PR-13 critical subset (Beat 124) ─────────────────────────────
+
+def test_coderabbit_country_scoped_work_from_anywhere_not_worldwide():
+    # "Work from anywhere in the UK" is UK-only eligibility, not worldwide.
+    assert not is_worldwide_remote(
+        "London", description="Fully remote. Work from anywhere in the UK.")
+    assert not is_worldwide_remote(
+        "Berlin", description="Work from anywhere in Germany.")
+    # World-form and bare form still qualify as strong eligibility.
+    assert is_worldwide_remote(
+        "London", description="Fully remote. Work from anywhere in the world.")
+    assert is_worldwide_remote(
+        "London", description="Fully remote. Work from anywhere.")
+
+
+def test_coderabbit_polish_language_vs_english_word():
+    # English noun/verb "polish" must not read as a Polish-language requirement.
+    assert not is_language_restricted("We value UI polish and clean code")
+    assert not is_language_restricted("This role needs product polish and rigor")
+    # Explicit language contexts still restrict.
+    assert is_language_restricted("Fluent in Polish required")
+    assert is_language_restricted("Polish language skills a must")
+    assert is_language_restricted("Speak Polish daily with the Warsaw team")
+    assert is_language_restricted("Polish (B2) required")
+    assert is_language_restricted("Native Polish speaker")
+
+
+def test_coderabbit_asia_pacific_time_not_us_tz_drop():
+    # In-scope APAC roles must not be dropped as US-timezone restrictions.
+    assert not is_description_restricted(
+        "Fully remote across APAC. Asia Pacific time zone friendly.")
+    assert not is_description_restricted(
+        "APAC / Pacific time hours overlap preferred.")
+    # Explicit US-timezone requirements still restrict.
+    assert is_description_restricted("Team works US Eastern time zone hours.")
+    assert is_description_restricted("Must work within Eastern time zone.")
+
+
+def test_coderabbit_abbr_pins_walk_all_matches_uppercase_only():
+    # Lowercase English words must not restrict PK/APAC roles ("or" = Oregon).
+    assert not _is_us_restricted("Candidates located in or near Lahore")
+    assert not _is_us_restricted("Fully remote. Located in or around Karachi preferred.")
+    # A later real pin must not be masked by an earlier incidental capture.
+    assert _is_us_restricted("Based in an async culture. Must be based in TX.")
+    # Existing uppercase residency pins still restrict.
+    assert _is_us_restricted("Must be based in TX")
+    assert _is_us_restricted("Must be in CA")
+    assert _is_us_restricted("Candidates in NY only")

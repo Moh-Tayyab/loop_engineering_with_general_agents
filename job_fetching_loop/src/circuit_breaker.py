@@ -120,13 +120,15 @@ class CircuitManager:
         self._get(source).record_success()
         self._flush()
 
-    def record_failure(self, source: str) -> None:
+    def record_failure(self, source: str, *, dry_run: bool = False) -> None:
         c = self._get(source)
         was_open = c.is_open()
         c.record_failure()
         self._flush()
-        # C1: alert the moment a circuit opens (CAPTCHA/timeout outage is otherwise silent)
-        if c.is_open() and not was_open:
+        # C1: alert the moment a circuit opens (CAPTCHA/timeout outage is
+        # otherwise silent). CodeRabbit CR: dry runs have no side effects —
+        # never send a real ops alert from one (AGENTS.md §2 rule 6).
+        if c.is_open() and not was_open and not dry_run:
             try:
                 from src.notifier import send_ops_alert
                 send_ops_alert(

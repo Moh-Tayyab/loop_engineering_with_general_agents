@@ -293,7 +293,7 @@ def run_source(
         worker.join(0.5)
         if outcomes is not None:
             outcomes[source_name] = "timeout"
-        circuit.record_failure(source_name)
+        circuit.record_failure(source_name, dry_run=dry_run)
         log.warning(
             "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
             "circuit opens; recover with local headed run or --reset-circuit",
@@ -319,7 +319,7 @@ def run_source(
             pass
         if outcomes is not None:
             outcomes[source_name] = "failed"
-        circuit.record_failure(source_name)
+        circuit.record_failure(source_name, dry_run=dry_run)
         log.warning(
             "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
             "circuit opens; recover with local headed run or --reset-circuit",

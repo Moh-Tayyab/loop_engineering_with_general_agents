@@ -414,13 +414,20 @@ def _has_strong_worldwide_eligibility(description: str | None) -> bool:
     Only explicit open-to-the-world phrasing qualifies (Rule 11c / B3).
     """
     d = (description or "").lower()
+    # CodeRabbit CR (PR #13): country-scoped "work from anywhere in <geo>" is
+    # NOT worldwide eligibility — "Work from anywhere in the UK" is UK-only and
+    # must not unlock a foreign physical location. Only "in the world/globe"
+    # (or a bare phrase) qualifies; the "anywhere in the world" marker below
+    # also catches the world form.
+    if re.search(r"work\s+from\s+anywhere\s+in\s+(?!the\s+(?:world|globe)\b)", d):
+        return False
     if any(m in d for m in (
         "work from anywhere", "anywhere in the world", "anywhere in world",
         "global remote", "globally remote", "worldwide remote",
         "open worldwide", "eligible worldwide", "candidates worldwide",
         "applicants worldwide", "no location requirement",
         "no geographic restriction", "location-agnostic", "location agnostic",
-        "hire from anywhere", "hiring from anywhere", "work from anywhere in",
+        "hire from anywhere", "hiring from anywhere",
         "100% remote worldwide", "fully remote worldwide",
         "remote worldwide role", "remote worldwide team",
         "remote worldwide position", "remote worldwide job",
@@ -479,7 +486,13 @@ _FOREIGN_LANGUAGE_RESTRICTION_PATTERNS = [
     r"\bfluent\s+(?:in\s+)?korean\b",
     r"\bdutch\b",
     r"\bitalian\b",
-    r"\bpolish\b",
+    # CodeRabbit CR: bare \bpolish\b matched the English noun/verb ("UI
+    # polish") — require explicit language context instead.
+    r"\bpolish\s+(?:language|speaking|fluency|proficiency|level|knowledge)\b",
+    r"\b(?:fluent|native|proficient|professional|business)\s+(?:in\s+)?polish\b",
+    r"\b(?:speak|speaking|read|write|understand)\s+polish\b",
+    r"\bpolish\s*[\(\[]\s*(?:a[1-4]|b[1-5]|c[1-2])\s*[\)\]]",
+    r"\bpolski\b",
     r"\brussian\b",
     r"\bnative\s+or\s+bilingual\s+in\s+(?:japanese|german|french|hebrew|chinese|korean|spanish|italian|russian)\b",
     # A6: broader local-language requirements (Arabic/Portuguese/Turkish/Thai/…)
@@ -728,7 +741,11 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\bwithin\s+\d+\s*(?:[-–to]+\s*\d*\s*)?hours?\s+of\s+(?:london|uk|gmt|cet|bst|est|cst|mst|pst)\b",
     r"\bmust\s+be\s+based\s+in\s+(?:cet|bst|gmt|est|cst|mst|pst)\b",
     r"\bus\s+(?:eastern|central|pacific|mountain)\b",
-    r"\b(?:eastern|central|pacific|mountain)\s+(?:time|hours?|zone)\b",
+    # CodeRabbit CR: exclude "Asia Pacific time"/"APAC / Pacific time" —
+    # in-scope APAC roles must not be dropped as US-timezone restrictions.
+    # Fixed-width lookbehinds only (Python): "asia[ -]", "apac ", "apac/",
+    # "apac / ", "apac - ".
+    r"\b(?<!asia[\s-])(?<!apac\s)(?<!apac/)(?<!apac\s/\s)(?<!apac\s-\s)(?:eastern|central|pacific|mountain)\s+(?:time|hours?|zone)\b",
     r"\b(?:est|cst|mst|pst)\s+(?:time|hours?|zone|business)\b",
     # Beat 110: zone trails the phrase ("business hours EST") — searched on
     # lowercased text, so patterns must be lowercase.
@@ -975,15 +992,21 @@ def _is_us_restricted(text: str) -> bool:
     # "in TX only"). Comma/remote forms ("Remote, TX", "TX - Remote") are
     # already covered by _US_RESTRICTED_RE's group-walk. Bare "Austin, TX"
     # in office-prose must NOT restrict a Worldwide description.
-    m_abbr = re.search(
+    # CodeRabbit CR: walk EVERY match on the ORIGINAL text and accept only
+    # UPPERCASE captures — lowercase English words ("or" in "located in or
+    # around Karachi", "an" in "based in an async culture") must never hit
+    # Oregon/…, and a later real pin ("must be based in TX") must not be
+    # masked by an earlier incidental first match (re.search → finditer).
+    # (?i) keeps the construction words case-insensitive; isupper() on the
+    # captured original substring enforces the state-abbr case convention.
+    for m_abbr in re.finditer(
         rf"(?i)(?:based|located|reside(?:s|ing)?|living)\s+in\s+([a-z]{{2}})\b"
         rf"|\bmust\s+be\s+(?:based\s+)?in\s+([a-z]{{2}})\b"
         rf"|\bin\s+([a-z]{{2}})\s+only\b",
-        low,
-    )
-    if m_abbr:
+        text,
+    ):
         for g in m_abbr.groups():
-            if g and g.lower() in _US_STATE_ABBR:
+            if g and g.isupper() and g.lower() in _US_STATE_ABBR:
                 return True
 
     # Beat 120 MEDIUM-2: walk EVERY regex match (finditer, not search) —
