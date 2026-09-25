@@ -164,7 +164,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/mimo-v2.5-free
+          model: opencode/mimo-v2.6-flash-free
           use_github_token: true
           prompt: |
             You are the ADVERSARIAL CHECKER for the proposed solution in this
