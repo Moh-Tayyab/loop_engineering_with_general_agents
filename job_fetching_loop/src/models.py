@@ -767,6 +767,16 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     rf"\bbased\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+preferred\b",
     rf"\b(?:reside|residing|living|located)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\s+preferred\b",
     rf"\bprefer(?:ably)?\s+(?:based|located|living)\s+in\s+(?:the\s+)?(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    # Beat 122 MEDIUM-B: bare foreign geography pins the country-alt forms all
+    # miss — "Remote - Berlin only", "Remote - Warsaw only", "Germany only".
+    # The hyphen form is SOLE-locality only: an enumeration mixing in another
+    # locality ("Remote - France vs Texas", "Remote - UK or California") is a
+    # mixed clause and stays open (recall-first, pinned in test_pr13_*).
+    rf"\bremote\s*[-–,]\s*(?:{_RESIDENCY_COUNTRY_ALT})\b(?!\s+(?:and|or|vs)\b|\s*(?:,|&))",
+    # ...unless BOTH localities of the enumeration are foreign
+    # ("Remote - Berlin, Germany" / "Remote - Warsaw and Berlin").
+    rf"\bremote\s*[-–,]\s*(?:{_RESIDENCY_COUNTRY_ALT})\s*(?:,|and|or|vs)\s+(?:{_RESIDENCY_COUNTRY_ALT})\b",
+    rf"\b(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
 ]
 
 
@@ -921,9 +931,11 @@ def _is_us_restricted(text: str) -> bool:
     if not text:
         return False
     low = text.lower()
-    # Explicit worldwide or in-scope markers override US mention (e.g. "Europe, LATAM, APAC, the U.S., Canada" or "Worldwide")
-    if any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote", "pakistan", "apac", "asia pacific", "south asia")):
-        return False
+    # Beat 122 MEDIUM-A: the target-marker exception ("worldwide", "apac", ...)
+    # used to sit HERE and short-circuit EVERYTHING — hard US residency pins
+    # ("must be based in Austin", "Remote - Dallas only", "in NY only") were
+    # silently bypassed on any marker'd text (Rule 11 violation). It now runs
+    # only AFTER all hard-pin detection, at the bottom of this function.
     # Explicit disambiguation for Remote, Oregon (Coos County, OR, ZIP 97458)
     if (re.search(r"\bremote\s*,\s*(?:or|oregon)\b", low)
             or re.search(r"\bremote\s+(?:or|oregon)\b", low)
@@ -1032,6 +1044,12 @@ def _is_us_restricted(text: str) -> bool:
             low,
         ):
             return True
+    # Beat 122 MEDIUM-A: target-marker exception — applied ONLY after every
+    # hard US pin above. Casual multi-region prose ("Europe, LATAM, APAC, the
+    # U.S., Canada", "Worldwide; hubs in Austin and Berlin") falls through to
+    # here and stays open; marker'd text with a real pin never reaches this.
+    if any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote", "pakistan", "apac", "asia pacific", "south asia")):
+        return False
     return False
 
 

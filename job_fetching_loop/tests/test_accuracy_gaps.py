@@ -661,6 +661,70 @@ def test_pr13_mixed_first_pin_second_still_restricts():
     )
 
 
+def test_pr13_target_markers_do_not_bypass_hard_pins():
+    """Beat 122 MEDIUM-A: worldwide/APAC markers must not short-circuit hard
+    US residency pins — Rule 11 zero tolerance, daily AND weekly gates."""
+    from src.digest import is_valid_digest_job
+    from src.models import NormalizedJob, utc_now
+
+    def make(desc: str) -> NormalizedJob:
+        return NormalizedJob(
+            id="x", title="AI Engineer", title_normalized="ai engineer",
+            company="Acme", company_normalized="acme",
+            url="https://example.com/jobs/view/1", source="linkedin",
+            location="Worldwide", location_type=LOCATION_REMOTE,
+            salary_min=None, salary_max=None, salary_currency=None,
+            job_type="full-time", posted_date=None, fetched_at=utc_now(),
+            tags=[], description_snippet=desc, cv_match_score=90,
+            raw={"description": desc},
+        )
+
+    pin_descs = [
+        "Worldwide role; must be based in Austin",
+        "APAC team; Remote - Dallas only",
+        "APAC role. Candidates in NY only.",
+        "Worldwide role. Remote - Dallas (APAC)",
+    ]
+    for desc in pin_descs:
+        assert _is_us_restricted(desc), desc
+        assert not is_remotely_workable(
+            LOCATION_REMOTE, "Worldwide", source="linkedin",
+            description=desc, title="AI Engineer",
+        ), desc
+        assert not is_valid_digest_job(make(desc)), desc
+    # Recall: marker'd casual multi-region prose still stays open.
+    assert not _is_us_restricted("Europe, LATAM, APAC, the U.S., Canada")
+    assert is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Worldwide; hubs in Austin and Berlin", title="AI Engineer",
+    )
+
+
+def test_pr13_description_foreign_geo_pins_restrict():
+    """Beat 122 MEDIUM-B: description-level bare foreign geography pins the
+    country-alt forms missed ("Remote - Berlin only", "Germany only")."""
+    # repros
+    assert is_description_restricted("Remote - Berlin only")
+    assert is_description_restricted("Germany only")
+    assert is_description_restricted("Remote - Warsaw only")
+    # a worldwide marker in the same description must not suppress the pin
+    assert is_description_restricted("Worldwide role. Remote - Berlin only")
+    # foreign-only enumerations restrict (both localities foreign)
+    assert is_description_restricted("Remote - Berlin, Germany")
+    assert is_description_restricted("Remote - Warsaw and Berlin")
+    # ...but mixed US+foreign clauses stay open (recall-first policy)
+    assert not is_description_restricted("Remote - France vs Texas")
+    assert not is_description_restricted("Remote - UK or California")
+    assert not is_description_restricted("Remote - Texas and Germany")
+    assert not is_description_restricted("Remote - Austin, Berlin")
+    assert not is_description_restricted("Remote - Austin and Singapore")
+    # daily gate drops the pin form end-to-end
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote - Berlin only", title="AI Engineer",
+    )
+
+
 def test_pr13_mixed_locality_tradeoffs_pinned():
     """PR #13 human-gate (b): documented, tested sacrifice + kept precision.
 

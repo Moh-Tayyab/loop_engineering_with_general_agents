@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 122 — Beat 121 Checker re-review
+- **Beat #:** 123 — Beat 122 Checker findings: marker-after-pins + description-level foreign geo pins
 - **Date:** 2026-09-25
-- **Trigger:** pull_request sync — user-authorized continuation of PR #13
-- **Status:** **CHECKER REVIEWED — CHANGES REQUESTED (FAIL)** — 312 tests pass; hard US pins are bypassed by Worldwide/APAC markers, and foreign geography-only descriptions are accepted by the daily and weekly gates. Review posted; no production code changed; human gate remains.
+- **Trigger:** user — "Continue" (PR #13 rework, human-authorized past §7 bound)
+- **Status:** **MAKER DONE** — MEDIUM-A: `_is_us_restricted` target-marker exception moved from top-of-function to AFTER all hard US pins (4 repros now restrict: `Worldwide role; must be based in Austin`, `APAC team; Remote - Dallas only`, `APAC role. Candidates in NY only.`, `Worldwide role. Remote - Dallas (APAC)`; marker'd casual prose still open). MEDIUM-B: 3 new description-level patterns — sole foreign hyphen pin (`Remote - Berlin only`), foreign-only enumeration (`Remote - Berlin, Germany`), bare `X only` (`Germany only`); mixed clauses (`Remote - France vs Texas`, `Remote - UK or California`) stay open. +2 regression tests (daily+digest gates). **314 passed** EXIT 0, secrets clean. Pushing for re-review. **Run budget 3/3 (Beats 119/121/123) → STOP after this push + report.**
 
 ## 3. Beat Log
 
@@ -45,9 +45,11 @@ compressed at 2026-09-24 (beat 116, §9 cap 20): beats 97–100b — rule-11 gua
 (window/Location/feed/link-health), digest empty-body fail-closed, India/JP/KR/Bangalore
 blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects, digest
 20/20. recompressed at 2026-09-25 (beat 121, §9 cap): beats 101–103 merged (verdicts kept).
+recompressed at 2026-09-25 (beat 123, §9 cap): beats 104–106 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 123 | 2026-09-25 | user — continue (Beat 122 CR findings) | MEDIUM-A markers-after-pins in `_is_us_restricted`; MEDIUM-B sole-foreign-hyphen / foreign-enumeration / bare-`X only` desc patterns; +2 tests (daily+digest) | **MAKER DONE** — 314 passed, repros restrict + mixed/Marker-recall open, secrets clean; push for re-review; run 3/3 → stop after report |
 | 122 | 2026-09-25 | pull_request sync (`5caa5e4`) | Re-reviewed Beat 121; 312 tests, syntax, diff, and secret checks clean; reproduced marker-override US-pin fail-open and foreign geography-only description leaks in daily+digest | **FAIL — CHANGES REQUESTED (comment)** — two MEDIUM findings posted; no production code changed; human gate |
 | 121 | 2026-09-25 | user — continue (Beat 120 CR findings) | MEDIUM-1a `,` in clause charset; MEDIUM-1b `_NON_US_LOCALITY_TOKENS` = FOREIGN\|APAC\|ME; MEDIUM-2 `finditer` + tempered group stop; +3 tests; `diff --check` cleanups | **MAKER DONE** — 312 passed, repros open/pins restrict, secrets clean; push for re-review |
 | 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
@@ -64,9 +66,7 @@ blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects,
 | 109 | 2026-09-24 | backlog #2 push | Pushed `job-fetching-loop` 02955e9→68de118 (Beats 104–108) so cloud cron runs fixed filters | PASS — remote synced, secrets clean |
 | 108 | 2026-09-24 | audit Sep 23–24 output | **B3 tighten + foreign metros:** bare worldwide marketing no longer overrides Germany/Chile/Rio; `_has_strong_worldwide_eligibility`; daily/digest parity; purge 3 BairesDev FPs from output | PASS — 300 tests, exit 0 |
 | 107 | 2026-09-22 | user — yes next beat | **Commit Beat 105–106** accuracy-gap remediation + LinkedIn dry-run smoke + worktree drift | PASS — 298 tests, exit 0; run 3/3 ceiling → stop |
-| 106 | 2026-09-22 | backlog #10 smoke | Live `--dry-run` after Beat 105: LinkedIn guest → 71 jobs, B4 drops visible, purity clean; Indeed → CAPTCHA | PASS (LinkedIn; Indeed/Glassdoor pending human CAPTCHA) |
-| 105 | 2026-09-22 | user — fix all accuracy gaps small pieces | **A1–C5 remediation:** fail-closed location, filter parity, hybrid/Israel/B3, parse_drift+pagination, circuit alert, rejected.jsonl; new `test_accuracy_gaps.py` | PASS — 298 tests, Checker APPROVED |
-| 104 | 2026-09-22 | user — prod-ready audit | Test isolation, commit 38-file drift, DLQ replay+clear→0, secret scan clean | PASS — 274 tests, exit 0 |
+| 106–104 | 2026-09-22 | backlog/user beats (§9 compress) | 106: LinkedIn dry-run smoke → 71 jobs, B4 drops visible, Indeed CAPTCHA. 105: A1–C5 accuracy remediation (fail-closed location, filter parity, hybrid/Israel/B3, circuit alert) + `test_accuracy_gaps.py`. 104: test isolation, 38-file drift commit, DLQ replay→0 | **PASS** — 274–298 tests; Beat 105 Checker APPROVED |
 | 103–101 | 2026-09-21 | user/audio beats (§9 compress) | 103: Monday 3-day live accuracy scrape + remote-badge cards (100% Rule 11). 102: native Chrome stealth + Bezier Turnstile → live 5/5 Indeed + 5/5 Glassdoor. 101: `is_valid_digest_job` gate, purged 93 invalid seen, digest W39 12/12 | **PASS** — 268 tests each |
 
 ## 4. Budget & Stopping Conditions
@@ -100,7 +100,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
-13. **(Beat 122, HUMAN, PR #13)** **CHANGES REQUESTED posted:** two MEDIUM fail-open paths remain: `_is_us_restricted` marker early-return bypasses hard US pins; `is_description_restricted` misses bare foreign geography pins. Human-owned rework required; no production code changed.
+13. ~~**(Beat 122, HUMAN, PR #13)**~~ **Fixed Beat 123 (user-authorized):** (A) target-marker exception moved below all hard US pins in `_is_us_restricted` — marker'd text with a real pin now restricts (daily+digest); (B) `is_description_restricted` gained sole-foreign-hyphen, foreign-only-enumeration, and bare `X only` patterns. 314 tests green; awaiting Checker re-review on PR #13.
 14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
 15. **Proposed durable lesson (human approval):** Evaluate explicit Worldwide/APAC markers only after hard residency-pin detection; add mixed-marker and foreign-city/country-only regressions.
 
