@@ -789,6 +789,8 @@ def test_coderabbit_country_scoped_work_from_anywhere_not_worldwide():
     assert is_worldwide_remote(
         "London", description="Fully remote. Work from anywhere in the world.")
     assert is_worldwide_remote(
+        "London", description="Fully remote. Work from anywhere in world.")
+    assert is_worldwide_remote(
         "London", description="Fully remote. Work from anywhere.")
 
 
@@ -798,6 +800,8 @@ def test_coderabbit_polish_language_vs_english_word():
     assert not is_language_restricted("This role needs product polish and rigor")
     # Explicit language contexts still restrict.
     assert is_language_restricted("Fluent in Polish required")
+    assert is_language_restricted("Polish required")
+    assert is_language_restricted("Fluency in Polish required")
     assert is_language_restricted("Polish language skills a must")
     assert is_language_restricted("Speak Polish daily with the Warsaw team")
     assert is_language_restricted("Polish (B2) required")

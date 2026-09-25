@@ -419,7 +419,7 @@ def _has_strong_worldwide_eligibility(description: str | None) -> bool:
     # must not unlock a foreign physical location. Only "in the world/globe"
     # (or a bare phrase) qualifies; the "anywhere in the world" marker below
     # also catches the world form.
-    if re.search(r"work\s+from\s+anywhere\s+in\s+(?!the\s+(?:world|globe)\b)", d):
+    if re.search(r"work\s+from\s+anywhere\s+in\s+(?!(?:the\s+)?(?:world|globe)\b)", d):
         return False
     if any(m in d for m in (
         "work from anywhere", "anywhere in the world", "anywhere in world",
@@ -490,6 +490,8 @@ _FOREIGN_LANGUAGE_RESTRICTION_PATTERNS = [
     # polish") — require explicit language context instead.
     r"\bpolish\s+(?:language|speaking|fluency|proficiency|level|knowledge)\b",
     r"\b(?:fluent|native|proficient|professional|business)\s+(?:in\s+)?polish\b",
+    r"\bpolish\s+(?:language\s+)?(?:required|mandatory|needed|essential)\b",
+    r"\b(?:fluency|proficiency)\s+(?:in\s+)?polish\b",
     r"\b(?:speak|speaking|read|write|understand)\s+polish\b",
     r"\bpolish\s*[\(\[]\s*(?:a[1-4]|b[1-5]|c[1-2])\s*[\)\]]",
     r"\bpolski\b",
