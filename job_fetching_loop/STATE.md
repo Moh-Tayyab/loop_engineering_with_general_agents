@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 142 — PR #16 rework 2/2 (Beat 141 findings: chronological deadlines, malformed merge, DNS label limit)
+- **Beat #:** 143 — weekday heartbeat triage
 - **Date:** 2026-09-25
-- **Trigger:** user — "yh tum kar do kya tasks complete nhi howa"
-- **Status:** **MAKER DONE (rework 2/2 — bound reached) — 378 passed EXIT 0; diff clean.** Fixed all code findings: (1) `src/circuit_breaker.py`: `_merge_circuit_history` parses `open_until` ISO timestamps and compares chronologically across mixed timezones (repro: `11:00-02:00` vs `12:00+00:00` keeps `11:00-02:00`); (2) `src/circuit_breaker.py`: `_migrate_legacy_keys` and `_merge_circuit_history` guard against `None`/non-dict legacy and composite records; (3) `src/config.py`: `_valid_hostname` enforces RFC 1035 max 63 chars per DNS label (`parse_domains('a'*64 + '.example')` fails-closed to empty list). +3 regression tests in `test_domain_registry.py`. Full suite 378 passed. Ready for final Checker re-review and merge of PR #16.
+- **Trigger:** schedule heartbeat — `test-gate` runs and open issues
+- **Status:** Done — shared/root issues #1/#3/#4/#6 were triaged as human-gate items; no job-loop code changed. `gh run list` returned HTTP 403 and local pytest was unavailable, so no CI failure was inferred. PR #16 remains pending its existing final checker review. `PASS`
 
 ## 3. Beat Log
 
@@ -63,9 +63,11 @@ recompressed at 2026-09-25 (beat 140, §9 cap): beats 129–130 merged (verdicts
 recompressed at 2026-09-25 (beat 138, §9 cap): beats 110–113 merged (111–113 PASS; 110 CHANGES REQUESTED).
 recompressed at 2026-09-25 (beat 141, §9 cap): beats 114–115 merged (114 CR; 115 Maker done, verdicts kept).
 recompressed at 2026-09-25 (beat 142, §9 cap): beats 121–122 merged (verdicts kept).
+recompressed at 2026-09-25 (beat 143, §9 cap): beat 116 folded into legacy summary; PR #13 residual CHANGES REQUESTED verdict retained.
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 143 | 2026-09-25 | schedule heartbeat | Triaged shared/root issues #1/#3/#4/#6; Actions query returned 403 and local pytest was unavailable; no job-loop code; PR #16 left pending final review | PASS — RISKY/AMBIGUOUS items and CI visibility blocker recorded in §10 |
 | 142 | 2026-09-25 | user — "yh tum kar do" (rework 2/2) | Chronological `open_until` parsed instant comparison; non-dict legacy/composite merge guards; RFC 1035 max 63 DNS label length check; +3 regressions | **MAKER DONE (rework 2/2)** — 378 passed EXIT 0; ready for final re-review |
 | 141 | 2026-09-25 | pull_request #16 — current-head review | Reviewed `origin/main...333e8bb`; full job-loop pytest, compileall, diff check, and targeted probes; posted summary review | **CHANGES REQUESTED** — P1 deadline merge, malformed-state crash/history loss, DNS label validation, and dry-run purity; 375 tests pass; rework 2/2 human gate |
 | 140 | 2026-09-25 | user — proceed with checker review (model fix 2fed239) | Published `2fed239`→main as `4e5d38f` (issue_comment runs use default branch — fix was PR-branch-only); `/opencode check` re-triggered (`5833222378`); round-1 fixes confirmed passing (375) | **CHANGES REQUESTED ×2 (round 2)** — lexical `open_until` merge, malformed-state merge crash, dry-run mkdir/quarantine writes, WS nit; adversarial in flight → **rework 2/2 next run (§7, last retry)** |
@@ -85,7 +87,6 @@ recompressed at 2026-09-25 (beat 142, §9 cap): beats 121–122 merged (verdicts
 | 122–121 | 2026-09-25 | checker sync/user beats (§9 compress) | 122: CR on Beat 121 (US pin fail-open); 121: `,` clause charset, `_NON_US_LOCALITY_TOKENS`, finditer tempered stop, +3 tests | **CHECKER CR; MAKER DONE** 312 green |
 | 120–119 | 2026-09-25 | checker sync/user beats (§9 compress) | 120: CR on Beat 119; 119: foreign-aware group-walk + & clause charset, fixed _utc_today monkeypatch leak | **CHECKER CR; MAKER DONE** 311 green |
 | 118–117 | 2026-09-24 | checker sync/residual beats (§9 compress) | 118: re-reviewed Beat-117 (short-clause sibling drops residual → bound hit → human gate); 117: pin-gated group-walk + residency pins, +5 tests | **CHECKER CR** (non-blocking, PR #13); **MAKER DONE** 309 green |
-| 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
 
 
 
@@ -128,6 +129,12 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 18. **(Approved blueprint — remaining phases, amendments A2–A6):** Phase 1 PR #15 — Beat 128 rework fixed R1/R2 (0600 via mkstemp, class-name-only logs, 335); Beat 129 re-review confirmed those, found 2 residuals (rework bound 2/2); **Beat 130 (final rework) fixed both** (`load()` `read_bytes`+`except ValueError` → non-UTF-8 = corruption→unlink; `save()` guarded in `attempt_login` → OSError → class-only log → None; +2 regressions; 337 passed). **Beat 131/132 CHANGES REQUESTED — human gate** (oversized cookie expiry made `load()` raise `OverflowError`); human approved bound exception (a); **Beat 133 landed the fix** (`load()` self-heals on OverflowError → None+unlink, `attempt_login` guards the same signal, non-finite expiries rejected; +3 regressions; 340 passed). **Beats 134–136:** 134 final checker CR (bad `__str__` escape + non-JSON state escape) → human gate; 135 human approved fulfillment → both guards +2 regressions (342); **136 Checker APPROVED (342, 4 repros) and PR #15 MERGED `f1defd6` → PHASE 1 LANDED.** **Phase 2 (A2) MAKER DONE in Beat 137** (branch `phase2-multi-domain`, `b092661`, 372 tests): env domain registry (`INDEED_DOMAINS`/`GLASSDOOR_DOMAINS` + `_CLOUD` split, 15-cap, fail-closed hostname validation, proven pre-Phase-2 defaults = no behaviour change), per-domain circuit keys `source:domain` with legacy-key state migration (history carried, idempotent, never clobbers composites), `prune_unknown` base-aware, `pick_domain_key` first-closed-wins, `run_source` ckey pre-gate (timeout/error/success all keyed; outcomes stay plain source), `_apply_domain` URL bases on Indeed+Glassdoor (+ Glassdoor hardcoded job-listing URL fixed), `session_file` traversal rejection. **Checker CR (Beat 138): all-invalid registry falls back to the default host; Maker fix + regression required. PHASE 2b DEFERRED (this task): wire `session.load()` storage_state into `launch_browser` — sessions are saved but still unused by the scrape path; do before relying on login sessions in cloud.** Also open: optional `.runtime/` 0700 note (checker non-blocking). **Phase 3** Rule-11 localized-residency fixtures FIRST (TDD — German/French examples will FAIL today: no `Wohnsitz`/`résidant` patterns), then add DE/FR minimal pattern set + au/sg worldwide-pass fixtures (A3). **Phase 4** Docker: base image must be `mcr.microsoft.com/playwright/python:v1.62.0-noble` (match `requirements.txt` pin, NOT v1.49.0); headless/CI-parity only — human CAPTCHA stays bare-metal (A4). **Phase 5** raise `job-loop-cron.yml` `timeout-minutes: 20`→45 (or domain rotation) BEFORE cloud multi-domain (A5); env docs + README (A6: ≤2 phases per run, ≤3 beats/run, STATE row per phase).
 
 19. **(Beat 139→140 — resolved model, pending verdict):** `opencode.yml:167` model fixed by human (`2fed239`) and **published to main as `4e5d38f`** (issue_comment runs read the default branch — the fix was PR-branch-only until then); `/opencode check` re-triggered on PR #16 and the adversarial job now runs (past the 24s `Model not found` death). **Open: collect the adversarial + autonomous re-review verdicts next run** (in-flight at Beat 140 stop). In-session `checker` subagent spawn still gated (task 14).
+
+**RISKY/AMBIGUOUS — shared trainer/root scope, heartbeat 2026-09-25:**
+- **Issue #1:** workflow smoke-test issue already has a successful historical report; human should close or retain it, with no code action.
+- **Issues #3/#4:** duplicate `wrap_text` requests. Open PR #5 is stale and edits the removed root `STATE.md`; human must rebase/merge it or close the duplicates.
+- **Issue #6:** the root redaction/type-validation fix is present in open PR #9, but that PR is stale and conflicts with the current spine layout; human must review/select it rather than duplicate the branch.
+- **CI visibility:** `gh run list --workflow=test-gate.yml --limit=5` returned HTTP 403 for the integration token, and local pytest is not installed. No test-gate failure was inferred; human must inspect Actions and approve/rerun as needed.
 
 ## 11. Human Gate Decisions (job loop)
 

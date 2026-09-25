@@ -18,21 +18,16 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — weekday heartbeat triage
+- **Date:** 2026-09-25
+- **Trigger:** schedule heartbeat — `test-gate` runs and open issues
+- **Status:** Done — issues #1/#3/#4/#6 are shared/root items and remain RISKY/AMBIGUOUS for the human gate; no code changed. `gh run list` returned HTTP 403 and local pytest was unavailable, so no CI failure was inferred. Existing PRs #5/#9 remain open. `PASS`
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-09-25 | schedule heartbeat | Triaged open issues #1/#3/#4/#6; Actions query returned 403 and local pytest was unavailable; no code; stale textutils PRs left for human | PASS — RISKY/AMBIGUOUS items and CI visibility blocker recorded in §10 |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -66,7 +61,7 @@ maker–checker, §7 escalation). Single source of truth — do not restate here
 Cap this project's beat log at 20 rows; compress into a one-line "Legacy beats" summary when
 exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGENTS.md` §7).
 
-## 10. Next Actionable Tasks (video loop)
+## 10. Next Actionable Tasks / Open (needs a human) — video loop
 
 1. **G5 supervised live run (the last gate):** `FLOW_PLANNER=template FLOW_HEADLESS=0
    .venv/bin/python -m src.main` on a fresh day (concept-03); accept 6/6 real clips →
@@ -74,7 +69,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    Use `docs/PRODUCTION_RUNBOOK.md`.
 2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+3. **Human gate — stale shared textutils PRs:** #5 covers duplicate issues #3/#4; #9 covers #6 and supersedes #7/#8. Both are open without current checks and need rebase/merge-or-close decisions. Issue #1 is fulfilled and can be closed or retained as a test record.
 4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
@@ -84,6 +79,11 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
    match (consistency only, no video-loop behavior change). Verify the Checker spawn works
    next session before this loop's next maker–checker cycle.
+
+**RISKY/AMBIGUOUS — heartbeat 2026-09-25 (shared trainer/root scope):**
+- **Issues #1/#3/#4:** #1 is a workflow smoke test already reported as functioning; #3 and #4 are duplicate `wrap_text` requests, with stale PR #5 modifying the removed root `STATE.md`. Human must choose whether to rebase/merge #5 or close the duplicates.
+- **Issue #6:** the current root implementation still lacks the requested case-insensitive, dashed-token redaction and integer argument validation. PR #9 contains the minimal fix and tests but is stale and conflicts with the loop-spine changes; human must select/review it rather than duplicate the branch.
+- **CI visibility:** `gh run list --workflow=test-gate.yml --limit=5` returned HTTP 403 for the integration token, and local `python -m pytest` could not start because pytest is not installed. No test-gate failure was inferred; human must inspect Actions and approve/rerun as needed.
 
 ## 11. Human Gate Decisions (video loop)
 
