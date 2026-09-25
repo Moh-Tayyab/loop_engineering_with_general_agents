@@ -46,10 +46,23 @@ class GlassdoorScraper(BaseScraper):
     _HOME = "https://www.glassdoor.com/"
     _SEARCH = "https://www.glassdoor.com/Job/jobs.htm?sc.keyword={kw}&locT=&locId=&locKeyword=Remote&jobType=&fromAge={days}"
 
+    def _apply_domain(self) -> None:
+        """Phase 2 (A2): rebuild URL bases from the orchestrator-chosen or
+        first-registry domain (`GLASSDOOR_DOMAINS`)."""
+        domains = cfg.source_domains(self.name)
+        domain = self.active_domain or (domains[0] if domains else None)
+        if not domain:
+            return
+        base = f"https://{domain}"
+        self._BASE = base
+        self._HOME = base + "/"
+        self._SEARCH = base + "/Job/jobs.htm?sc.keyword={kw}&locT=&locId=&locKeyword=Remote&jobType=&fromAge={days}"
+
     def is_available(self) -> bool:
         return True
 
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
+        self._apply_domain()
         yield from asyncio.run(self._gather(keywords, posted_after))
 
     async def _gather(self, keywords, posted_after) -> list:
@@ -145,7 +158,7 @@ class GlassdoorScraper(BaseScraper):
         import re
         m = re.search(r"[?&](?:jl|jobListingId)=(\d+)", href)
         if m:
-            url = f"https://www.glassdoor.com/job-listing/?jl={m.group(1)}"
+            url = f"{self._BASE}/job-listing/?jl={m.group(1)}"
         else:
             url = self._BASE + href if href.startswith("/") else href
         # Company: try multiple selector patterns (Glassdoor A/B tests heavily)

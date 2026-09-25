@@ -41,7 +41,7 @@ from src.models import (
     utc_now,
 )
 from src.schedule import compute_fetch_window, check_last_run_freshness, next_fetch_start
-from src.circuit_breaker import CircuitManager
+from src.circuit_breaker import CircuitManager, pick_domain_key
 from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text, lock_holder, lock_path_for
 from src.dedup import accept_and_record, dedup_job
 from src.digest import collect_weekly_jobs, generate_digest, write_digest, week_key
@@ -262,6 +262,18 @@ def run_source(
     if timeout_s is None:
         timeout_s = cfg.source_timeout_s(source_name)
 
+    # Phase 2 (A2): resolve the per-domain circuit key BEFORE the worker starts
+    # so timeout, error, and success all record under the same key. Registry
+    # sources get `source:domain` (first closed circuit wins); no available
+    # circuit → skip exactly like the old source-level gate.
+    ckey = pick_domain_key(circuit, source_name)
+    if ckey is None:
+        log.info("[%s] circuit OPEN — skipping", source_name)
+        if outcomes is not None:
+            outcomes[source_name] = "open"
+        return []
+    domain = ckey.split(":", 1)[1] if ":" in ckey else None
+
     box: dict[str, object] = {}
     cancel_event = threading.Event()
     rejects: list[dict] = []
@@ -270,7 +282,7 @@ def run_source(
         try:
             verdict, jobs = _run_source_impl(source_name, keywords, posted_after,
                                             seen, circuit, max_jobs, cancel_event=cancel_event,
-                                            rejects=rejects)
+                                            rejects=rejects, circuit_key=ckey, domain=domain)
             box["verdict"] = verdict
             box["jobs"] = jobs
         except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
@@ -293,7 +305,7 @@ def run_source(
         worker.join(0.5)
         if outcomes is not None:
             outcomes[source_name] = "timeout"
-        circuit.record_failure(source_name, dry_run=dry_run)
+        circuit.record_failure(ckey, dry_run=dry_run)
         log.warning(
             "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
             "circuit opens; recover with local headed run or --reset-circuit",
@@ -319,7 +331,7 @@ def run_source(
             pass
         if outcomes is not None:
             outcomes[source_name] = "failed"
-        circuit.record_failure(source_name, dry_run=dry_run)
+        circuit.record_failure(ckey, dry_run=dry_run)
         log.warning(
             "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
             "circuit opens; recover with local headed run or --reset-circuit",
@@ -345,7 +357,7 @@ def run_source(
         _flush_rejects(rejects)
 
     if verdict == "ok":
-        circuit.record_success(source_name)
+        circuit.record_success(ckey)
         log.info("[%s] found %d new jobs", source_name, len(jobs))
         for j in jobs:  # type: ignore[union-attr]
             accept_and_record(j, seen)
@@ -389,6 +401,8 @@ def _run_source_impl(
     max_jobs: int,
     cancel_event: threading.Event | None = None,
     rejects: list[dict] | None = None,
+    circuit_key: str | None = None,
+    domain: str | None = None,
 ) -> tuple[str, list[NormalizedJob]]:
     """Unbounded implementation of run_source (the worker-thread body).
 
@@ -396,12 +410,15 @@ def _run_source_impl(
     directly, eliminating concurrent mutation and TOCTOU races between worker and main thread.
     Dedup state mutations are deferred to caller on confirmed success.
     """
-    if not circuit.is_available(source_name):
+    key = circuit_key or source_name
+    if not circuit.is_available(key):
         log.info("[%s] circuit OPEN — skipping", source_name)
         return "open", []
 
     log.info("[%s] fetching (after=%s)", source_name, posted_after.date())
     scraper = get_scraper(source_name)
+    if domain:
+        scraper.active_domain = domain  # Phase 2: registry-backed URL base
     if scraper.login_required() and not scraper.is_available():
         log.warning("[%s] login required but no session — skipping (run --linkedin-login)", source_name)
         return "login", []

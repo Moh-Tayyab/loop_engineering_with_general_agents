@@ -46,7 +46,14 @@ _CAPTCHA_MARKERS = (
 
 
 def session_file(source: str, base_dir: Path | None = None) -> Path:
-    """`.runtime/<source>-session.json` (overridable for tests)."""
+    """`.runtime/<source>-session.json` (overridable for tests).
+
+    `source` is a trusted internal identifier today, but Phase 2 wires env
+    domain config into it — reject traversal outright rather than resolve it
+    (checker note on PR #15): `/`, `\\`, `..`, or empty → ValueError.
+    """
+    if not source or "/" in source or "\\" in source or ".." in source:
+        raise ValueError(f"invalid session source: {source!r}")
     root = Path(base_dir) if base_dir is not None else cfg.RUNTIME_DIR
     return root / f"{source}-session.json"
 

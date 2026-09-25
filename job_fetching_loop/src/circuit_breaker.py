@@ -85,6 +85,12 @@ class CircuitState:
         )
 
 
+def domain_key(source: str, domain: str | None) -> str:
+    """Per-domain circuit key (Phase 2 / A2): `source:domain`, or the plain
+    source key when the source has no domain scoping (legacy behaviour)."""
+    return f"{source}:{domain}" if domain else source
+
+
 class CircuitManager:
     """Manage circuit breakers for all sources, persisted via LoopState.
 
@@ -96,9 +102,82 @@ class CircuitManager:
     def __init__(self, state: LoopState | dict[str, Any]) -> None:
         self._container = state
         self._circuits: dict[str, CircuitState] = {}
+        self._migrate_legacy_domain_keys()
         for name, data in self._sources().items():
             if isinstance(data, dict):
                 self._circuits[name] = CircuitState.from_dict(name, data)
+
+    def _migrate_legacy_domain_keys(self) -> None:
+        """Phase 2 (A2) state-shape migration: legacy plain `source` entries
+        for domain-scoped sources become `source:<pre-Phase-2 default host>`
+        in place, carrying failure history. Runs once at construction;
+        idempotent (composite keys and non-registry sources are untouched).
+
+        The target host is ALWAYS the hard-coded default (the host that
+        actually produced the legacy history), never the current env override —
+        so `INDEED_DOMAINS` set at upgrade time cannot re-home old failures."""
+        current = self._sources()
+        defaults: dict[str, str] = {}
+        for src in cfg.DOMAIN_SOURCES:
+            default = cfg.default_domain(src)
+            if default:
+                defaults[src] = default
+        for key in list(current):
+            if ":" in key or key not in defaults:
+                continue
+            new_key = f"{key}:{defaults[key]}"
+            legacy = current.get(key)
+            if not isinstance(legacy, dict):
+                current.pop(key, None)
+                continue
+            existing = current.get(new_key)
+            if existing is None or not isinstance(existing, dict):
+                current[new_key] = current.pop(key)
+            else:
+                legacy = current.pop(key)
+                self._merge_circuit_history(existing, legacy)
+
+    @staticmethod
+    def _merge_circuit_history(existing: dict[str, Any], legacy: dict[str, Any]) -> None:
+        """Coexistence case (legacy + its composite both present): keep both
+        histories — totals summed (disjoint windows of the same host),
+        consecutive fails = max, open_until = later deadline (fail closed)."""
+        if not isinstance(existing, dict) or not isinstance(legacy, dict):
+            return
+        for total in ("total_fails", "total_successes"):
+            try:
+                existing[total] = int(existing.get(total, 0)) + int(legacy.get(total, 0))
+            except (TypeError, ValueError):
+                pass
+        try:
+            existing["consecutive_fails"] = max(
+                int(existing.get("consecutive_fails", 0)),
+                int(legacy.get("consecutive_fails", 0)),
+            )
+        except (TypeError, ValueError):
+            pass
+        eu_new, eu_old = existing.get("open_until"), legacy.get("open_until")
+        if eu_old:
+            if not eu_new:
+                existing["open_until"] = eu_old
+            else:
+                def _parse_ts(val: Any) -> datetime | None:
+                    if not isinstance(val, str):
+                        return None
+                    try:
+                        dt = datetime.fromisoformat(val)
+                        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        return None
+
+                dt_old, dt_new = _parse_ts(eu_old), _parse_ts(eu_new)
+                if dt_old and dt_new:
+                    if dt_old > dt_new:
+                        existing["open_until"] = eu_old
+                elif dt_old and not dt_new:
+                    existing["open_until"] = eu_old
+                elif str(eu_old) > str(eu_new):
+                    existing["open_until"] = eu_old
 
     def _sources(self) -> dict[str, Any]:
         current = self._container.state if isinstance(self._container, LoopState) else self._container
@@ -148,8 +227,13 @@ class CircuitManager:
     def prune_unknown(self, known: frozenset[str] | set[str]) -> list[str]:
         """Drop circuit entries for sources that no longer exist (post-purge).
 
-        Returns the source names removed. Safe no-op when nothing is stale."""
-        stale = [name for name in list(self._circuits) if name not in known]
+        Phase 2: composite `source:domain` keys compare by their base source
+        part, so per-domain entries survive pruning while entries for removed
+        sources (any domain) are still dropped. Returns the keys removed."""
+        stale = [
+            name for name in list(self._circuits)
+            if name.split(":", 1)[0] not in known
+        ]
         for name in stale:
             del self._circuits[name]
         if stale:
@@ -177,3 +261,25 @@ class CircuitManager:
                 "total_fail": c.total_fails,
             })
         return out
+
+def pick_domain_key(circuit: CircuitManager, source: str) -> str | None:
+    """Resolve the circuit key to run `source` under (Phase 2 / A2).
+
+    Registry sources: first domain whose `source:domain` circuit is closed →
+    that composite key (per-domain breakers — one domain's CAPTCHA/timeout no
+    longer takes the whole source down). No available domain → None (skip).
+    A registry source whose configured domain list is EMPTY (all entries
+    failed validation) is a configuration error: return None (skip) — never
+    fall back to the plain source key, which would scrape the hard-coded
+    default host while recording under the wrong circuit.
+    Non-registry sources: the plain source key when closed, else None."""
+    if source in cfg.DOMAIN_SOURCES:
+        domains = cfg.source_domains(source)
+        if not domains:
+            return None
+        for dom in domains:
+            key = domain_key(source, dom)
+            if circuit.is_available(key):
+                return key
+        return None
+    return source if circuit.is_available(source) else None
