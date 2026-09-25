@@ -52,6 +52,15 @@ def test_load_corrupt_unlinks_and_returns_none(tmp_path):
     assert not bad.exists()  # self-healing: corrupt file removed
 
 
+def test_load_non_utf8_is_corruption_and_removed(tmp_path):
+    # Checker residual 1: a decode failure (ValueError, not OSError) must take
+    # the same unlink-and-None path as bad JSON — never escape load().
+    bad = tmp_path / "indeed-session.json"
+    bad.write_bytes(b"\xff\xfe\x00\x80binary garbage")
+    assert session.load("indeed", base_dir=tmp_path) is None
+    assert not bad.exists()  # self-healing ran
+
+
 def test_expired_cookies_are_invalid(tmp_path):
     dead = _state(expires=time.time() - 60)
     assert session.session_is_valid(dead) is False
@@ -164,6 +173,20 @@ def test_attempt_login_unusable_state_returns_none(monkeypatch, tmp_path):
     empty = {"cookies": [], "origins": []}
     assert session.attempt_login("indeed", lambda: empty, base_dir=tmp_path) is None
     assert session.load("indeed", base_dir=tmp_path) is None
+
+
+def test_attempt_login_persist_failure_returns_none(monkeypatch, tmp_path):
+    # Checker residual 2: a storage error while saving must not escape the
+    # fail-closed boundary — logged None, no session file, no tmp leftovers.
+    _local_env(monkeypatch)
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("storage backend down")
+
+    monkeypatch.setattr(session, "save", _boom)
+    state = _state(expires=time.time() + 7200)
+    assert session.attempt_login("indeed", lambda: state, base_dir=tmp_path) is None
+    assert list(tmp_path.glob("*")) == []
 
 
 def test_attempt_login_rejects_non_callable(monkeypatch, tmp_path):

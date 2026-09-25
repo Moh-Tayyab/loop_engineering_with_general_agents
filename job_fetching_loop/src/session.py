@@ -119,7 +119,9 @@ def load(source: str, base_dir: Path | None = None) -> dict | None:
     """
     path = session_file(source, base_dir)
     try:
-        raw = path.read_text(encoding="utf-8")
+        # Bytes, not text: a non-UTF-8 file must surface as a parse failure
+        # below (corruption → unlink), never as an uncaught UnicodeDecodeError.
+        raw = path.read_bytes()
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -134,7 +136,10 @@ def load(source: str, base_dir: Path | None = None) -> dict | None:
         return None
     try:
         state = json.loads(raw)
-    except json.JSONDecodeError:
+    except ValueError:
+        # json.JSONDecodeError and UnicodeDecodeError are both ValueError:
+        # bad JSON or bad encoding means the file is corrupt → unlink so the
+        # next run starts clean (fail-closed, never raises).
         log.warning("corrupt session file for %s — removing %s", source, path)
         try:
             path.unlink()
@@ -160,9 +165,10 @@ def attempt_login(
     scraper) returning a Playwright `storage_state` dict.
 
     Never raises on login failures (fail-closed boundary): refusal in an
-    automation runner, timeout, CAPTCHA/challenge, crash, or an unusable state
-    all log a warning and return None so the caller records a circuit-breaker
-    failure. Programmer errors (non-callable `do_login`) still raise.
+    automation runner, timeout, CAPTCHA/challenge, crash, an unusable state,
+    or a storage error while persisting all log a warning and return None so
+    the caller records a circuit-breaker failure. Programmer errors
+    (non-callable `do_login`) still raise.
     """
     if _in_automation_runner():
         log.warning(
@@ -218,6 +224,16 @@ def attempt_login(
         log.warning("login for %s returned no usable session", source)
         return None
 
-    saved = save(source, state, base_dir)
+    try:
+        saved = save(source, state, base_dir)
+    except OSError as exc:
+        # Persist failure must not escape the fail-closed boundary (Checker
+        # residual 2): class name only, per the R2 no-exception-text contract.
+        log.warning(
+            "login ok for %s but session persist failed (%s)",
+            source,
+            type(exc).__name__,
+        )
+        return None
     log.info("login ok for %s — session saved to %s", source, saved.name)
     return state
