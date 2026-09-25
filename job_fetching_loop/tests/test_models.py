@@ -856,4 +856,3 @@ def test_phase3_url_validation():
     assert is_valid_job_url("https://boards.greenhouse.io/openai/jobs/400123")
     assert is_valid_job_url("https://jobs.lever.co/anthropic/500456")
     assert is_valid_job_url("https://company.com/careers/ai-engineer")
-

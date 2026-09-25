@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 120 — PR #13 Beat 119 re-review
+- **Beat #:** 121 — Beat 120 Checker findings: comma/tempered clause capture + full-match walk
 - **Date:** 2026-09-25
-- **Trigger:** pull_request sync (commit `629b951`)
-- **Status:** **CHECKER REVIEWED — CHANGES REQUESTED** — 311 passed, EXIT 0; compileall/bash syntax and secret scan clean. Two MEDIUM fail-open residuals remain: comma-split mixed clauses (`Remote - Austin, Berlin`) and APAC/ME siblings (`Remote - Austin and Singapore`) still drop; `_US_RESTRICTED_RE.search` checks only the first match, so a skipped mixed clause can mask a later `Remote - Dallas` pin. Review posted to PR #13; no code modified.
+- **Trigger:** user — "Continue" on Beat 120 CHANGES REQUESTED (rework past §7 bound stays human-authorized)
+- **Status:** **MAKER DONE** — MEDIUM-1a: `,` joins the `_US_RESTRICTED_RE` clause charset (`Remote - Austin, Berlin` open); MEDIUM-1b: skip set is now `_NON_US_LOCALITY_TOKENS = FOREIGN | APAC | ME` (`Remote - Austin and Singapore` / `Remote - Seattle and Dubai` open; verified disjoint from all US pin sets); MEDIUM-2: `.search`→`.finditer` full walk + tempered group stop before any later `remote` word (`... Berlin; Remote - Dallas` and `... Berlin. This role is Remote - Dallas.` now restrict). +3 regression tests; `git diff --check` clean (test_digest trailing WS, test_models EOF). **312 passed** EXIT 0, secrets clean. Pushing for Checker re-review.
 
 ## 3. Beat Log
 
@@ -44,10 +44,11 @@ systemd Persistent catch-up (Telegram ISP-blocked that day).
 compressed at 2026-09-24 (beat 116, §9 cap 20): beats 97–100b — rule-11 guardrails
 (window/Location/feed/link-health), digest empty-body fail-closed, India/JP/KR/Bangalore
 blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects, digest
-20/20.
+20/20. recompressed at 2026-09-25 (beat 121, §9 cap): beats 101–103 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 121 | 2026-09-25 | user — continue (Beat 120 CR findings) | MEDIUM-1a `,` in clause charset; MEDIUM-1b `_NON_US_LOCALITY_TOKENS` = FOREIGN\|APAC\|ME; MEDIUM-2 `finditer` + tempered group stop; +3 tests; `diff --check` cleanups | **MAKER DONE** — 312 passed, repros open/pins restrict, secrets clean; push for re-review |
 | 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
 | 119 | 2026-09-25 | user — fix (a) then (b), past §7 bound | (a) foreign-locality-aware group-walk + `&` clause charset; (b) tradeoff-pinning tests; fixed `_utc_today` monkeypatch leak in test_main (UTC-roll suite break) | **MAKER DONE** — 311 passed, repros open/pins restrict, secrets clean; push for re-review |
 | 118 | 2026-09-24 | pull_request sync (Beat 117 rework d5c1b23 pushed) | Re-reviewed: 309 green; Beat-116 repros + realistic prose kept open; precision intact. **Residual**: >4-word gate leaves short-clause siblings dropping Worldwide ("Remote - Austin and Berlin", "Remote (New York, London)", "Remote - Texas and Germany"...). 2nd rework → rework bound hit → human gate. `checker` subagent spawn fails again (this pass is the Checker) | **CHECKER REVIEWED** — CHANGES REQUESTED (non-blocking); posted to PR #13 |
@@ -65,9 +66,7 @@ blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects,
 | 106 | 2026-09-22 | backlog #10 smoke | Live `--dry-run` after Beat 105: LinkedIn guest → 71 jobs, B4 drops visible, purity clean; Indeed → CAPTCHA | PASS (LinkedIn; Indeed/Glassdoor pending human CAPTCHA) |
 | 105 | 2026-09-22 | user — fix all accuracy gaps small pieces | **A1–C5 remediation:** fail-closed location, filter parity, hybrid/Israel/B3, parse_drift+pagination, circuit alert, rejected.jsonl; new `test_accuracy_gaps.py` | PASS — 298 tests, Checker APPROVED |
 | 104 | 2026-09-22 | user — prod-ready audit | Test isolation, commit 38-file drift, DLQ replay+clear→0, secret scan clean | PASS — 274 tests, exit 0 |
-| 103 | 2026-09-21 | user audio — live accuracy | Monday 3-day scrape; remote-badge cards; 100% Rule 11 | PASS — 268 tests |
-| 102 | 2026-09-21 | user audio — kill bot detection | Native Chrome stealth + Bezier Turnstile; live 5/5 Indeed + 5/5 Glassdoor | PASS — 268 tests |
-| 101 | 2026-09-21 | user — digest hallucinations | `is_valid_digest_job` gate; purged 93 invalid seen; digest W39 12/12 | PASS — 268 tests |
+| 103–101 | 2026-09-21 | user/audio beats (§9 compress) | 103: Monday 3-day live accuracy scrape + remote-badge cards (100% Rule 11). 102: native Chrome stealth + Bezier Turnstile → live 5/5 Indeed + 5/5 Glassdoor. 101: `is_valid_digest_job` gate, purged 93 invalid seen, digest W39 12/12 | **PASS** — 268 tests each |
 
 ## 4. Budget & Stopping Conditions
 
@@ -100,7 +99,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
-13. **(Beat 116–120, HUMAN, PR #13 residual — REOPENED)** Beat 119 fixes the tested `and`/`&` mixed clauses, but `Remote - Austin, Berlin` still drops because the hyphen group stops at commas; APAC/ME siblings also drop because the foreign set omits Singapore, Dubai, Riyadh, etc. `_US_RESTRICTED_RE.search` checks only the first match, so `Remote - Austin and Berlin; Remote - Dallas` is wrongly kept. 311 tests green; two MEDIUM fail-open cases remain. Further rework needs human authorization because the earlier bound was already exceeded.
+13. ~~**(Beat 116–120, HUMAN, PR #13 residual)**~~ **Fixed Beat 121 (user-authorized continue):** MEDIUM-1a `,` joins clause charset (`Remote - Austin, Berlin` / `Remote - Seattle, London` open); MEDIUM-1b skip set = `_NON_US_LOCALITY_TOKENS` (FOREIGN|APAC|ME — `Remote - Austin and Singapore` / `Remote - Seattle and Dubai` open; disjoint from US pin sets); MEDIUM-2 `finditer` full walk + tempered group stop before later `remote` word (`...; Remote - Dallas` + `... is Remote - Dallas.` restrict). +3 regression tests; 312 green. Awaiting Checker re-review on PR #13.
 14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
 
 ## 11. Human Gate Decisions (job loop)

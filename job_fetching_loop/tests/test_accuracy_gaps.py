@@ -618,6 +618,7 @@ def test_pr13_worldwide_desc_us_office_mentions_stay_open():
 def test_pr13_short_mixed_locality_clauses_stay_open():
     # PR #13 human-gate fix (a): short ≤4-word clauses mixing a US locality
     # with a FOREIGN one are multi-locality prose, not US residency pins.
+    # Beat 120: comma enumerations + APAC/ME siblings are the same class.
     short_mixed = [
         "Remote - Austin and Berlin",
         "Remote (New York, London)",
@@ -626,6 +627,12 @@ def test_pr13_short_mixed_locality_clauses_stay_open():
         "Remote - California or Ireland",
         "Remote - France vs Texas",
         "Remote - UK or California",
+        # Beat 120 MEDIUM-1a: comma must join the clause, not cut it.
+        "Remote - Austin, Berlin",
+        "Remote - Seattle, London",
+        # Beat 120 MEDIUM-1b: in-scope APAC/ME localities are non-US too.
+        "Remote - Austin and Singapore",
+        "Remote - Seattle and Dubai",
     ]
     for clause in short_mixed:
         assert not _is_us_restricted(clause), clause
@@ -633,6 +640,25 @@ def test_pr13_short_mixed_locality_clauses_stay_open():
             LOCATION_REMOTE, "Worldwide", source="linkedin",
             description=clause, title="AI Engineer",
         ), clause
+
+
+def test_pr13_mixed_first_pin_second_still_restricts():
+    """Beat 120 MEDIUM-2: a skipped mixed clause must not mask a LATER US-only
+    pin — fail-closed Rule 11 demands every match is walked (finditer)."""
+    # mixed clause first, hard pin second
+    assert _is_us_restricted("Remote - Austin and Berlin; Remote - Dallas")
+    # greedy-group trap: without the tempered stop the first match would
+    # swallow "Remote" and the Dallas pin would never be examined.
+    assert _is_us_restricted(
+        "Remote-first hubs in Austin and Berlin. This role is Remote - Dallas."
+    )
+    # pin only in a later paren/hyphen clause after mixed prose
+    assert _is_us_restricted("Remote (Austin, Berlin). Remote - Houston")
+    assert not is_remotely_workable(
+        LOCATION_REMOTE, "Worldwide", source="linkedin",
+        description="Remote-first hubs in Austin and Berlin. This role is Remote - Dallas.",
+        title="AI Engineer",
+    )
 
 
 def test_pr13_mixed_locality_tradeoffs_pinned():

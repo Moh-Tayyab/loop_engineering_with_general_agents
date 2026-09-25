@@ -300,8 +300,12 @@ _US_MAJOR_CITIES = frozenset({
 
 _US_RESTRICTED_RE = re.compile(
     r"(?i)(?:remote\s*\(([^)]*)\)"          # "Remote (US Only)" / "Remote (San Francisco)"
-    r"|remote\s*[-,–/]\s*([A-Za-z .&]+)"  # "Remote - US Only" / "Remote - Texas" / "Remote / US" / "Remote - Seattle & London"
-    r"|([A-Za-z .&]+?)\s*[-,–/]\s*remote)"  # "Maryland – Remote" / "TX - Remote" / "US - Remote"
+    # Hyphen/sep clause: comma joins the enumeration ("Remote - Austin,
+    # Berlin"), and the tempered group stops before any following "remote"
+    # word so a later pin ("... Berlin. This role is Remote - Dallas.")
+    # remains a SEPARATE match for finditer (Beat 120 MEDIUM-1a/2).
+    r"|remote\s*[-,–/]\s*((?:(?!\bremote\b)[A-Za-z .&,])+)"
+    r"|((?:(?!\bremote\b)[A-Za-z .&,])+?)\s*[-,–/]\s*remote)"  # "Maryland – Remote" / "TX - Remote" / "Austin, TX - Remote"
 )
 
 US_DOMESTIC_BOARDS = frozenset({"indeed", "glassdoor", "ziprecruiter", "monster"})
@@ -390,6 +394,16 @@ _FOREIGN_RESTRICTED_COUNTRIES = frozenset({
     "zurich", "geneva", "vienna", "prague", "warsaw", "budapest", "bucharest",
     "athens", "helsinki", "stockholm", "copenhagen", "oslo", "lyon", "brussels",
 })
+
+# Beat 120 MEDIUM-1b: complete non-US-locality set for the mixed-clause skip
+# in _is_us_restricted — restricted foreign countries PLUS in-scope APAC/ME
+# localities (Singapore, Dubai, Riyadh, Bangkok, Kuala Lumpur, Philippines,
+# ...). Any of these next to a US locality marks the clause as multi-locality
+# prose, not a US residency pin. Verified disjoint from _US_STATE_NAMES /
+# _US_MAJOR_CITIES / _US_STATE_ABBR (no US pin can be skipped by this set).
+_NON_US_LOCALITY_TOKENS = (
+    _FOREIGN_RESTRICTED_COUNTRIES | _APAC_REGIONS | _MIDDLE_EAST_REGIONS
+)
 
 
 def _has_strong_worldwide_eligibility(description: str | None) -> bool:
@@ -960,8 +974,10 @@ def _is_us_restricted(text: str) -> bool:
             if g and g.lower() in _US_STATE_ABBR:
                 return True
 
-    m = _US_RESTRICTED_RE.search(text)
-    if m:
+    # Beat 120 MEDIUM-2: walk EVERY regex match (finditer, not search) —
+    # a mixed clause skipped below must NOT mask a later US-only pin
+    # ("Remote - Austin and Berlin; Remote - Dallas" must still restrict).
+    for m in _US_RESTRICTED_RE.finditer(text):
         for grp in m.groups():
             if not grp:
                 continue
@@ -970,15 +986,17 @@ def _is_us_restricted(text: str) -> bool:
                 return True
             if any(phrase in grp_low for phrase in ("us only", "usa only", "u.s. only", "u.s.a. only", "united states only", "u.s.")):
                 return True
-            # PR #13 human-gate fix (a): enumeration/foreign-aware group-walk.
-            # A captured clause naming a FOREIGN locality alongside a US one
-            # ("Remote - Austin and Berlin", "Remote (New York, London)",
-            # "Remote - Texas and Germany") is multi-locality prose on a
-            # Worldwide role — NOT a US residency pin. US-only qualifiers
-            # ("Remote - Austin", "Remote (New York)", "Remote - US Only")
-            # still restrict; USA/US-person tokens above stay unconditional.
+            # PR #13 human-gate fix (a) + Beat 120 MEDIUM-1b: enumeration/
+            # locality-aware group-walk. A captured clause naming ANY non-US
+            # locality (restricted foreign country OR in-scope APAC/ME place —
+            # "Remote - Austin and Berlin", "Remote (New York, London)",
+            # "Remote - Austin, Berlin", "Remote - Austin and Singapore")
+            # alongside a US one is multi-locality prose on a Worldwide role —
+            # NOT a US residency pin. US-only qualifiers ("Remote - Austin",
+            # "Remote (New York)", "Remote - US Only") still restrict;
+            # USA/US-person tokens above stay unconditional.
             if any(re.search(rf"\b{re.escape(f)}\b", grp_low)
-                   for f in _FOREIGN_RESTRICTED_COUNTRIES):
+                   for f in _NON_US_LOCALITY_TOKENS):
                 continue
             # PR #13 residual MEDIUM: the hyphen alt captures the whole trailing
             # clause ("Remote-first hubs in Austin and Berlin" → group includes

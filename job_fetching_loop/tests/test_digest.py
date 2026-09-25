@@ -107,15 +107,15 @@ def test_collect_weekly_jobs_drops_hallucinations(tmp_path, tmp_slc):
 
     today = digest.utc_now().date()
     valid_job = _sample_job(1)
-    
+
     # 1. Recruiter profile URL (/in/)
     bad_profile = _sample_job(2)
     bad_profile.url = "https://www.linkedin.com/in/recruiter-profile-123/"
-    
+
     # 2. On-site role in description
     bad_onsite = _sample_job(3)
     bad_onsite.description_snippet = "📍 Gulberg, Lahore | Onsite position at office"
-    
+
     # 3. Language restricted (Japanese JLPT)
     bad_lang = _sample_job(4)
     bad_lang.title = "AI Engineer JLPT N1 Level"
