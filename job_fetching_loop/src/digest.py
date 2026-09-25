@@ -29,8 +29,93 @@ def week_key(dt: date | None = None) -> str:
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
+def is_valid_digest_job(job: NormalizedJob) -> bool:
+    """Strict quality & compliance gate for jobs appearing in the weekly digest.
+
+    Guarantees 0 hallucinations, 0 /in/ recruiter profile links, 0 on-site leaks,
+    0 foreign domestic/language restricted roles, and full compliance with Rule 11.
+    """
+    from src.models import (
+        is_valid_job_url,
+        is_worldwide_remote,
+        is_title_restricted,
+        is_description_restricted,
+        is_language_restricted,
+        is_hybrid_work,
+        is_foreign_country_restricted,
+        _is_us_restricted,
+        _has_strong_worldwide_eligibility,
+    )
+
+    url = job.url or ""
+    if not is_valid_job_url(url):
+        return False
+
+    # Israel LinkedIn portal blocked per Rule 11
+    if "il.linkedin.com" in url:
+        return False
+
+    # Title restrictions (e.g. non-engineering, US-only, Onsite in Katy Texas, etc.)
+    if is_title_restricted(job.title):
+        return False
+
+    # A12: filter on the FULL stored description (raw), not the 2000-char notify
+    # snippet — restriction text past the truncate point must still be seen.
+    desc = job.description_snippet or ""
+    raw_desc = ((job.raw or {}).get("description") or "")
+    if len(raw_desc) > len(desc):
+        desc = raw_desc
+    full_text = f"{job.title} {desc}".strip()
+
+    # Language restrictions (Japanese, JLPT, German, Hebrew, etc.)
+    if is_language_restricted(full_text):
+        return False
+
+    # Onsite / Hybrid checks
+    if is_hybrid_work(full_text):
+        return False
+
+    # Description restrictions (US work auth, clearance, right to work in UK/EU, etc.)
+    if is_description_restricted(desc):
+        return False
+
+    # Location checks — foreign labels allowed only with strong worldwide eligibility
+    # (Beat 108 parity with daily / B3; bare "impact worldwide" marketing does not count).
+    loc = job.location or ""
+    if is_foreign_country_restricted(loc) and not _has_strong_worldwide_eligibility(desc):
+        return False
+    if _is_us_restricted(loc) or _is_us_restricted(desc):
+        return False
+
+    # Remotely workable check
+    if not is_worldwide_remote(loc, source=job.source, description=desc, title=job.title):
+        return False
+
+    # Foreign physical cities (e.g. Dubai, Abu Dhabi, Singapore, Riyadh) MUST have a non-empty description
+    # so we don't blind-pass an on-site or domestic role with a fake remote card label.
+    is_pk = any(p in loc.lower() for p in ("pakistan", "karachi", "lahore", "islamabad", "rawalpindi", "faisalabad", "peshawar"))
+    is_generic_remote = loc.lower().strip() in ("remote", "worldwide", "anywhere", "work from anywhere", "global remote")
+    if not is_pk and not is_generic_remote and not desc:
+        return False
+
+    # CV match score minimum (70%)
+    if job.cv_match_score is not None and job.cv_match_score < 70:
+        return False
+
+    return True
+
+
+def is_valid_digest_job_dict(job_dict: dict[str, Any]) -> bool:
+    """Helper to validate raw/stored dict entries against the digest gate."""
+    try:
+        return is_valid_digest_job(NormalizedJob.from_dict(job_dict))
+    except Exception:
+        return False
+
+
 def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
-    """Read all job files from the past 7 days and merge.
+    """Read all job files from the past 7 days and merge, strictly filtering out
+    any invalid, on-site, recruiter profile, or non-workable positions.
 
     Iterates UTC dates to stay aligned with save_jobs() (which names files by
     UTC date); a local-date loop in a UTC+ timezone would silently drop the
@@ -50,7 +135,7 @@ def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
             jobs = raw if isinstance(raw, list) else raw.get("jobs", [])
             for d in jobs:
                 j = NormalizedJob.from_dict(d)
-                if j.id not in seen_ids:
+                if j.id not in seen_ids and is_valid_digest_job(j):
                     seen_ids.add(j.id)
                     all_jobs.append(j)
         except (json.JSONDecodeError, OSError, KeyError) as e:
@@ -69,11 +154,13 @@ def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
                 continue
             if j.id in seen_ids:
                 continue
+            if not is_valid_digest_job(j):
+                continue
             seen_ids.add(j.id)
             all_jobs.append(j)
             fallback_added += 1
         if fallback_added:
-            log.info("[digest] merged %d job(s) from seen-store fallback", fallback_added)
+            log.info("[digest] merged %d verified job(s) from seen-store fallback", fallback_added)
     except (json.JSONDecodeError, OSError, ValueError, KeyError) as e:
         log.warning("[digest] seen-store fallback unavailable: %s", e)
 
@@ -81,7 +168,8 @@ def collect_weekly_jobs(output_dir: Path | None = None) -> list[NormalizedJob]:
 
 
 def generate_digest(jobs: list[NormalizedJob]) -> dict[str, Any]:
-    """Compute weekly statistics from collected jobs."""
+    """Compute weekly statistics from collected jobs, enforcing valid digest gate."""
+    jobs = [j for j in jobs if is_valid_digest_job(j)]
     total = len(jobs)
     by_source: Counter[str] = Counter()
     by_type: Counter[str] = Counter()

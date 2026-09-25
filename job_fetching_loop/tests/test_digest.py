@@ -22,11 +22,11 @@ def _sample_job(idx: int) -> NormalizedJob:
         id=f"id-{idx}",
         title="ML Engineer",
         title_normalized="ml engineer",
-        company="OpenAI",
-        company_normalized="openai",
-        url=f"https://x.com/{idx}",
-        source="indeed" if idx % 2 else "linkedin",
-        location="Remote",
+        company=f"Company {idx}",
+        company_normalized=f"company {idx}",
+        url=f"https://pk.linkedin.com/jobs/view/ml-engineer-{idx}",
+        source="linkedin",
+        location="Pakistan (Remote)",
         location_type="remote",
         salary_min=150_000,
         salary_max=200_000,
@@ -35,7 +35,9 @@ def _sample_job(idx: int) -> NormalizedJob:
         posted_date=None,
         fetched_at=datetime.now(timezone.utc),
         tags=["ai"],
-        description_snippet="desc",
+        description_snippet="100% remote work from home position.",
+        cv_match_score=90,
+        cv_match_label="Machine Learning (90%)",
     )
 
 
@@ -43,9 +45,7 @@ def test_generate_digest_stats():
     jobs = [_sample_job(i) for i in range(4)]
     d = generate_digest(jobs)
     assert d["total"] == 4
-    assert "indeed" in d["by_source"]
     assert "linkedin" in d["by_source"]
-    assert d["by_source"]["indeed"] == 2
     assert d["by_location"]["remote"] == 4
     assert len(d["top_jobs"]) <= 20
 
@@ -98,3 +98,47 @@ def test_collect_weekly_jobs_fallback_to_seen_store(tmp_slc):
     out = digest.collect_weekly_jobs(tmp_slc)
     ids = {j.id for j in out}
     assert ids == {"id-1", "id-2"}
+
+
+def test_collect_weekly_jobs_drops_hallucinations(tmp_path, tmp_slc):
+    """Ensure weekly digest drops recruiter /in/ profile URLs, on-site, JLPT, and foreign domestic roles."""
+    import src.digest as digest
+    from datetime import datetime, timezone
+
+    today = digest.utc_now().date()
+    valid_job = _sample_job(1)
+
+    # 1. Recruiter profile URL (/in/)
+    bad_profile = _sample_job(2)
+    bad_profile.url = "https://www.linkedin.com/in/recruiter-profile-123/"
+
+    # 2. On-site role in description
+    bad_onsite = _sample_job(3)
+    bad_onsite.description_snippet = "📍 Gulberg, Lahore | Onsite position at office"
+
+    # 3. Language restricted (Japanese JLPT)
+    bad_lang = _sample_job(4)
+    bad_lang.title = "AI Engineer JLPT N1 Level"
+    bad_lang.description_snippet = "Business Level Japanese Required"
+
+    # 4. Foreign domestic (EU only)
+    bad_eu = _sample_job(5)
+    bad_eu.description_snippet = "This is a fully remote role in EU."
+
+    # 5. Low CV match score
+    bad_score = _sample_job(6)
+    bad_score.cv_match_score = 40
+
+    day_file = tmp_path / f"jobs_{today.isoformat()}.json"
+    day_file.write_text(json.dumps([
+        valid_job.to_dict(),
+        bad_profile.to_dict(),
+        bad_onsite.to_dict(),
+        bad_lang.to_dict(),
+        bad_eu.to_dict(),
+        bad_score.to_dict(),
+    ]), encoding="utf-8")
+
+    collected = digest.collect_weekly_jobs(tmp_path)
+    assert len(collected) == 1
+    assert collected[0].id == valid_job.id

@@ -9,56 +9,66 @@
 ## 1. Project Identity
 
 - **Project:** `job_fetching_loop/` — autonomous AI/ML remote-job scraper loop.
-- **Scope:** HTTP/JSON/RSS boards (LinkedIn guest, Working Nomads, Remotive, Himalayas,
-  RemoteOK, WeWorkRemotely, Jobicy, Wellfound, NoDesk) plus local-only Playwright
-  sources (Indeed, Glassdoor, JustRemote, Remote Rocketship, APAC, Pakistan Remote).
-  Five scaffolds remain default-OFF. Cloud cron skips browser-bound sources.
+- **Scope:** Exclusive 3-platform focus (Beat 79): LinkedIn guest/feed, Indeed (`pk.indeed.com`),
+  Glassdoor. Indeed/Glassdoor are local headed Playwright only; cloud cron skips them.
+  Non-target scrapers purged (Beat 79).
 - **Stack:** Python 3.12, Playwright (local headed + persistent profiles), requests, pytest.
 - **Live end-to-end since:** Beat 26 (2026-09-14) — real Telegram delivery.
 - **Runners:** GitHub Actions `job-loop-cron.yml` (weekday 08:00 PKT = `0 3 * * 1-5` UTC,
-  `.slc/` cache) and local `run_loop.sh` via crontab (weekday **08:00 PKT**, `0 8 * * 1-5`).
-  Which one is primary follows `JOB_LOOP_PRIMARY`; `both` = both fire (duplicate Telegram risk).
+  `.slc/` cache) and local systemd timer `job-fetching-loop.timer` (Beat 96; Persistent=true
+  catch-up). Which one is primary follows `JOB_LOOP_PRIMARY`; `both` = both fire (duplicate risk).
 - **CI gate:** `.github/workflows/test-gate.yml` runs pytest in
   `working-directory: job_fetching_loop`.
 
 ## 2. Current Beat
 
-- **Beat #:** 75 — End-to-End Scraper Location & Description Restriction Hardening
-- **Date:** 2026-09-17
-- **Trigger:** user report — location mismatch continuing; positions fetched that candidate in Pakistan cannot work from home
-- **Status:** Fixed `WellfoundScraper` converting on-site jobs (`remote: False`) into "Remote" by using real `locationNames` (Santa Clara, NYC); fixed `ArbeitnowScraper` hardcoding "Worldwide" for German/EU city positions (Berlin, Munich, etc.); added `is_description_restricted` checking US work authorization, W-2 only, security clearance, hybrid/in-office mandates, and tight timezone exclusions across all sources; wired into `is_worldwide_remote` & `is_remotely_workable`. +3 regression tests. `PASS` — 297 green, exit 0.
+- **Beat #:** 125 — Human Option 1: land PR #13 (2 CodeRabbit minors applied first)
+- **Date:** 2026-09-25
+- **Trigger:** user — forwarded beat-124 summary with Option 1 recommendation (merge now)
+- **Status:** **MAKER DONE; MERGE AUTHORIZED.** Applied CodeRabbit's 2 minors from the 10:10 review: `_has_strong_worldwide_eligibility` guard now admits `work from anywhere in world` (optional `the`), and `is_language_restricted` gained `Polish required` / `Fluency in Polish required` contexts (+2 asserts). **318 passed**, `diff --check` clean. Autonomous verdict requirement **waived by human** (4 consecutive infra stalls, not code). Next: cancel stalled run 36121381877 → test-gate on new sha → `gh pr merge 13 --merge --delete-branch`. Beat log compressed (107–109 merged, §9).
 
 ## 3. Beat Log
 
-compressed at 2026-09-17: beats 26–50 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge).
+compressed at 2026-09-17: beats 26–62 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge, outage honesty, DLQ replay, salary/cron hardening, strict 24h cutoff, EPIPE shield, feed gate, timeout safety, canonical URL dedup).
+
+compressed at 2026-09-17 (beat 104, §9 cap 20): beats 63–89 all PASS except 82 FAIL
+(env incomplete) — salary/24h/cron, checkout-v6, prod audits, gap remediation, cloud cron
+08:00 PKT, list-sources clarity, past-24h fail-closed, title/description leak closure,
+3-platform exclusive purge, 7 AI keywords, exp-level filter removal, APAC/ME regional sets
+(beats 85–89), Pakistan remote integrity (90).
+
+compressed at 2026-09-24 (beat 109, §9 cap 20): beats 90–96 all PASS — Pakistan remote
+integrity, live pipeline, AI matcher, anti-bot Turnstile, 3-platform verify, pk.indeed,
+systemd Persistent catch-up (Telegram ISP-blocked that day).
+
+compressed at 2026-09-24 (beat 116, §9 cap 20): beats 97–100b — rule-11 guardrails
+(window/Location/feed/link-health), digest empty-body fail-closed, India/JP/KR/Bangalore
+blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects, digest
+20/20. recompressed at 2026-09-25 (beat 121, §9 cap): beats 101–103 merged (verdicts kept).
+recompressed at 2026-09-25 (beat 123, §9 cap): beats 104–106 merged (verdicts kept).
+recompressed at 2026-09-25 (beat 125, §9 cap): beats 107–109 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
-| 75 | 2026-09-17 | user report (location mismatch frustration) | **Description & Scraper-level Remote Hardening:** `WellfoundScraper` keeps on-site locations when `remote: False`; `ArbeitnowScraper` preserves real German/EU city locations; `is_description_restricted` filters US auth, hybrid, clearance, and tight timezones; +3 tests | PASS — 297 tests, exit 0 |
-| 74 | 2026-09-17 | user report (US-only/foreign jobs in sheet) | **Strict Pakistan Remote Verification & Domestic Purge:** `is_title_restricted` catches US-only/hub titles; `_is_us_restricted` and `is_foreign_country_restricted` filter non-APAC foreign remote; `PythonOrgScraper` parses real location line instead of faking Worldwide; +4 regression tests | PASS — 294 tests, exit 0 |
-| 73 | 2026-09-17 | user report (on-site jobs in output) | **Strict Remote Gate & Pakistan Onsite Elimination:** `is_remotely_workable` rejects `location_type != LOCATION_REMOTE`; `is_worldwide_remote` rejects physical Pakistan cities & bare country without explicit remote markers; LinkedIn drops non-remote title/loc; +3 regression tests | PASS — 290 tests, exit 0 |
-| 72 | 2026-09-17 | user request (in-depth audit fix) | **Deep Salary Scale & Indicator Hardening:** added bidirectional range suffix propagation (`$150K-200`) and annual context scaling (`$150 - $200 / yr` -> 150k-200k, `/hr` preserved); +2 regression tests | PASS — 287 tests, exit 0 |
-| 71 | 2026-09-17 | user request (fix audit findings) | **Salary Scale Fix & Scraper Hardening:** propagated multiplier suffix to range min when omitted in `parse_salary` (`$150-200K` -> 150k); added `wait_until="domcontentloaded"` to `remote_rocketship`; diagnosed GitHub Actions schedule default-branch requirement; +1 regression test | PASS — 285 tests, exit 0 |
-| 70 | 2026-09-17 | user request (clarify cloud sources) | **Clarify `--list-sources` for browser scrapers:** in `src/main.py:658`, report `disabled (browser-bound; skipped on cloud runner)` instead of confusing `(set SOURCE_XYZ=1)` for browser sources on cloud; +1 regression test | PASS — 284 tests, exit 0 |
-| 69 | 2026-09-17 | user: "fix it" on workflow cron | **Cloud cron moved to 08:00 PKT:** `job-loop-cron.yml` schedule `0 4 * * 1-5` (09:00 PKT) → `0 3 * * 1-5` (03:00 UTC = 08:00 PKT); comment + README + STATE.md refs synced, no stale refs | PASS — config-only, 283 tests unaffected |
-| 68 | 2026-09-17 | user request (remediate Beat 67 audit findings) | **Audit Findings Remediation & Hardening:** outage ops-alert gated on `not cfg.is_cloud_runner()` (`src/main.py:846`, ends cloud duplex pings); cold-start empty digest renders a notice instead of a bare 0-job summary; WhatsApp status confirmed (Telegram-only in both runner envs is intended); docs synced (AGENTS.md 283 tests, schedule.py run_hour docstring). +4 regression tests | PASS — 283 green, exit 0 |
-| 67 | 2026-09-17 | user: "100% production ready? verify as senior eng, in-depth" | **Hard re-audit (read-only):** traced full cloud path (workflow env→schedule→lock→scrape→sheets DLQ→two-phase notify→digest delivery→exit codes). Single-writer holds locally (primary=github, standbby exits 0); weekday/tz alignment holds (SCRAPE_TZ Asia/Karachi × cron 04 UTC); Friday linkedin-only guest mode won't false-alarm (raises only if nothing succeeded); sheets DLQ replay confirmed container-complete; no token logging. Findings: dup outage alert (py+workflow), cold-start Monday digest stub, WhatsApp channel live in neither env, stale docs | PASS — 279 green, no code change |
-| 66 | 2026-09-17 | user request (audit gap remediation) | **Gap Remediation:** seen-store fallback in `collect_weekly_jobs` + `output/` added to Actions cache/artifact (cloud digest); `replay_sheets_dlq()` + `--replay-dlq` (dry-run safe) storing full rows in DLQ; lakh/₹ salary parsing + currency-aware `₹25L` display; `BOARD_HEADLESS` keeps indeed/glassdoor headed by default; Wellfound fetches page once (keyword loop stays in-memory); cleared 12 legacy DLQ rows | PASS — 279 tests, exit 0 |
-| 65 | 2026-09-17 | user request (prod-readiness audit) | **Deep Prod-Readiness Audit (honest):** 265 tests green; secrets clean; lock/watchdog/DLQ/dry-run verified; location+salary guards probed. Gaps: cloud weekly digest lacks `output/` cache (HIGH); Sheets DLQ has no replay (MED); stale DLQ rows + glassdoor ignores `SCRAPE_HEADLESS` (LOW) | PASS — 265, exit 0 |
-| 64 | 2026-09-17 | user request (low audit items) | **CI Checkout v6, Dead Code Purge, Sheets Retry/DLQ & Worker Join:** Aligned workflows to `actions/checkout@v6`; separated dev deps into `requirements-dev.txt`; deleted dead code in scrapers; added retries & DLQ recording to `sync_to_google_sheet`; added timeout worker join grace in `src/main.py`; 265 tests green | PASS — 265 tests, exit 0 |
-| 63 | 2026-09-17 | user request (salary, 24h datetime, cron hour) | **Salary Comma Parser, 24h Datetime & Cron Hour:** Stripped commas in `parse_salary`; compared ISO datetimes in `_run_source_impl`; added `SCRAPE_RUN_HOUR` to `next_fetch_start`; added regression tests; 263 tests green | PASS — 263 tests, exit 0 |
-| 62 | 2026-09-17 | user request (exact dedup mismatch) | **Canonical URL Exact-Dedup Alignment:** Canonicalized URLs in `job_id`; updated `dedup_job` to use `normalized.id` and pass `normalized` in `_run_source_impl`; added regression test; 259 tests green | PASS — 259 tests, exit 0 |
-| 61 | 2026-09-17 | user request (feed gate & timeout dedup) | **Feed Gate Unblock & Timeout Dedup Safety:** Dropped undocumented `LINKEDIN_FEED_PASS`; deferred dedup `accept_and_record` to caller thread on confirmed success (no burning jobs on timeout, no cross-thread seen race); 258 tests green | PASS — 258 tests, exit 0 |
-| 60 | 2026-09-17 | user request (prod audit gaps) | **Full Production Audit Remediation:** Single-writer standby aligned (`JOB_LOOP_PRIMARY=github`); LinkedIn guest outage honesty; Google Sheets decoupled from lock; single-threaded circuit & DLQ ops; DLQ CLI tools; localhost health server; 255 tests green | PASS — 255 tests, exit 0 |
-| 59 | 2026-09-17 | user request (source & regex filter) | **Source Exclusion & US Regex Hardening:** Confirmed zero reliance/inclusion of AI-Jobs, Upwork, Toptal; updated `_is_us_restricted` and `_US_RESTRICTED_RE` to strictly drop `Remote - US/USA/United States` variants; 249 tests green | PASS — 249 tests, exit 0 |
-| 58 | 2026-09-17 | user request (prod gaps) | **Outage Honesty, Timeout Double-Count Shield & Topology Alignment:** Propagated HTTP/network failures across all curated & HTTP scrapers (no swallowed outage errors); added `cancel_event` to prevent daemon threads from double-counting circuit breaker failures on timeout; aligned `JOB_LOOP_PRIMARY=local` across configs; added regression tests; 249 tests green | PASS — 249 tests, exit 0 |
-| 57 | 2026-09-16 | user request (universal 24h) | **Universal 24h Cutoff:** Removed 10-day relaxation for curated boards in `src/main.py`; enforced strict `cutoff_date = posted_after.date()` for every platform; added regression test; 243 tests green | PASS — 243 tests, exit 0 |
-| 56 | 2026-09-16 | manual (audit debt & 24h filter) | **EPIPE Shield, 24h Filter, defusedxml & Concurrency Tests:** Enforced exact 24h query on Indeed (`fromage=1`) & Glassdoor (`fromAge=1`); shielded Node EPIPE crashes in browser teardown & fail-isolated `run_source`; migrated RSS to `defusedxml`; updated UAs to Chrome 133; added cross-process FileLock test; 242 tests green | PASS — 242 tests, exit 0 |
-| 55 | 2026-09-16 | manual (prod audit) | **Prod Audit Remediation:** Handled browser process cleanup on timeout/daemon cycle; added 3-attempt Telegram retries; added /healthz endpoint & graceful SIGTERM in --serve; untracked PDF & updated .gitignore; cleaned .env.example; 240 tests green | PASS — 240 tests, exit 0 |
-| 54 | 2026-09-16 | manual (onsite/expired purge) | **On-site & Expired Purge:** Removed fake `(Remote)` in linkedin.py; hardened `is_worldwide_remote` to reject hybrid/onsite in Pakistan/regions; added deep `jobPosting` verification for expired/closed/onsite drops; 234 tests pass | PASS — 234 tests, exit 0 |
-| 53 | 2026-09-16 | manual (unattended & 24h filter) | **LinkedIn 24h filter & unattended loop fix:** Added `import os` to `linkedin.py` (fixed `NameError`); shielded Node/Playwright `EPIPE` crash in background; locked `sortBy=DD&f_TPR=r86400`; synced 32 verified 24h jobs to Google Sheet; 234 tests pass | PASS — 234 tests, exit 0 |
-| 52 | 2026-09-16 | manual (volume scaling) | **High-volume platform expansion:** Added `ArbeitnowScraper` (250+ JSON API) & `PythonOrgScraper` (PSF RSS); multi-tag RemoteOK & Jobicy data-science; expanded tech context in matcher; 17 live sources; 234 tests green | PASS — 234 tests, exit 0 |
-| 51 | 2026-09-16 | manual (prod hardening) | **Per-source timeout guard:** `run_source()` daemon worker capped `SOURCE_TIMEOUT_S=150`; timeout → circuit failure + verdict + DLQ (real runs) + loop continues. LinkedIn guest pass 45s monotonic, browser pass 90s `asyncio.wait_for`. Live: linkedin 135s/4 jobs (was >180s hang), indeed capped 150s. Scaffolds 4/5 still blocked | PASS — 228 tests, exit 0; checker APPROVED |
+| 125 | 2026-09-25 | user — forwarded summary, Option 1 (merge PR #13 now) | Applied 2 CodeRabbit minors from 10:10 review: wfa guard admits `in world` (`(?:the\s+)?`); polish requirement-context patterns (`Polish required`, `Fluency in Polish required`); +2 asserts | **MAKER DONE** — 318 passed, whitespace clean; stalled reviewer (36121381877) to cancel; **merge PR #13 authorized by human (Option 1)** — autonomous verdict waived (infra stall, not code) |
+| 124 | 2026-09-25 | user — roadmap Steps 1–3 + "fix critical subset" | timeout 20→45 (`40664a8`); topology=github, secrets verified, 15 CR comments triaged; CodeRabbit crit ×5 (wfa-country, abbr finditer+isupper, APAC-tz lookbehind, polish context, dry-run ops-alert) +4 tests | **MAKER DONE** — 318 passed; checker blocked 4× (3×20m + 45m run stalled 09:20→kill) → **FREEZE (§7)**, `@Moh-Tayyab` pinged on PR #13 |
+| 123 | 2026-09-25 | user — continue (Beat 122 CR findings) | MEDIUM-A markers-after-pins in `_is_us_restricted`; MEDIUM-B sole-foreign-hyphen / foreign-enumeration / bare-`X only` desc patterns; +2 tests (daily+digest) | **MAKER DONE** — 314 passed, CI green on `960b80e`; **Checker blocked: reviewer cancelled 3× at `timeout-minutes: 20` → FREEZE (§7), no verdict**; run 3/3 → stop (§10 task 16) |
+| 122 | 2026-09-25 | pull_request sync (`5caa5e4`) | Re-reviewed Beat 121; 312 tests, syntax, diff, and secret checks clean; reproduced marker-override US-pin fail-open and foreign geography-only description leaks in daily+digest | **FAIL — CHANGES REQUESTED (comment)** — two MEDIUM findings posted; no production code changed; human gate |
+| 121 | 2026-09-25 | user — continue (Beat 120 CR findings) | MEDIUM-1a `,` in clause charset; MEDIUM-1b `_NON_US_LOCALITY_TOKENS` = FOREIGN\|APAC\|ME; MEDIUM-2 `finditer` + tempered group stop; +3 tests; `diff --check` cleanups | **MAKER DONE** — 312 passed, repros open/pins restrict, secrets clean; push for re-review |
+| 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
+| 119 | 2026-09-25 | user — fix (a) then (b), past §7 bound | (a) foreign-locality-aware group-walk + `&` clause charset; (b) tradeoff-pinning tests; fixed `_utc_today` monkeypatch leak in test_main (UTC-roll suite break) | **MAKER DONE** — 311 passed, repros open/pins restrict, secrets clean; push for re-review |
+| 118 | 2026-09-24 | pull_request sync (Beat 117 rework d5c1b23 pushed) | Re-reviewed: 309 green; Beat-116 repros + realistic prose kept open; precision intact. **Residual**: >4-word gate leaves short-clause siblings dropping Worldwide ("Remote - Austin and Berlin", "Remote (New York, London)", "Remote - Texas and Germany"...). 2nd rework → rework bound hit → human gate. `checker` subagent spawn fails again (this pass is the Checker) | **CHECKER REVIEWED** — CHANGES REQUESTED (non-blocking); posted to PR #13 |
+| 117 | 2026-09-24 | Checker residual CR on Beat 115 | Pin-gated group-walk (≤4-word qualifiers) + full-text state/abbr residency pins; 5 new repro/pin asserts | **MAKER DONE** — 309 passed, matrix/parity fails=0; push for re-review |
+| 116 | 2026-09-24 | pull_request sync (Beat 115 rework pushed) | Re-reviewed PR #13 rework 3eb382f: 309 tests green; repros fixed + pins intact; MEDIUM#2 (HEAD-after-dedup, 1.5s timeout, close) correct; Glassdoor A2 + dead var done. **Residual CHANGES REQUESTED**: `_US_RESTRICTED_RE` hyphen alt + city group-walk still false-drops Worldwide "Remote-first team with offices in Seattle..." / "Remote-first hubs in Austin..." (no comma) — needs pin-gated group-walk. Fixed retired `checker` model in `.opencode/agent/checker.md` (mimo-v2.5-free→v2.6-flash-free) + both AGENTS.md lessons | **CHECKER REVIEWED** — CHANGES REQUESTED (residual, non-blocking); posted to PR #13 |
+| 115 | 2026-09-24 | user — run next beat / PR#13 rework | Fixed MEDIUM #1 residency-pin-only city restrict; MEDIUM #2 HEAD-after-dedup + 1.5s timeout + response close; Glassdoor A2; dead var; 4 regression tests | **MAKER DONE** — suite EXIT 0, matrix/parity fails=0; awaiting Checker |
+| 114 | 2026-09-24 | PR #13 review (job→main) | Reviewed Beats 104–112 diff; 305 tests green; posted CHANGES REQUESTED(comment): desc-level `_is_us_restricted` drops Worldwide roles naming a US office; per-job `check_link_health` HEAD budget risk; LOW nits (service path hardcode, catch-up stamp, has_captcha card-clean, dead vars, Glassdoor location fabrication, stale STATE "uncommitted" text) | **DONE** — review sent; findings to human gate |
+| 113 | 2026-09-24 | user — option c (stop) | Run stop after Beat 112; listed 5 open human-owned gaps | **STOPPED** — 2/3 beats; no further work |
+| 112 | 2026-09-24 | user — 100% production ready | Commit+push Beat 111 F1–F4 (4 files) to origin; video gitignore hygiene (`loop.log`, `.agents/`, `skills-lock.json`) | **PASS** — HEAD=origin, 305 tests, secrets clean |
+| 111 | 2026-09-24 | user — continue / fix accuracy gaps | Fixed Beat 110 F1–F3 + **F4 drop Hybrid Cloud carve-out** + F1 residuals (`not only` / `the only thing` / `non-US persons only`); 305 tests, matrix 34/34, parity 34/34 | **PASS** — Checker R4 `APPROVED`; not committed |
+| 110 | 2026-09-24 | user — residual leak hunt | R4 fixes + `_usa_token_polarity_open` in `_is_us_restricted`; 305 tests green | **CHANGES REQUESTED** — same-clause open-neg suppresses hard pin; recruiter inverse (`Technical Recruiter - Engineering`) opens; underscore country/`Software_Engineer_Recruiting_Solutions` inconsistent. Frozen, uncommitted |
+| 109–107 | 2026-09-22/24 | backlog/user beats (§9 compress) | 109: push Beats 104–108 to origin (cloud cron fixed filters); 108: B3 tighten + `_has_strong_worldwide_eligibility` + purge 3 BairesDev FPs; 107: commit accuracy remediation + LinkedIn dry-run smoke | PASS — 298–300 tests; remote synced |
+| 106–104 | 2026-09-22 | backlog/user beats (§9 compress) | 106: LinkedIn dry-run smoke → 71 jobs, B4 drops visible, Indeed CAPTCHA. 105: A1–C5 accuracy remediation (fail-closed location, filter parity, hybrid/Israel/B3, circuit alert) + `test_accuracy_gaps.py`. 104: test isolation, 38-file drift commit, DLQ replay→0 | **PASS** — 274–298 tests; Beat 105 Checker APPROVED |
+| 103–101 | 2026-09-21 | user/audio beats (§9 compress) | 103: Monday 3-day live accuracy scrape + remote-badge cards (100% Rule 11). 102: native Chrome stealth + Bezier Turnstile → live 5/5 Indeed + 5/5 Glassdoor. 101: `is_valid_digest_job` gate, purged 93 invalid seen, digest W39 12/12 | **PASS** — 268 tests each |
 
 ## 4. Budget & Stopping Conditions
 
@@ -78,13 +88,23 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 ## 10. Next Actionable Tasks (job loop)
 
-1. ~~**Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/revoke`~~ (Done 2026-09-16). **Next:** Update `.env` and GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` with the newly generated token.
-2. Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.
-3. Local crontab is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
-4. Indeed/Glassdoor remain local-headed only; cloud never waits on CAPTCHA.
-5. Scaffolds cleanly retired: feedcoyote, jobboardsearch, flexjobs, dynamitejobs, and virtual_vocations purged. Production operates on 15 live, verified sources.
-6. ~~**(Beat 65, HIGH)** Persist `output/` in `job-loop-cron.yml` cache (or build Monday weekly digest from durable state) — cloud primary otherwise mails a near-empty digest.~~ Done Beat 66: `output/` in cache+artifact, seen-store fallback in `collect_weekly_jobs`.
-7. ~~**(Beat 65, MED)** Add a Sheets DLQ replay path (`--replay-dlq google_sheets`) so webhook-outage rows aren't lost; then `--clear-dlq` the stale legacy rows.~~ Done Beat 66: replay added (dry-run safe), 12 legacy rows cleared.
+0. ~~**(Beat 96, BLOCKING)** Telegram ISP block~~ — Beat 104 state shows `daily:telegram: 2026-09-22` marked sent; re-verify with manual `send_daily` if unsure.
+1. ~~**Rotate the Telegram token** (pasted into chat 2026-09-14) via BotFather `/replay`~~ (Done 2026-09-16). Ensure `.env` + GitHub secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` hold the new token.
+2. ~~Confirm repo secrets exist for the cloud cron (`GOOGLE_SHEET_WEBHOOK_URL` optional). Push so weekday Actions can run.~~ — Pushed Beat 109 (2026-09-24); cloud HEAD = `68de118`.
+3. Local systemd timer is standby while `JOB_LOOP_PRIMARY=github`. Set `JOB_LOOP_PRIMARY=local` only if Actions is off.
+4. Indeed/Glassdoor remain local-headed only; cloud never waits on CAPTCHA. Circuit breakers may open daily on CAPTCHA timeouts (Rule 10 — expected).
+5. Exclusive 3-platform production (Beat 79): linkedin, indeed, glassdoor only.
+6. ~~**(Beat 65, HIGH)** Persist `output/` in cron cache~~ Done Beat 66.
+7. ~~**(Beat 65, MED)** Sheets DLQ replay + clear~~ Done Beat 66 / re-run Beat 104 (DLQ now 0).
+8. ~~Restore LinkedIn feed **description body capture** (Beat 100b)~~ — A9 now fail-closes missing JD bodies in guest path (Beat 105); authenticated feed body capture still worth a live Friday check.
+9. **Human spot-check (weekly):** open `output/jobs_*.json` + latest Telegram digest; sample 5 jobs — confirm Rule 11 (APAC/ME remote, Global, or Worldwide contractor only), live URLs, and description_snippet length ≤ 2000. Log pass/fail in beat log.
+10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
+11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
+12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
+13. ~~**(Beat 122, HUMAN, PR #13)**~~ **Fixed Beat 123 (user-authorized):** (A) target-marker exception moved below all hard US pins in `_is_us_restricted` — marker'd text with a real pin now restricts (daily+digest); (B) `is_description_restricted` gained sole-foreign-hyphen, foreign-only-enumeration, and bare `X only` patterns. 314 tests green; awaiting Checker re-review on PR #13.
+14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
+15. **Proposed durable lesson (human approval):** Evaluate explicit Worldwide/APAC markers only after hard residency-pin detection; add mixed-marker and foreign-city/country-only regressions. (Implemented Beat 123; approve for AGENTS.md §11.)
+16. ~~**(Beat 124, HUMAN, shared infra)**~~ **RESOLVED Beat 125 (human Option 1):** autonomous-verdict requirement waived for PR #13 (4 consecutive infra stalls; test-gate + CodeRabbit green); stalled run 36121381877 cancelled at merge time. **Still open for later PRs:** reviewer stalls (last log activity then 32-min silence; orphan `opencode`+`npm exec @playwright` — possible `model: opencode/big-pickle` API hang, `gh run view 36116678518 --log`), CodeRabbit comment-runs spawning `opencode` noise jobs, and `checker` subagent spawn (task 14).
 
 ## 11. Human Gate Decisions (job loop)
 

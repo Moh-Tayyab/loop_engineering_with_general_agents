@@ -1,0 +1,11 @@
+[Unit]
+Description=Job Fetching Loop — Daily 08:00 PKT Timer
+Requires=job-fetching-loop.service
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

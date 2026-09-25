@@ -364,6 +364,16 @@ class SeenStore:
         if len(self.recent) > max_recent:
             self.recent = self.recent[:max_recent]
 
+    def purge_invalid_recent(self, is_valid_fn: Any) -> int:
+        """Purge invalid/corrupted records from recent_jobs, saving atomically."""
+        before = len(self.recent)
+        self.recent = [r for r in self.recent if is_valid_fn(r)]
+        purged = before - len(self.recent)
+        if purged > 0:
+            self.save()
+            log.info("[seen] purged %d invalid recent job(s) from seen store", purged)
+        return purged
+
 
 class DeadLetterQueue:
     """Stores jobs that exceeded per-source retry so data is never lost."""

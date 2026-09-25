@@ -79,6 +79,11 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
 6. Beat 6-12 follow-ups (verify-loop-state graduation) remain available.
+7. **(2026-09-24, shared infra — owned by job loop Beat 116):** retired `checker` model
+   `opencode/mimo-v2.5-free` was fixed to `opencode/mimo-v2.6-flash-free` in
+   `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
+   match (consistency only, no video-loop behavior change). Verify the Checker spawn works
+   next session before this loop's next maker–checker cycle.
 
 ## 11. Human Gate Decisions (video loop)
 

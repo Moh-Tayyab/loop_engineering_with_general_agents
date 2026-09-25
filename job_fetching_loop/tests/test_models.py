@@ -212,10 +212,23 @@ def test_is_worldwide_remote_worldwide():
     assert is_worldwide_remote("Global")
 
 
-def test_is_worldwide_remote_apac_and_multi_region():
+def test_is_worldwide_remote_apac_regions_with_foreign_blocked_countries():
+    """Broad APAC-region designators remain in-scope, but roles hard-blocked
+    to a developed foreign market (Japan/Korea/Australia) are domestic-only
+    even when they carry a Remote label — foreign country law outranks APAC."""
+    assert is_worldwide_remote("Remote (Singapore)")
+    assert not is_worldwide_remote("Remote (India)")
+    assert is_worldwide_remote("Remote (India) - Worldwide Contractor")
+    assert is_worldwide_remote("APAC (Remote)")
+    assert is_worldwide_remote("Asia Pacific (Remote)")
+    assert not is_worldwide_remote("Remote (Japan)")
+    assert not is_worldwide_remote("Remote (South Korea)")
+    assert not is_worldwide_remote("Remote (Australia)")
     """Working Nomads & remote-native boards using 'Global' and multi-region APAC strings."""
-    assert is_worldwide_remote("Europe, North America, Latin America, APAC")
-    assert is_worldwide_remote("Europe, LATAM, APAC, the U.S., Canada")
+    # Region-scoped lists that EXCLUDE Pakistan (Europe/LatAm/US-specific) are
+    # domestic restrictions for a Pakistan-based candidate — reject (Rule 11).
+    assert not is_worldwide_remote("Europe, North America, Latin America, APAC")
+    assert not is_worldwide_remote("Europe, LATAM, APAC, the U.S., Canada")
     assert is_worldwide_remote("APAC")
     assert is_worldwide_remote("Asia Pacific")
     assert is_worldwide_remote("Remote (Worldwide) - Working East Coast Hours")
@@ -303,11 +316,20 @@ def test_is_title_restricted_cases():
     assert is_title_restricted("Python Engineer [US-Only]")
     assert is_title_restricted("Data Scientist (US Candidates Only)")
     assert is_title_restricted("Software Engineer - Only in the US")
+    # Leave-eligible: bare on-site/hybrid, commission-only, and foreign student roles
+    assert is_title_restricted("SDR - AI Voice Company (Commission Only - Remote & On-Site)")
+    assert is_title_restricted("Working Student – Innovation, AI & Entrepreneurship")
+    assert is_title_restricted("Software Engineer - Hybrid (NYC)")
+    # Beat 111: Hybrid cloud needs private/on-prem coupling — not remote for PK
+    assert is_title_restricted("Hybrid Cloud Engineer")
+    assert is_title_restricted("Staff Hybrid Cloud Architect")
+    assert is_title_restricted("Hybrid-Cloud Engineer")
     # Legitimate non-restricted titles
     assert not is_title_restricted("AI agent engineer")
     assert not is_title_restricted("Senior Software Engineer")
     assert not is_title_restricted("Lead Python Backend Engineer")
     assert not is_title_restricted("Software Engineer: IaC Platform Experience")
+    assert not is_title_restricted("Senior Machine Learning Engineer")
 
 
 def test_is_worldwide_remote_rejects_title_restrictions():
@@ -342,9 +364,16 @@ def test_is_description_restricted_cases():
     assert is_description_restricted("Hybrid schedule: 3 days in the office, 2 days from home.")
     assert is_description_restricted("Must be able to commute to our NYC office.")
     assert is_description_restricted("Active secret clearance required.")
+    assert is_description_restricted("100% Remote - USA Only")
+    assert is_description_restricted("Must be a US Citizen or Green Card holder")
+    assert is_description_restricted("Must have UK Right to Work")
+    assert is_description_restricted("EU resident permit required")
+    assert is_description_restricted("Must hold valid US work authorization")
+    assert is_description_restricted("Must be able to work in the US")
     # Legitimate worldwide description
     assert not is_description_restricted("We are an all-remote global team building AI tools in Python. Anyone anywhere can apply.")
     assert not is_description_restricted("Supabase is remote-first and hires globally across multiple timezones.")
+    assert not is_description_restricted("We hire contractors worldwide via Deel.")
 
 
 def test_is_worldwide_remote_rejects_description_restrictions():
@@ -361,6 +390,7 @@ def test_is_worldwide_remote_allowed_tags():
     assert is_worldwide_remote("Worldwide")
     assert is_worldwide_remote("Work from anywhere")
     assert is_worldwide_remote("Anywhere in the world")
+    assert is_worldwide_remote("Anywhere in World")
     assert is_worldwide_remote("Anywhere")
     assert is_worldwide_remote("Work from home")
     assert is_worldwide_remote("WFH")
@@ -368,8 +398,83 @@ def test_is_worldwide_remote_allowed_tags():
     assert is_worldwide_remote("Asia Pacific")
     assert is_worldwide_remote("Pakistan (Remote)")
     assert is_worldwide_remote("Remote in Pakistan")
-    assert is_worldwide_remote("Global")
     assert is_worldwide_remote("Global Remote")
+
+
+def test_is_worldwide_remote_middle_east():
+    """Verify Middle East, MENA, GCC, UAE, Dubai, Saudi Arabia remote handling."""
+    assert is_worldwide_remote("Middle East (Remote)")
+    assert is_worldwide_remote("Remote - Middle East")
+    assert is_worldwide_remote("MENA (Remote)")
+    assert is_worldwide_remote("GCC (Remote)")
+    assert is_worldwide_remote("Dubai (Remote)")
+    assert is_worldwide_remote("Remote, UAE")
+    assert is_worldwide_remote("United Arab Emirates (Remote)")
+    assert is_worldwide_remote("Saudi Arabia (Remote)")
+    assert is_worldwide_remote("Riyadh (Remote), Saudi Arabia")
+    assert is_worldwide_remote("Qatar (Remote)")
+    assert is_worldwide_remote("Remote (Iran)")
+    assert not is_worldwide_remote("Remote (Israel)")  # Blocked: legal & banking impossibility for Pakistan
+    assert is_worldwide_remote("Remote (Palestine)")
+    assert not is_worldwide_remote("Dubai, UAE", description="This role is 100% remote work from home.")
+    assert is_worldwide_remote("Dubai, UAE", description="Worldwide 100% remote work from home.")
+    # On-site and hybrid office roles in Middle East must be strictly rejected
+    assert not is_worldwide_remote("Dubai, UAE")
+    assert not is_worldwide_remote("Dubai (Hybrid), UAE")
+    assert not is_worldwide_remote("Riyadh, Saudi Arabia")
+    assert not is_worldwide_remote("Doha, Qatar")
+    assert not is_worldwide_remote("Tehran, Iran")
+    assert not is_worldwide_remote("Tel Aviv, Israel")
+    assert not is_worldwide_remote("Ramallah, Palestine")
+    assert not is_worldwide_remote("Dubai, UAE", description="Hybrid role: 3 days in the Dubai office.")
+
+
+def test_is_worldwide_remote_b2b_and_freelance():
+    """Verify B2B and freelance contractor roles with no geographic entity restrictions."""
+    assert is_worldwide_remote("Worldwide (B2B)")
+    assert is_worldwide_remote("Remote (B2B Contract)")
+    assert is_worldwide_remote("Remote (Freelance)")
+    assert is_worldwide_remote("B2B Remote")
+    assert is_worldwide_remote("Freelance Remote")
+    assert is_worldwide_remote("Remote (Contract)")
+    assert is_worldwide_remote("Remote (Contractor)")
+    assert is_worldwide_remote("Remote (C2C)")
+    assert is_worldwide_remote("Remote (Independent Contractor)")
+
+
+def test_is_worldwide_remote_bare_subregions_rejected_without_remote():
+    """Sub-regions like 'Southeast Asia' or 'East Asia' without remote markers are rejected."""
+    assert not is_worldwide_remote("Southeast Asia")
+    assert not is_worldwide_remote("East Asia")
+    assert is_worldwide_remote("Southeast Asia (Remote)")
+    assert is_worldwide_remote("East Asia (Remote)")
+
+
+def test_is_worldwide_remote_broad_regions_and_domestic_board_apac():
+    """Verify broad region names pass and US-domestic boards accept in-scope APAC/ME remote."""
+    assert is_worldwide_remote("South Asia")
+    assert is_worldwide_remote("Middle East")
+    assert is_worldwide_remote("MENA")
+    assert is_worldwide_remote("GCC")
+    assert not is_worldwide_remote("Remote (India)", source="indeed")
+    assert is_worldwide_remote("Remote (India) - Worldwide", source="indeed")
+    # Japan is a hard-blocked APAC market (visa/tax/language) despite geography
+    assert not is_worldwide_remote("Remote (Japan)", source="indeed")
+    assert is_worldwide_remote("Remote (Singapore)", source="glassdoor")
+    assert is_worldwide_remote("Dubai (Remote)", source="indeed")
+    # Bare Remote on Indeed without in-scope markers stays rejected
+    assert not is_worldwide_remote("Remote", source="indeed")
+
+
+def test_is_title_restricted_foreign_domestic():
+    """Verify title restrictions for UK, Canada, Europe, Germany, Poland, etc."""
+    from src.models import is_title_restricted
+    assert is_title_restricted("Senior AI Engineer (UK Only)")
+    assert is_title_restricted("ML Engineer [Europe-Only]")
+    assert is_title_restricted("AI Architect (Canada Only)")
+    assert is_title_restricted("Staff Data Scientist - Germany Only")
+    assert is_title_restricted("LLM Engineer (EU candidates only)")
+
 
 
 def test_is_worldwide_remote_us_domestic_boards_reject_bare_remote():
@@ -626,3 +731,128 @@ def test_parse_posted_date_unparseable_returns_none():
     assert parse_posted_date("") is None
     assert parse_posted_date("   ") is None
     assert parse_posted_date("garbage") is None
+
+
+def test_is_valid_job_url_rejects_profile_urls():
+    from src.models import is_valid_job_url
+    assert not is_valid_job_url("https://www.linkedin.com/in/rana-hamza-22292123b/")
+    assert not is_valid_job_url("https://www.linkedin.com/in/abdul-muqeet/")
+    assert not is_valid_job_url("https://www.linkedin.com/in/sundaramx/")
+    assert not is_valid_job_url("ftp://example.com/job")
+    assert not is_valid_job_url("")
+    assert not is_valid_job_url(None)
+    assert is_valid_job_url("https://www.linkedin.com/jobs/view/4467933585/")
+    assert is_valid_job_url("https://boards.greenhouse.io/company/jobs/12345")
+    assert is_valid_job_url("https://jobs.lever.co/company/abc-123")
+
+
+def test_matcher_rejects_business_and_recruiting_roles():
+    from src.matcher import is_blacklisted_title, match_usama_cv
+    title1 = "Founding Business Leader (Agentic AI Talent Intelligence) - Global AI-Native Tech Talent Venture"
+    is_bl, _ = is_blacklisted_title(title1)
+    assert is_bl
+    matched, score, _ = match_usama_cv(title1)
+    assert not matched
+    assert score == 0
+
+    title2 = "Specialist, Multimedia & Generative AI Production at SHRM"
+    is_bl2, _ = is_blacklisted_title(title2)
+    assert is_bl2
+
+    title3 = "Postdoctoral Researcher / Research Scientist & Research / Software Engineer"
+    is_bl3, _ = is_blacklisted_title(title3)
+    assert is_bl3
+
+
+def test_phase2_strict_location_and_remote_filtering():
+    from src.models import is_worldwide_remote
+
+    allowed_keywords = [
+        "worldwide", "anywhere", "global", "remote - worldwide",
+        "work from home", "pakistan remote", "apac remote"
+    ]
+    for kw in allowed_keywords:
+        assert is_worldwide_remote(kw), f"Expected {kw} to pass"
+
+    forbidden_keywords = [
+        "onsite", "hybrid", "india", "usa", "united states", "uk",
+        "canada", "germany", "remote, or", "remote, ca", "remote - us", "remote (india)"
+    ]
+    for kw in forbidden_keywords:
+        assert not is_worldwide_remote(kw), f"Expected {kw} to be rejected"
+
+
+def test_phase4_link_health_check(monkeypatch):
+    from src.models import check_link_health
+    import requests
+
+    class Mock404:
+        status_code = 404
+
+    class Mock200:
+        status_code = 200
+
+    def mock_head_404(url, **kwargs):
+        return Mock404()
+
+    def mock_head_200(url, **kwargs):
+        return Mock200()
+
+    monkeypatch.setattr(requests, "head", mock_head_404)
+    assert not check_link_health("https://example.com/job/404")
+
+    monkeypatch.setattr(requests, "head", mock_head_200)
+    assert check_link_health("https://example.com/job/200")
+
+
+def test_phase1_schedule_windows():
+    from datetime import datetime, timezone, timedelta
+    from src.schedule import compute_fetch_window, FREQ_BACKFILL, FREQ_DAILY, FREQ_WEEKLY
+
+    # Monday (2026-09-14)
+    monday = datetime(2026, 9, 14, 9, 0, tzinfo=timezone.utc)
+    win_mon = compute_fetch_window(monday)
+    assert win_mon.reason == FREQ_BACKFILL
+    assert win_mon.window_end - win_mon.window_start == timedelta(days=3)
+
+    # Tuesday (2026-09-15)
+    tue = datetime(2026, 9, 15, 9, 0, tzinfo=timezone.utc)
+    win_tue = compute_fetch_window(tue)
+    assert win_tue.reason == FREQ_DAILY
+    assert win_tue.window_end - win_tue.window_start == timedelta(hours=24)
+
+    # Wednesday (2026-09-16)
+    wed = datetime(2026, 9, 16, 9, 0, tzinfo=timezone.utc)
+    win_wed = compute_fetch_window(wed)
+    assert win_wed.reason == FREQ_DAILY
+    assert win_wed.window_end - win_wed.window_start == timedelta(hours=24)
+
+    # Thursday (2026-09-17)
+    thu = datetime(2026, 9, 17, 9, 0, tzinfo=timezone.utc)
+    win_thu = compute_fetch_window(thu)
+    assert win_thu.reason == FREQ_DAILY
+    assert win_thu.window_end - win_thu.window_start == timedelta(hours=24)
+
+    # Friday (2026-09-18)
+    fri = datetime(2026, 9, 18, 9, 0, tzinfo=timezone.utc)
+    win_fri = compute_fetch_window(fri)
+    assert win_fri.reason == FREQ_WEEKLY
+    assert win_fri.sources == ["linkedin"]
+
+
+def test_phase3_url_validation():
+    from src.models import is_valid_job_url
+
+    # Negative profile link selector
+    assert not is_valid_job_url("https://www.linkedin.com/in/john-doe")
+    assert not is_valid_job_url("https://linkedin.com/in/recruiter-specialist-123/")
+    assert not is_valid_job_url("https://www.linkedin.com/in/sarah-talent/")
+    assert not is_valid_job_url("")
+    assert not is_valid_job_url(None)
+    assert not is_valid_job_url("ftp://invalid-protocol")
+
+    # Valid application and feed update links
+    assert is_valid_job_url("https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/")
+    assert is_valid_job_url("https://boards.greenhouse.io/openai/jobs/400123")
+    assert is_valid_job_url("https://jobs.lever.co/anthropic/500456")
+    assert is_valid_job_url("https://company.com/careers/ai-engineer")

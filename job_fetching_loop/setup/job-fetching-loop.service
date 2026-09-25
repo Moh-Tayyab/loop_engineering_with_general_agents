@@ -1,0 +1,14 @@
+[Unit]
+Description=Job Fetching Loop — Daily AI/ML Remote Job Scrape
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/job_fetching_loop
+ExecStart=/home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/job_fetching_loop/run_loop.sh
+User=muhammadtayyab
+Environment=PYTHONPATH=.
+Environment=DISPLAY=:0
+StandardOutput=append:/home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/job_fetching_loop/loop.log
+StandardError=append:/home/muhammadtayyab/panaversity_learning/loop_engineering_with_general_agents/job_fetching_loop/loop.log

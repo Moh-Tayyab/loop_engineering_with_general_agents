@@ -22,7 +22,10 @@ from src.browser import (
     await_captcha_solve,
     check_captcha,
     has_captcha,
+    human_click,
     human_delay,
+    human_hover,
+    human_read_pause,
     human_scroll,
     launch_browser,
     warm_up,
@@ -39,9 +42,9 @@ log = get_logger(__name__)
 class IndeedScraper(BaseScraper):
     name = "indeed"
 
-    _BASE = "https://www.indeed.com"
-    _HOME = "https://www.indeed.com/"
-    _SEARCH = "https://www.indeed.com/jobs?q={kw}&l=remote&fromage={days}&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11"
+    _BASE = "https://pk.indeed.com"
+    _HOME = "https://pk.indeed.com/"
+    _SEARCH = "https://pk.indeed.com/jobs?q={kw}&l=Remote&fromage={days}"
 
     def is_available(self) -> bool:
         return True
@@ -59,40 +62,59 @@ class IndeedScraper(BaseScraper):
         errors: list[Exception] = []
         async with launch_browser(self.name, persistent=True, headless=cfg.board_headless()) as context:
             page = await context.new_page()
-            await warm_up(page, self._HOME, self.name)
             for kw in keywords:
-                url = self._SEARCH.format(kw=kw.replace(" ", "+"), days=days)
-                try:
-                    await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
-                    if await has_captcha(page):
-                        if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
-                            raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
-                        # re-navigate after the solve — the search page reloads clean
+                from urllib.parse import quote_plus
+                ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
+                # B6: paginate Indeed (start=0,10,20) — first page only capped recall.
+                for start in (0, 10, 20):
+                    url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ia_filter + f"&start={start}"
+                    try:
                         await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
-                    await check_captcha(page, self.name)
-                    any_success = True
-                    await human_scroll(page)
-                    await human_delay(2.0, 5.0)
-                    cards = await page.query_selector_all("div.job_seen_beacon, div.jobsearch-SerpJobCard, td.resultContent")
-                    for card in cards:
-                        job = await self._parse_card(card, kw)
-                        if job:
-                            yield job
-                    await human_delay(3.0, 6.0)
-                except (CaptchaDetected, CaptchaTimeout):
-                    raise
-                except Exception as e:
-                    errors.append(e)
-                    log.warning("[indeed] error scraping %r: %s", kw, e)
+                        if await has_captcha(page):
+                            if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
+                                raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
+                        await check_captcha(page, self.name)
+                        any_success = True
+                        await human_scroll(page)
+                        await human_delay(2.0, 5.0)
+                        cards = await page.query_selector_all("div.cardOutline, div.job_seen_beacon, div.jobsearch-SerpJobCard")
+                        if not cards:
+                            cards = await page.query_selector_all("td.resultContent")
+                        # B5: page loaded but 0 cards on first page = selector drift
+                        if not cards and start == 0:
+                            body_len = 0
+                            try:
+                                body_len = len(await page.content())
+                            except Exception:
+                                pass
+                            if body_len > 5000:
+                                errors.append(RuntimeError(
+                                    f"parse_drift: Indeed page loaded ({body_len} bytes) but 0 cards for {kw!r}"
+                                ))
+                        for card in cards:
+                            job = await self._parse_card(card, kw, days, page=page)
+                            if job:
+                                yield job
+                        if not cards:
+                            break
+                        await human_delay(3.0, 6.0)
+                    except (CaptchaDetected, CaptchaTimeout):
+                        raise
+                    except Exception as e:
+                        errors.append(e)
+                        log.warning("[indeed] error scraping %r: %s", kw, e)
+                        break
             await page.close()
         if not any_success and errors:
             raise errors[0]
 
-    async def _parse_card(self, card, keyword: str) -> RawJob | None:
-        title_el = await card.query_selector("h2.jobTitle a, a.jcs-JobTitle, h2 a")
+    async def _parse_card(self, card, keyword: str, days: int = 1, page: Any = None) -> RawJob | None:
+        title_el = await card.query_selector("h2.jobTitle a, a.jcs-JobTitle, h2.jobTitle span, h2 a")
         if not title_el:
             return None
-        title = (await title_el.inner_text()).strip()
+        title = (await title_el.get_attribute("title") or await title_el.inner_text()).strip()
+        if not title:
+            return None
         href = await title_el.get_attribute("href") or ""
         jk = await card.get_attribute("data-jk") or await title_el.get_attribute("data-jk")
         if not jk and href:
@@ -101,30 +123,83 @@ class IndeedScraper(BaseScraper):
             if m:
                 jk = m.group(1)
         if jk:
-            url = f"https://www.indeed.com/viewjob?jk={jk}"
+            url = f"{self._BASE}/viewjob?jk={jk}"
         else:
             url = self._BASE + href if href.startswith("/") else href
-        company_el = await card.query_selector("span[data-testid='company-name'], span.companyName")
+        company_el = await card.query_selector("span[data-testid='company-name'], span.companyName, a[data-testid='company-name'], [data-testid='company-name']")
         company = (await company_el.inner_text()).strip() if company_el else "Unknown"
-        location_el = await card.query_selector("div[data-testid='text-location'], div.companyLocation")
+        location_el = await card.query_selector("div[data-testid='text-location'], div.companyLocation, span[data-testid='text-location'], [data-testid='text-location']")
         location = (await location_el.inner_text()).strip() if location_el else None
-        # Description: try job-snippet, then shelf, then table fallback
+        # Description: try job-snippet, then shelf, then table fallback, then card inner text
         desc = None
-        for sel in ("div.job-snippet", "table.jobCardShelfContainer td", "div.jobsearch-SerpJobCard-snippet"):
+        for sel in ("div.job-snippet", "table.jobCardShelfContainer td", "div.jobsearch-SerpJobCard-snippet", "ul.css-9446fg", "div.css-10pe3me"):
             snippet_el = await card.query_selector(sel)
             if snippet_el:
                 desc = (await snippet_el.inner_text()).strip()
                 if desc:
                     break
+        card_text = ""
+        if not desc:
+            try:
+                card_text = await card.inner_text()
+                lines = [l.strip() for l in card_text.splitlines() if l.strip()]
+                desc = " ".join(lines[3:]) if len(lines) > 3 else card_text
+            except Exception:
+                pass
+        try:
+            card_text = await card.inner_text()
+        except Exception:
+            pass
+
+        # Try reading full description from right pane if card matches profile
+        if page and title_el:
+            try:
+                from src.matcher import match_usama_cv
+                is_match, _, _ = match_usama_cv(title, description=desc)
+                if is_match:
+                    await title_el.click()
+                    await asyncio.sleep(0.5)
+                    full_desc_el = await page.query_selector("#jobDescriptionText, div.jobsearch-jobDescriptionText")
+                    if full_desc_el:
+                        full_text = (await full_desc_el.inner_text()).strip()
+                        if full_text and len(full_text) > len(desc or ""):
+                            desc = full_text[:3500]
+            except Exception:
+                pass
+
+        # Remote detection: on pk.indeed.com with l=Remote, preserve Remote location
+        comb = f"{card_text} {desc or ''}".lower()
+        if not any(w in comb for w in ("hybrid", "onsite", "on-site", "in-office", "office-based")):
+            if any(w in comb for w in ("remote", "work from home", "wfh")):
+                if location and "remote" not in location.lower():
+                    location = f"{location} (Remote)"
+                # A2: NEVER invent "Pakistan (Remote)" when the location element is
+                # missing — that string is an in-scope marker that bypasses the
+                # US-domestic-board gate. Leave None → fail-closed drop downstream.
         # Salary
-        salary_el = await card.query_selector("div.salary-snippet-container, span.estimated-salary")
+        salary_el = await card.query_selector("div.salary-snippet-container, span.estimated-salary, div.metadata.salary-snippet-container, [data-testid='attribute_snippet_testid']")
         salary = (await salary_el.inner_text()).strip() if salary_el else None
-        # Posted date: Indeed shows relative dates like "Posted 3 days ago"
+        # Posted date: Indeed shows relative dates like "Posted 3 days ago", "Just posted", "Active today"
         posted_date = None
-        date_el = await card.query_selector("span.date, span[data-testid='myJobsStateDate']")
+        date_el = await card.query_selector("span.date, span[data-testid='myJobsStateDate'], span[class*='myJobsStateDate'], span.css-10pe3me")
         if date_el:
             raw_date = (await date_el.inner_text()).strip()
-            posted_date = raw_date if raw_date else None
+            if raw_date:
+                import re
+                cleaned = re.sub(r"^(?:employer\s+active|active|posted)\s+", "", raw_date, flags=re.IGNORECASE).strip()
+                posted_date = cleaned or raw_date
+
+        if not posted_date:
+            try:
+                card_text = await card.inner_text()
+                import re
+                m = re.search(r"\b(just posted|active today|posted today|today|\d+\s+days?\s+ago|\d+d\b)", card_text, re.IGNORECASE)
+                if m:
+                    posted_date = m.group(1).strip()
+                # A11: no badge → None (strict 24h fail-closed in main). Do NOT
+                # fabricate "today"/"N days ago" — that defeats the recency gate.
+            except Exception:
+                posted_date = None
         return RawJob(
             source=self.name,
             title=title,

@@ -27,7 +27,7 @@ def _post(**over):
 
 def test_feed_url_encodes_keyword():
     url = LinkedInScraper._FEED.format(kw="machine+learning")
-    assert url.startswith("https://www.linkedin.com/search/content/all/")
+    assert url.startswith("https://www.linkedin.com/search/results/content/")
     assert "machine+learning" in url
 
 
@@ -73,8 +73,36 @@ def test_feed_post_missing_url_rejected():
     assert _feed_post_to_raw(_post(url=""), "ML") is None
 
 
+def test_feed_post_educational_content_rejected():
+    raw = _feed_post_to_raw(_post(text="What is the difference between AI vs machine learning? A simple explanation."), "ML")
+    assert raw is None
+
+
+def test_feed_post_career_commentary_rejected():
+    raw = _feed_post_to_raw(_post(text="The biggest threat to your career isn't the technology itself."), "ML")
+    assert raw is None
+
+
+def test_feed_post_hiring_intent_accepted():
+    raw = _feed_post_to_raw(
+        _post(text="We are looking for a senior Machine Learning engineer — apply now. Fully remote worldwide."),
+        "ML",
+    )
+    assert raw is not None
+
+
 def test_feed_post_missing_text_rejected():
     assert _feed_post_to_raw(_post(text=""), "ML") is None
+
+
+def test_feed_post_body_capture_length():
+    """Regression: feed post must carry a non-trivial description body
+    (Beat 100b empty-body blinded Rule 11; snippet now caps at 2000)."""
+    raw = _feed_post_to_raw(_post(), "ML")
+    assert raw is not None
+    assert raw.description is not None
+    assert len(raw.description) >= 50
+    assert "remote team" in raw.description.lower()
 
 
 def test_post_location_remote_markers():
@@ -87,9 +115,46 @@ def test_post_location_explicit_onsite_hybrid():
     assert _post_location("Hybrid role in the Karachi office.") == "Hybrid"
 
 
-def test_post_location_defaults_remote():
-    assert _post_location("Looking for an ML engineer to grow our team") == "Remote"
-    assert _post_location("") == "Remote"
+def test_post_location_defaults_fail_closed():
+    """Beat 105 / A1: no location signal → empty string (caller drops), never invented Remote."""
+    assert _post_location("Looking for an ML engineer to grow our team") == ""
+    assert _post_location("") == ""
+
+
+def test_post_location_surfaces_foreign_markers():
+    """Strict-location law: a post naming a restricted foreign country or region
+    must NOT masquerade as worldwide bare "Remote" (which the gate passes)."""
+    assert _post_location("We're hiring a remote AI engineer, UK-based.") == "UK (Remote)"
+    assert _post_location("Join our team in Poland! Remote OK.") == "Poland (Remote)"
+    assert _post_location("Remote role with our Latin America team.") == "Latin America (Remote)"
+
+
+def test_post_location_foreign_marker_overridden_by_in_scope():
+    """Worldwide / APAC / B2B qualifiers keep the post in-scope as Remote."""
+    assert _post_location("Remote ML engineer, worldwide. ") == "Remote"
+    assert _post_location("Hiring in APAC — AI engineer, fully remote.") == "Remote"
+    assert _post_location("B2B contractor, remote from anywhere.") == "Remote"
+
+
+def test_post_location_physical_gulf_city_rejected():
+    """Rule 11: naming a physical Gulf/Middle East city without an explicit
+    anywhere-remote marker is on-site → must be surfaced as Hybrid, never Remote."""
+    assert _post_location("We're hiring across AI in Dammam, Saudi Arabia.") == "Hybrid"
+    assert _post_location("Looking for engineers based in Riyadh.") == "Hybrid"
+    assert _post_location("Join our Dubai office, AI team.") == "Hybrid"
+
+
+def test_post_location_physical_apac_city_rejected():
+    """Beat 105 / A1: non-Gulf APAC metros must not fall through to Remote."""
+    assert _post_location("Hiring ML Engineer - must be based in Karachi.") == "Hybrid"
+    assert _post_location("Looking for engineers based in Lahore.") == "Hybrid"
+    assert _post_location("Join our Dhaka office, AI team.") == "Hybrid"
+    assert _post_location("Remote role based in Manila only.") == "Hybrid"
+
+
+def test_post_location_remote_gulf_stays_remote():
+    """Explicit remote qualifier keeps an otherwise-city post in-scope."""
+    assert _post_location("Remote in Dubai, worldwide OK.") == "Remote"
 
 
 # ── _feed_queries: Friday "we are hiring" scene phrasing ─────────────────────
@@ -168,6 +233,7 @@ def test_linkedin_feed_pass_runs_when_session_and_feed_enabled(monkeypatch):
     from src.scrapers.linkedin import LinkedInScraper
 
     monkeypatch.setenv("SOURCE_LINKEDIN_FEED", "1")
+    monkeypatch.setenv("LINKEDIN_FEED_EVERYDAY", "1")
     scraper = LinkedInScraper()
 
     # Mock authenticated session
@@ -185,6 +251,32 @@ def test_linkedin_feed_pass_runs_when_session_and_feed_enabled(monkeypatch):
 
     list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
     assert gather_called is True
+
+
+def test_linkedin_feed_pass_skipped_on_monday(monkeypatch):
+    """On Monday, feed pass is skipped even if session exists (Jobs section only)."""
+    from src.scrapers.linkedin import LinkedInScraper
+
+    monkeypatch.setenv("SOURCE_LINKEDIN_FEED", "1")
+    monkeypatch.delenv("LINKEDIN_FEED_EVERYDAY", raising=False)
+    scraper = LinkedInScraper()
+
+    # Mock Monday
+    monkeypatch.setattr("src.scrapers.linkedin.utc_now", lambda: datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(scraper, "has_authenticated_session", lambda: True)
+    monkeypatch.setattr(scraper, "_fetch_guest_public", lambda kw, dt: iter([]))
+
+    gather_called = False
+
+    async def mock_gather(kw, dt):
+        nonlocal gather_called
+        gather_called = True
+        return []
+
+    monkeypatch.setattr(scraper, "_gather", mock_gather)
+
+    list(scraper.fetch(["AI"], datetime.now(timezone.utc)))
+    assert gather_called is False
 
 
 def test_linkedin_feed_pass_skipped_when_disabled_or_no_session(monkeypatch):
@@ -271,3 +363,102 @@ def test_linkedin_guest_search_drops_onsite_and_keeps_remote(monkeypatch):
     assert "Senior Data Engineer" not in titles
     assert "Senior Software Engineer" not in titles
     assert "Senior AI Engineer (Remote)" in titles
+
+
+def test_linkedin_guest_search_easy_apply_and_exp_level(monkeypatch):
+    """Verify that easy_apply_only adds f_AL=true and exp_levels adds f_E=2,3,4 to search URL."""
+    import requests
+    from src import config as cfg
+
+    captured_urls = []
+
+    class MockResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+            self.url = "https://linkedin.com"
+
+    def mock_get(url, **kwargs):
+        captured_urls.append(url)
+        return MockResponse("", status_code=200)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+    monkeypatch.setenv("EASY_APPLY_ONLY", "1")
+    monkeypatch.setenv("LINKEDIN_EXPERIENCE_LEVELS", "2,3,4")
+
+    scraper = LinkedInScraper()
+    list(scraper._fetch_guest_public(["AI"], datetime(2026, 9, 1, tzinfo=timezone.utc)))
+
+    assert len(captured_urls) > 0
+    first_search = captured_urls[0]
+    assert "f_AL=true" in first_search
+    assert "f_E=2,3,4" in first_search
+    assert "f_WT=2" in first_search
+
+
+def test_linkedin_guest_search_omits_exp_level_by_default(monkeypatch):
+    """Verify that by default f_E is not appended to the search URL."""
+    import requests
+
+    captured_urls = []
+
+    class MockResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+            self.url = "https://linkedin.com"
+
+    def mock_get(url, **kwargs):
+        captured_urls.append(url)
+        return MockResponse("", status_code=200)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+    monkeypatch.delenv("LINKEDIN_EXPERIENCE_LEVELS", raising=False)
+
+    scraper = LinkedInScraper()
+    list(scraper._fetch_guest_public(["AI"], datetime(2026, 9, 1, tzinfo=timezone.utc)))
+
+    assert len(captured_urls) > 0
+    first_search = captured_urls[0]
+    assert "f_E=" not in first_search
+
+
+def test_post_location_onsite_and_us_restrictions():
+    from src.scrapers.linkedin import _post_location, _feed_post_to_raw
+
+    # Onsite in Lahore with #RemoteJobs hashtag spam must be detected as Hybrid/Onsite
+    t_lahore = (
+        "📢 Career Opportunity – Junior AI Engineer | Quality Resource (PVT) LTD\n"
+        "💼 Junior AI Engineer\n"
+        "📍 Gulberg, Lahore | Onsite\n"
+        "💰 PKR 50,000 – 65,000/month\n"
+        "#Hiring #AIML #SoftwareEngineer #RemoteJobs"
+    )
+    assert _post_location(t_lahore) == "Hybrid"
+    assert _feed_post_to_raw({"text": t_lahore, "url": "https://linkedin.com/jobs/view/123"}, "AI") is None
+
+    # US Domestic location
+    t_us = "Hiring: AI/ML Software Engineer\nRemote — Tampa, FL, USA\n#Hiring #AIML #RemoteJobs"
+    assert _post_location(t_us) == "USA (Remote)"
+
+    # Profile URLs must be rejected
+    assert _feed_post_to_raw({
+        "text": "We are hiring Senior ML Engineer, 100% remote worldwide. Apply: hr@doux.com",
+        "url": "https://www.linkedin.com/in/some-person/",
+    }, "AI") is None
+
+    # India remote feed posts must be rejected
+    t_india = "We are hiring: AI Trainer / Agentic AI Trainer\nLocation: Bangalore, India (Remote)\n#Hiring #AIML"
+    assert _feed_post_to_raw({
+        "text": t_india,
+        "url": "https://www.linkedin.com/feed/update/urn:li:activity:987654321/",
+    }, "AI") is None
+
+    # Valid Worldwide remote post with activity permalink must be accepted
+    t_world = "We are hiring a Lead AI Engineer! 100% Remote - Worldwide. Apply here: jobs@domain.com"
+    raw_world = _feed_post_to_raw({
+        "text": t_world,
+        "url": "https://www.linkedin.com/feed/update/urn:li:activity:123456789/",
+    }, "AI")
+    assert raw_world is not None
+    assert raw_world.url == "https://www.linkedin.com/feed/update/urn:li:activity:123456789/"

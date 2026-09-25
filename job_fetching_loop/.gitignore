@@ -13,3 +13,6 @@ loop.log
 *.jpg
 *.png
 *.pdf
+scratch/
+prune_output.py
+job-live-*.yml

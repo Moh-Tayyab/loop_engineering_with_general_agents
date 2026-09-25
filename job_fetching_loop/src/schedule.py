@@ -1,7 +1,7 @@
 """Schedule engine: day-of-week aware fetch window calculator.
 
-Monday  → 3-day backfill (Fri/Sat/Sun weekend catch-up) + weekly digest trigger
-          (the weekly roundup now lands on Monday: Friday is LinkedIn-only)
+Monday  → 3-day backfill (Fri/Sat/Sun weekend catch-up from structured Jobs sections: LinkedIn jobs board, Indeed, Glassdoor; LinkedIn feed runs strictly on Friday) + weekly digest trigger
+          (the weekly roundup lands on Monday)
 Tue-Thu → 24-hour incremental
 Friday  → LinkedIn hiring-feed ONLY ("we are hiring" feed posts; see spec) —
           the one day we do NOT sweep the other sources

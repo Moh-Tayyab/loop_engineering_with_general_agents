@@ -124,7 +124,9 @@ def normalize_raw(raw: RawJob) -> NormalizedJob:
         if is_worldwide_remote(raw.location, source=raw.source, description=raw.description, title=raw.title):
             location_type = LOCATION_REMOTE
     jid = job_id(url, raw.title, raw.company, source=raw.source)
-    snippet = (raw.description or "")[:300]
+    # Keep enough body for Rule 11 (location law / description restrictions)
+    # without dumping multi-KB pages into every daily JSON row.
+    snippet = (raw.description or "")[:2000]
     from src.matcher import match_usama_cv
     _, cv_score, cv_label = match_usama_cv(raw.title, raw.description, raw.tags)
     return NormalizedJob(
@@ -167,14 +169,24 @@ def is_remotely_workable(
     When location text is available, uses is_worldwide_remote for precision;
     otherwise falls back to location_type == LOCATION_REMOTE.
     """
-    from src.models import is_title_restricted, is_description_restricted
+    from src.models import is_title_restricted, is_description_restricted, _is_us_restricted
     if is_title_restricted(title):
         return False
     if is_description_restricted(description):
         return False
+    # A7: daily gate must match weekly (digest) — description-level US pins
+    # ("based in California", "Must be based in New York City") are rejected here too.
+    if description and _is_us_restricted(description):
+        return False
     if location_type != LOCATION_REMOTE:
         return False
     if location is not None:
+        # Beat 108: daily must match digest — foreign location labels are out
+        # unless the description carries strong worldwide-eligibility phrasing
+        # (is_worldwide_remote applies the same B3 escape via is_foreign…).
+        from src.models import is_foreign_country_restricted, _has_strong_worldwide_eligibility
+        if is_foreign_country_restricted(location) and not _has_strong_worldwide_eligibility(description):
+            return False
         return is_worldwide_remote(location, source=source, description=description, title=title)
     if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
         return False
@@ -248,15 +260,17 @@ def run_source(
     detect a total-outage day for the exit code.
     """
     if timeout_s is None:
-        timeout_s = cfg.source_timeout_s()
+        timeout_s = cfg.source_timeout_s(source_name)
 
     box: dict[str, object] = {}
     cancel_event = threading.Event()
+    rejects: list[dict] = []
 
     def _work() -> None:
         try:
             verdict, jobs = _run_source_impl(source_name, keywords, posted_after,
-                                            seen, circuit, max_jobs, cancel_event=cancel_event)
+                                            seen, circuit, max_jobs, cancel_event=cancel_event,
+                                            rejects=rejects)
             box["verdict"] = verdict
             box["jobs"] = jobs
         except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
@@ -279,7 +293,12 @@ def run_source(
         worker.join(0.5)
         if outcomes is not None:
             outcomes[source_name] = "timeout"
-        circuit.record_failure(source_name)
+        circuit.record_failure(source_name, dry_run=dry_run)
+        log.warning(
+            "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
+            "circuit opens; recover with local headed run or --reset-circuit",
+            source_name,
+        )
         if not dry_run:
             dlq = DeadLetterQueue()
             dlq.push({
@@ -300,7 +319,12 @@ def run_source(
             pass
         if outcomes is not None:
             outcomes[source_name] = "failed"
-        circuit.record_failure(source_name)
+        circuit.record_failure(source_name, dry_run=dry_run)
+        log.warning(
+            "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
+            "circuit opens; recover with local headed run or --reset-circuit",
+            source_name,
+        )
         if not dry_run:
             dlq = DeadLetterQueue()
             dlq.push({
@@ -316,12 +340,44 @@ def run_source(
     if outcomes is not None:
         outcomes[source_name] = verdict
 
+    # C5: persist filter-reject audit rows (real runs only — dry-run stays pure)
+    if not dry_run and rejects:
+        _flush_rejects(rejects)
+
     if verdict == "ok":
         circuit.record_success(source_name)
         log.info("[%s] found %d new jobs", source_name, len(jobs))
         for j in jobs:  # type: ignore[union-attr]
             accept_and_record(j, seen)
     return jobs  # type: ignore[return-value]
+
+
+def _record_reject(sink: list[dict] | None, source: str, title: str, gate: str, reason: str) -> None:
+    """C5: append a filter-rejection audit row (written to rejected.jsonl on real runs)."""
+    if sink is None:
+        return
+    sink.append({
+        "source": source,
+        "title": (title or "")[:120],
+        "gate": gate,
+        "reason": reason,
+        "ts": utc_now().isoformat(timespec="seconds"),
+    })
+
+
+def _flush_rejects(rejects: list[dict]) -> None:
+    """Append reject rows to output/rejected.jsonl (never on dry-run — callers gate)."""
+    if not rejects:
+        return
+    try:
+        path = cfg.OUTPUT_DIR / "rejected.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps(r, ensure_ascii=False) for r in rejects]
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        log.info("[rejects] appended %d row(s) -> %s", len(rejects), path)
+    except Exception as exc:
+        log.warning("[rejects] failed to write rejected.jsonl: %s", exc)
 
 
 def _run_source_impl(
@@ -332,6 +388,7 @@ def _run_source_impl(
     circuit: CircuitManager,
     max_jobs: int,
     cancel_event: threading.Event | None = None,
+    rejects: list[dict] | None = None,
 ) -> tuple[str, list[NormalizedJob]]:
     """Unbounded implementation of run_source (the worker-thread body).
 
@@ -359,9 +416,11 @@ def _run_source_impl(
         if count >= max_jobs:
             break
         if not ai_keyword_matches(raw, cfg.scan_keywords()):
+            _record_reject(rejects, source_name, raw.title, "ai_keyword", "no AI keyword match")
             continue
         if is_expired_job(raw):
             log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
+            _record_reject(rejects, source_name, raw.title, "expired", "expired/closed title or body")
             continue
         normalized = normalize_raw(raw)
         # Strict date/time window across all platforms:
@@ -375,12 +434,30 @@ def _run_source_impl(
                 posted_dt = posted_dt.replace(tzinfo=timezone.utc)
             if posted_dt < cmp_after:
                 log.debug("[%s] skipping outside datetime window (%s < %s): %s", source_name, posted_dt, cmp_after, raw.title[:50])
+                _record_reject(rejects, source_name, raw.title, "window", "posted datetime before window")
                 continue
 
         cutoff_date = posted_after.date()
         if normalized.posted_date and normalized.posted_date < cutoff_date:
             log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "window", "posted date before window")
             continue
+
+        # Strict 24h fail-closed: when neither a full datetime nor a calendar
+        # date could be parsed, the job cannot be verified as posted within the
+        # window — drop it rather than pass an age-unknown job into the digest.
+        if posted_dt is None and normalized.posted_date is None:
+            log.info("[%s] dropping job with no parseable posted date (strict 24h): %s",
+                     source_name, raw.title[:60])
+            _record_reject(rejects, source_name, raw.title, "recency", "no parseable posted date")
+            continue
+        from src.models import is_valid_job_url
+        if not is_valid_job_url(raw.url):
+            log.info("[%s] dropping job with invalid or profile URL: %s (%s)",
+                     source_name, raw.url, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "url", f"invalid URL: {raw.url}")
+            continue
+
         if cfg.scrape_remote_only() and not is_remotely_workable(
             normalized.location_type,
             raw.location,
@@ -388,13 +465,34 @@ def _run_source_impl(
             description=raw.description,
             title=raw.title,
         ):
+            _record_reject(rejects, source_name, raw.title, "rule11",
+                           f"not remotely workable: loc={raw.location!r}")
             continue
+
+        if not normalized.cv_match_score or normalized.cv_match_score < 70:
+            log.debug("[%s] dropping role failing CV match score (%d%%): %s",
+                      source_name, normalized.cv_match_score, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "cv_match",
+                           f"score {normalized.cv_match_score} < 70")
+            continue
+
         # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
         if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
             log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "quality", "no company + no description")
             continue
         is_new, reason = dedup_job(normalized, seen, extra_ids=batch_ids, extra_recent=batch_recent)
         if not is_new:
+            _record_reject(rejects, source_name, raw.title, "dedup", reason or "duplicate")
+            continue
+        # PR #13 finding 2: network health HEAD only for jobs that survived
+        # every gate AND dedup — cuts HEADs to unique survivors and keeps the
+        # source wall-clock inside budget (1.5s timeout inside the helper).
+        from src.models import check_link_health
+        if not check_link_health(raw.url):
+            log.info("[%s] dropping job with dead URL: %s (%s)",
+                     source_name, raw.url, raw.title[:50])
+            _record_reject(rejects, source_name, raw.title, "url", f"dead URL: {raw.url}")
             continue
         new_jobs.append(normalized)
         batch_ids.add(normalized.id)
@@ -459,7 +557,15 @@ def _compute_window(args: argparse.Namespace):
                            generate_digest=False, window_label="manual idle", day_of_week=6)
     if args.window != "auto":
         now = utc_now()
-        return FetchWindow(reason=args.window, window_start=now, window_end=now,
+        if args.window == "daily":
+            start = now - timedelta(hours=24)
+        elif args.window == "weekly":
+            start = now - timedelta(days=7)
+        elif args.window == "backfill":
+            start = now - timedelta(days=3)
+        else:
+            start = now
+        return FetchWindow(reason=args.window, window_start=start, window_end=now,
                            generate_digest=(args.window == "weekly"),
                            window_label=f"manual {args.window}", day_of_week=now.weekday())
     return compute_fetch_window()
@@ -679,6 +785,10 @@ def main(argv: list[str] | None = None) -> int:
 
     state = LoopState()
     circuit = CircuitManager(state)
+    # Drop circuits for sources purged from the registry (deleted scrapers).
+    stale = circuit.prune_unknown(frozenset(all_scrapers()))
+    if stale:
+        log.info("[circuit] pruned stale source(s): %s", ", ".join(sorted(stale)))
 
     if args.dlq:
         dlq = DeadLetterQueue()

@@ -15,11 +15,14 @@ if str(JOB_LOOP) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def _isolate_runner_env(monkeypatch):
-    """Keep pytest hermetic vs a production .env (JOB_LOOP_PRIMARY=github)."""
+    """Keep pytest hermetic vs a production .env (JOB_LOOP_PRIMARY=github, RUN_HOUR=8)."""
     monkeypatch.setenv("JOB_LOOP_PRIMARY", "local")
     monkeypatch.setenv("JOB_LOOP_ENABLED", "1")
     monkeypatch.delenv("JOB_LOOP_CLOUD", raising=False)
     monkeypatch.delenv("CLOUD_ALLOW_BROWSER", raising=False)
+    # Production .env sets SCRAPE_RUN_HOUR=8; schedule unit tests assert the
+    # code default (9) unless they set the hour themselves.
+    monkeypatch.delenv("SCRAPE_RUN_HOUR", raising=False)
     monkeypatch.setattr("src.main.send_ops_alert", lambda *_a, **_k: False, raising=False)
 
 

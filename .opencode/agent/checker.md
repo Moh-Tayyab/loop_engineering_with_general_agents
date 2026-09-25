@@ -1,7 +1,7 @@
 ---
 description: Strict read-only code reviewer (the Checker in the maker-checker split). Grades a Maker's diff against the spec and test results, then replies APPROVED or CHANGES REQUESTED with reasons. Use after any code change the loop is about to commit.
 mode: subagent
-model: opencode/mimo-v2.5-free
+model: opencode/mimo-v2.6-flash-free
 temperature: 0
 color: error
 steps: 30

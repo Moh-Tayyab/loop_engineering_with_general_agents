@@ -35,10 +35,11 @@ def test_normalize_job_id():
 
 
 def test_normalize_snippet_capped():
-    long_desc = "x" * 1000
+    long_desc = "x" * 3000
     raw = RawJob(source="t", title="T", company="C", url="u", description=long_desc)
     j = normalize_raw(raw)
-    assert len(j.description_snippet) <= 300
+    assert len(j.description_snippet) <= 2000
+    assert j.description_snippet == long_desc[:2000]
 
 
 def test_normalize_roundtrip_through_dict():
