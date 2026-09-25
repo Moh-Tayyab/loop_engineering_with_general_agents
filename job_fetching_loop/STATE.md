@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 119 — Human-gate decision executed: fix (a) + document (b) + test-isolation repair
+- **Beat #:** 120 — PR #13 Beat 119 re-review
 - **Date:** 2026-09-25
-- **Trigger:** user — "first fix (a) and then fix (b)" (authorizes 3rd rework past §7 bound)
-- **Status:** **MAKER DONE** — (a) foreign-locality-aware group-walk: captured clauses naming a foreign locality (`_FOREIGN_RESTRICTED_COUNTRIES`) skip the US geo walk, `&` added to clause charset; all 7 short mixed-clause repros open, pins + all-US enumerations still restrict, USA/US-person tokens unconditional. (b) tradeoffs pinned in `test_pr13_mixed_locality_tradeoffs_pinned` (accepted leak + kept precision). Also fixed pre-existing `_utc_today` monkeypatch leak in `test_seen_store_ttl_uses_utc` (broke suite after UTC Sep 25 roll). **311 passed** EXIT 0, secrets clean. Pushing for Checker re-review.
+- **Trigger:** pull_request sync (commit `629b951`)
+- **Status:** **CHECKER REVIEWED — CHANGES REQUESTED** — 311 passed, EXIT 0; compileall/bash syntax and secret scan clean. Two MEDIUM fail-open residuals remain: comma-split mixed clauses (`Remote - Austin, Berlin`) and APAC/ME siblings (`Remote - Austin and Singapore`) still drop; `_US_RESTRICTED_RE.search` checks only the first match, so a skipped mixed clause can mask a later `Remote - Dallas` pin. Review posted to PR #13; no code modified.
 
 ## 3. Beat Log
 
@@ -48,6 +48,7 @@ blocklist tighten, profile-URL + onsite-before-remote + recruiter-title rejects,
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 120 | 2026-09-25 | pull_request sync (`629b951`) | Re-reviewed Beat 119; ran 311 tests + syntax/secret checks; reproduced comma/APAC-ME false drops and first-match masking of a later US pin | **CHECKER REVIEWED** — CHANGES REQUESTED; posted to PR #13 |
 | 119 | 2026-09-25 | user — fix (a) then (b), past §7 bound | (a) foreign-locality-aware group-walk + `&` clause charset; (b) tradeoff-pinning tests; fixed `_utc_today` monkeypatch leak in test_main (UTC-roll suite break) | **MAKER DONE** — 311 passed, repros open/pins restrict, secrets clean; push for re-review |
 | 118 | 2026-09-24 | pull_request sync (Beat 117 rework d5c1b23 pushed) | Re-reviewed: 309 green; Beat-116 repros + realistic prose kept open; precision intact. **Residual**: >4-word gate leaves short-clause siblings dropping Worldwide ("Remote - Austin and Berlin", "Remote (New York, London)", "Remote - Texas and Germany"...). 2nd rework → rework bound hit → human gate. `checker` subagent spawn fails again (this pass is the Checker) | **CHECKER REVIEWED** — CHANGES REQUESTED (non-blocking); posted to PR #13 |
 | 117 | 2026-09-24 | Checker residual CR on Beat 115 | Pin-gated group-walk (≤4-word qualifiers) + full-text state/abbr residency pins; 5 new repro/pin asserts | **MAKER DONE** — 309 passed, matrix/parity fails=0; push for re-review |
@@ -99,7 +100,7 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 10. ~~**Live smoke after Beat 105**~~ LinkedIn guest dry-run PASS (Beat 106). **Still open:** Indeed/Glassdoor headed run needs human CAPTCHA solve once (Turnstile blocks unattended dry-run).
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) PR `job-fetching-loop→main` so test-gate runs on GitHub; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) confirm Actions schedule intentionally off (`JOB_LOOP_PRIMARY=local`). STATE Beat 113 row uncommitted.
-13. ~~**(Beat 116–118, HUMAN, PR #13 residual — ESCALATED)**~~ **Resolved Beat 119 (user ordered a+b):** (a) foreign-locality-aware group-walk — captured clauses naming any `_FOREIGN_RESTRICTED_COUNTRIES` token skip US geo walks (all 7 short mixed-clause repros open; "Remote - Austin, TX"/"Remote (New York)"/all-US enums still restrict); (b) tradeoffs pinned in `test_pr13_mixed_locality_tradeoffs_pinned` (accepted recall-first leak on mixed enums + kept precision). 311 tests green. Awaiting Checker re-review on PR #13.
+13. **(Beat 116–120, HUMAN, PR #13 residual — REOPENED)** Beat 119 fixes the tested `and`/`&` mixed clauses, but `Remote - Austin, Berlin` still drops because the hyphen group stops at commas; APAC/ME siblings also drop because the foreign set omits Singapore, Dubai, Riyadh, etc. `_US_RESTRICTED_RE.search` checks only the first match, so `Remote - Austin and Berlin; Remote - Dallas` is wrongly kept. 311 tests green; two MEDIUM fail-open cases remain. Further rework needs human authorization because the earlier bound was already exceeded.
 14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
 
 ## 11. Human Gate Decisions (job loop)
