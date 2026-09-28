@@ -18,21 +18,25 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — weekday 09:00 heartbeat: morning triage (shared trainer infra, owned by job loop)
+- **Date:** 2026-09-28
+- **Trigger:** schedule — `opencode.yml` cron `0 9 * * 1-5` (fired ~17:30Z, 8.5h late)
+- **Status:** **No video-loop code touched — MAKER DONE on shared infra, HUMAN GATE.** The morning
+  loop's mandated step 2 (`gh run list --workflow=test-gate.yml`) is **unreadable in CI (HTTP 403)**:
+  the `autonomous` job in `.github/workflows/opencode.yml` declares no `actions` scope. Minimal fix
+  (`actions: read`, read-only) prepared on `fix/heartbeat-actions-read` (`7044780`) but **not landed**:
+  the `checker` spawn failed (no APPROVED verdict → no PR, §2 rule 1) and the push was rejected because
+  a GitHub App token cannot edit `.github/workflows/**` without `workflows` scope. **Consequence for
+  THIS loop: `test-gate.yml` results for `video_generation_loop/tests` cannot be read by any beat, so
+  §6.1's "PR with failing tests is CHANGES REQUESTED" check is currently unenforceable — treat any
+  video PR as unverified until a human lands job loop §10 task 20.** Details + human decision:
+  `job_fetching_loop/STATE.md` §10 task 20 (owner).
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-09-28 | schedule (weekday 9am heartbeat) | Morning triage: 0 new issues; 4 open issues + 9 stale PRs all pre-split, already parked for a human; found heartbeat CI-blind (403, missing `actions: read`) → shared-infra fix `7044780` (owned by job loop) | **MAKER DONE — HUMAN GATE, no PR** (checker spawn failed; push rejected, workflow file needs `workflows` scope). Video §6.1 test gate unreadable until landed — job loop §10 task 20 |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -84,6 +88,12 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
    match (consistency only, no video-loop behavior change). Verify the Checker spawn works
    next session before this loop's next maker–checker cycle.
+8. **(2026-09-28, shared infra — owned by job loop Beat 143, BLOCKING for this loop):** the
+   heartbeat cannot read CI (HTTP 403 on `gh run list`/check-runs) because the `autonomous` job
+   in `.github/workflows/opencode.yml` lacks `actions: read`. Until a human lands the one-line fix
+   (job loop §10 task 20), **no beat can verify this loop's `test-gate.yml` result** — so treat any
+   video PR as unverified, and do not merge one on an unverified gate. `checker` subagent spawn is
+   also still broken (3rd occurrence), so video maker→checker cycles cannot complete either.
 
 ## 11. Human Gate Decisions (video loop)
 

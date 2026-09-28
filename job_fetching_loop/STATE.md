@@ -22,10 +22,18 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 142 — PR #16 rework 2/2 (Beat 141 findings: chronological deadlines, malformed merge, DNS label limit)
-- **Date:** 2026-09-25
-- **Trigger:** user — "yh tum kar do kya tasks complete nhi howa"
-- **Status:** **MAKER DONE (rework 2/2 — bound reached) — 378 passed EXIT 0; diff clean.** Fixed all code findings: (1) `src/circuit_breaker.py`: `_merge_circuit_history` parses `open_until` ISO timestamps and compares chronologically across mixed timezones (repro: `11:00-02:00` vs `12:00+00:00` keeps `11:00-02:00`); (2) `src/circuit_breaker.py`: `_migrate_legacy_keys` and `_merge_circuit_history` guard against `None`/non-dict legacy and composite records; (3) `src/config.py`: `_valid_hostname` enforces RFC 1035 max 63 chars per DNS label (`parse_domains('a'*64 + '.example')` fails-closed to empty list). +3 regression tests in `test_domain_registry.py`. Full suite 378 passed. Ready for final Checker re-review and merge of PR #16.
+- **Beat #:** 143 — weekday 09:00 heartbeat: morning triage (shared trainer infra)
+- **Date:** 2026-09-28
+- **Trigger:** schedule — `opencode.yml` cron `0 9 * * 1-5` (ran ~17:30Z, 8.5h late →
+  the queue-delay signature in §10 task 17 is now confirmed, not a one-off)
+- **Status:** **MAKER DONE (branch `fix/heartbeat-actions-read`, `7044780`) — HUMAN GATE, no PR.**
+  Triage found the heartbeat is blind to CI: `gh run list` + `commits/<sha>/check-runs` both 403
+  while `gh issue list`/`gh pr list` work. Root cause = `autonomous` job declares no `actions`
+  scope. Fix adds `actions: read`. Two hard blockers stopped it landing: (1) `checker` spawn died
+  again (`OpenCode's free tier can only be used from within OpenCode`) → **no APPROVED verdict →
+  no PR** (AGENTS §2 rule 1/2); (2) `git push` **rejected** — a GitHub App token may not create or
+  update `.github/workflows/**` without `workflows` scope. Change is correct, minimal and
+  un-blocked, but only a human can land it. **PR #16 merged `842223b` (Phase 2 LANDED).**
 
 ## 3. Beat Log
 
@@ -66,6 +74,7 @@ recompressed at 2026-09-25 (beat 142, §9 cap): beats 121–122 merged (verdicts
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 143 | 2026-09-28 | schedule (weekday 9am heartbeat) | Morning triage: 0 new issues (4 open, all pre-split, already parked); 9 stale PRs = human merge/close; found heartbeat CI-blind (403, missing `actions: read`) → minimal fix on `fix/heartbeat-actions-read` (`7044780`) | **MAKER DONE — HUMAN GATE, no PR** (checker spawn failed 2nd time; push rejected: workflow file needs `workflows` scope). PR #16 merged `842223b` |
 | 142 | 2026-09-25 | user — "yh tum kar do" (rework 2/2) | Chronological `open_until` parsed instant comparison; non-dict legacy/composite merge guards; RFC 1035 max 63 DNS label length check; +3 regressions | **MAKER DONE (rework 2/2)** — 378 passed EXIT 0; ready for final re-review |
 | 141 | 2026-09-25 | pull_request #16 — current-head review | Reviewed `origin/main...333e8bb`; full job-loop pytest, compileall, diff check, and targeted probes; posted summary review | **CHANGES REQUESTED** — P1 deadline merge, malformed-state crash/history loss, DNS label validation, and dry-run purity; 375 tests pass; rework 2/2 human gate |
 | 140 | 2026-09-25 | user — proceed with checker review (model fix 2fed239) | Published `2fed239`→main as `4e5d38f` (issue_comment runs use default branch — fix was PR-branch-only); `/opencode check` re-triggered (`5833222378`); round-1 fixes confirmed passing (375) | **CHANGES REQUESTED ×2 (round 2)** — lexical `open_until` merge, malformed-state merge crash, dry-run mkdir/quarantine writes, WS nit; adversarial in flight → **rework 2/2 next run (§7, last retry)** |
@@ -124,10 +133,38 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
 15. **Proposed durable lesson (human approval):** Evaluate explicit Worldwide/APAC markers only after hard residency-pin detection; add mixed-marker and foreign-city/country-only regressions. (Implemented Beat 123; approve for AGENTS.md §11.)
 16. ~~**(Beat 124, HUMAN, shared infra)**~~ **MOSTLY RESOLVED Beats 127+129:** autonomous reviewer **completed twice in a row on PR #15** (11:17Z CR with real findings; 11:46Z re-review verifying R1/R2 fixed) — 45-min timeout (Beat 124 fix) + no stall on either attempt; PR #13's 4× failures look transient/first-run. Keep watching (stall signature: 32-min silence + orphan playwright — `gh run view 36116678518 --log`). Still open: CodeRabbit comment-runs spawning `opencode` noise jobs (2× fast-fail 11:33Z on this PR), and `checker` subagent spawn (task 14). Verdict-waiver precedent applies only to PR #13 (human Option 1).
-17. **(Next beat, Mon 2026-09-28 — cloud watchdog):** first weekday cron on **merged `main`** (checkout is default ref, so Monday uses Beat 104–125 code) — verify `gh run list --workflow=job-loop-cron.yml`, `.slc/state.json` advanced, Telegram digest landed, then task-9 spot-check (5 jobs, Rule 11 fidelity, live URLs). **Observed schedule latency:** cron is `0 3 * * 1-5` (03:00Z/08:00 PKT intended) but Sep 24/25 runs were created ~08:20–08:42Z (GitHub queue delay → digest ~13:30 PKT); if the delay persists and 08:00 PKT delivery matters, human decision: accept or shift cron earlier.
+17. **(Mon 2026-09-28 — cloud watchdog, BLOCKED by task 20):** first weekday cron on **merged `main`**
+    (Beat 104–125 code) — `gh run list --workflow=job-loop-cron.yml` is **unreadable** (403), so cron
+    health, `.slc/state.json` advance and Telegram delivery are UNVERIFIED this run. Re-check once
+    task 20 lands. **Schedule latency is now confirmed, not a one-off:** the `0 3 * * 1-5` cron was
+    ~8.5h late (fired 17:30Z for a 03:00Z slot). Human decision: accept, or move the cron earlier.
 18. **(Approved blueprint — remaining phases, amendments A2–A6):** Phase 1 PR #15 — Beat 128 rework fixed R1/R2 (0600 via mkstemp, class-name-only logs, 335); Beat 129 re-review confirmed those, found 2 residuals (rework bound 2/2); **Beat 130 (final rework) fixed both** (`load()` `read_bytes`+`except ValueError` → non-UTF-8 = corruption→unlink; `save()` guarded in `attempt_login` → OSError → class-only log → None; +2 regressions; 337 passed). **Beat 131/132 CHANGES REQUESTED — human gate** (oversized cookie expiry made `load()` raise `OverflowError`); human approved bound exception (a); **Beat 133 landed the fix** (`load()` self-heals on OverflowError → None+unlink, `attempt_login` guards the same signal, non-finite expiries rejected; +3 regressions; 340 passed). **Beats 134–136:** 134 final checker CR (bad `__str__` escape + non-JSON state escape) → human gate; 135 human approved fulfillment → both guards +2 regressions (342); **136 Checker APPROVED (342, 4 repros) and PR #15 MERGED `f1defd6` → PHASE 1 LANDED.** **Phase 2 (A2) MAKER DONE in Beat 137** (branch `phase2-multi-domain`, `b092661`, 372 tests): env domain registry (`INDEED_DOMAINS`/`GLASSDOOR_DOMAINS` + `_CLOUD` split, 15-cap, fail-closed hostname validation, proven pre-Phase-2 defaults = no behaviour change), per-domain circuit keys `source:domain` with legacy-key state migration (history carried, idempotent, never clobbers composites), `prune_unknown` base-aware, `pick_domain_key` first-closed-wins, `run_source` ckey pre-gate (timeout/error/success all keyed; outcomes stay plain source), `_apply_domain` URL bases on Indeed+Glassdoor (+ Glassdoor hardcoded job-listing URL fixed), `session_file` traversal rejection. **Checker CR (Beat 138): all-invalid registry falls back to the default host; Maker fix + regression required. PHASE 2b DEFERRED (this task): wire `session.load()` storage_state into `launch_browser` — sessions are saved but still unused by the scrape path; do before relying on login sessions in cloud.** Also open: optional `.runtime/` 0700 note (checker non-blocking). **Phase 3** Rule-11 localized-residency fixtures FIRST (TDD — German/French examples will FAIL today: no `Wohnsitz`/`résidant` patterns), then add DE/FR minimal pattern set + au/sg worldwide-pass fixtures (A3). **Phase 4** Docker: base image must be `mcr.microsoft.com/playwright/python:v1.62.0-noble` (match `requirements.txt` pin, NOT v1.49.0); headless/CI-parity only — human CAPTCHA stays bare-metal (A4). **Phase 5** raise `job-loop-cron.yml` `timeout-minutes: 20`→45 (or domain rotation) BEFORE cloud multi-domain (A5); env docs + README (A6: ≤2 phases per run, ≤3 beats/run, STATE row per phase).
 
-19. **(Beat 139→140 — resolved model, pending verdict):** `opencode.yml:167` model fixed by human (`2fed239`) and **published to main as `4e5d38f`** (issue_comment runs read the default branch — the fix was PR-branch-only until then); `/opencode check` re-triggered on PR #16 and the adversarial job now runs (past the 24s `Model not found` death). **Open: collect the adversarial + autonomous re-review verdicts next run** (in-flight at Beat 140 stop). In-session `checker` subagent spawn still gated (task 14).
+19. **(Beat 139→140 — resolved model, pending verdict):** `opencode.yml:167` model fixed by human (`2fed239`) and **published to main as `4e5d38f`** (issue_comment runs read the default branch — the fix was PR-branch-only until then); `/opencode check` re-triggered on PR #16 and the adversarial job now runs (past the 24s `Model not found` death). **Beat 140's in-flight verdicts are MOOT — PR #16 merged `842223b` (2026-09-28), so Phase 2 is landed and re-review is no longer needed.** In-session `checker` subagent spawn still gated (task 14).
+
+20. **(Beat 143, HUMAN — highest-value item, unblocks triage + the watchdog):** **the heartbeat cannot see CI.**
+    - **Evidence (2026-09-28, reproducible):** `gh run list --workflow=test-gate.yml` and
+      `gh api repos/.../commits/842223b/check-runs` → `HTTP 403 Resource not accessible by integration`;
+      `gh issue list` / `gh pr list` succeed. Job-level `permissions:` *replaces* default scopes and the
+      `autonomous` job in `.github/workflows/opencode.yml` never declared `actions`.
+    - **Fix (ready, `7044780` on local `fix/heartbeat-actions-read`, verified: YAML parses, only the
+      `autonomous` job changed):** add one line under its `permissions:` —
+      `actions: read` (read-only, minimal; the job already holds `contents: write`).
+      Branch could not be pushed and no PR was opened — see the two blockers below.
+    - **Blocker A — no checker verdict:** the `checker` spawn failed again with
+      `OpenCode's free tier can only be used from within OpenCode`. Per AGENTS §2 (never self-approve)
+      a PR requires an APPROVED verdict, so **none was opened**. Same root cause as task 14; 3rd
+      occurrence (2026-09-24, 2026-09-25, 2026-09-28) — this is a runner-side auth/creds problem, not
+      a model-id problem, and it now blocks *every* maker→checker cycle in the trainer.
+    - **Blocker B — bootstrap:** `git push` was **rejected**: *"refusing to allow a GitHub App to create
+      or update workflow `.github/workflows/opencode.yml` without `workflows` permission"*. So the very
+      first workflow edit must be landed by a human (or the token granted `workflows: write`).
+    - **Human decision needed:** (a) apply the `actions: read` line by hand, or (b) grant the runner
+      `workflows: write` so beats can ship workflow changes unaided. **(b) was deliberately NOT
+      self-granted** — `workflows: write` lets an autonomous agent edit CI to exfiltrate secrets, so
+      it is a security call for a human, not a CLEAR FIX.
+    - **Re-verify after landing:** task 17 (cloud watchdog) and this loop's §6.1 test gate both depend
+      on CI status being readable.
 
 ## 11. Human Gate Decisions (job loop)
 
