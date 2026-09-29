@@ -18,21 +18,22 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — weekday 9am heartbeat: triage only, no code (CI 403-blind; `checker` spawn frozen)
+- **Date:** 2026-09-29
+- **Trigger:** schedule (`0 9 * * 1-5` autonomous job)
+- **Status:** **TRIAGE ONLY — no video-loop code changed, no PR.** Ran the video loop's own gate locally (CI is 403-blind): `pip install -r video_generation_loop/requirements.txt && pip install -e . && pip install pytest` (seconds on the runner), then `python -m pytest -q --ignore=job_fetching_loop` → **273 passed, 1 failed**. The single failure is `tests/test_flow_automation.py::test_clip_is_real_video_rejects_empty_and_audio_only` — **environment-only**: this runner has no `ffmpeg`/`ffprobe`, so `flow_automation.py:153` takes the documented pass-on-size fallback and the audio-only `.mp4` fixture reads as a real clip. `test-gate.yml` apt-installs ffmpeg, so CI is unaffected. The hermeticity fix already exists as **open PR #10** (human gate); no new PR opened (would duplicate, and no checker verdict). Video loop code is otherwise green on `main` @ `842223b`. `PASS` (nothing committed)
+- **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
+  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8/#9/#10 decision (PR #10 now
+  re-confirmed useful by this beat); rclone Drive sync still pending; trainer-infra
+  blockers (Actions 403, checker spawn 4th failure) tracked in the job loop's §10
+  tasks 14/20/21. `PASS`
+
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-09-29 | schedule — weekday 9am heartbeat | Triage only: 0 new issues; Actions 403 (CI blind, job §10 task 20); ran the video gate locally instead → 273 passed, 1 failed: `test_clip_is_real_video_rejects_empty_and_audio_only` is **env-only** (no ffprobe on the runner → documented pass-on-size fallback; CI apt-installs ffmpeg). Fix already open as PR #10 | **PASS (triage only, no code, no PR)** — video loop green on `main` @ `842223b`; `checker` spawn failed 4th time (job §10 task 14) |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -74,7 +75,10 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    Use `docs/PRODUCTION_RUNBOOK.md`.
 2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix), #9 (dup redact
+   fix), #10 (clip-video test hermeticity — **re-confirmed useful 2026-09-29**, beat 31:
+   it is the only thing that keeps `test_clip_is_real_video_rejects_empty_and_audio_only`
+   from failing on any runner without ffmpeg) — merge or close.
 4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 5. `_approve_credits` live verification on the credit dialog (part of G5).
@@ -82,8 +86,20 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 7. **(2026-09-24, shared infra — owned by job loop Beat 116):** retired `checker` model
    `opencode/mimo-v2.5-free` was fixed to `opencode/mimo-v2.6-flash-free` in
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
-   match (consistency only, no video-loop behavior change). Verify the Checker spawn works
-   next session before this loop's next maker–checker cycle.
+   match (consistency only, no video-loop behavior change). **Update 2026-09-29 (beat 31):
+   the Checker spawn was re-tested and FAILED a 4th time** — `Subagent failed: OpenCode's
+   free tier can only be used from within OpenCode`. The model id is fine; the runner's
+   free tier blocks nested spawns. Human gate: job loop §10 task 14. Until it is fixed,
+   this loop's maker→checker cycle cannot complete, so no video-loop PR can be opened.
+8. **(2026-09-29, beat 31) Video gate is runnable locally even while CI is 403-blind.**
+   `pip install -r video_generation_loop/requirements.txt && pip install -e . &&
+   pip install pytest` then `python -m pytest -q --ignore=job_fetching_loop` → 273 passed,
+   1 failed. **Know before diagnosing:** this runner has no `ffmpeg`/`ffprobe`, so
+   `evaluate_final`/`_clip_is_real_video` fall back to pass-on-size by design — an
+   audio-only or truncated fixture will pass `_clip_is_real_video`. A local
+   `test_clip_is_real_video_*` failure on this runner is an environment artifact, not a
+   money-path regression; CI installs ffmpeg (`test-gate.yml:23`). Do not "fix" that seam
+   without PR #10's pinned-ffprobe approach.
 
 ## 11. Human Gate Decisions (video loop)
 
