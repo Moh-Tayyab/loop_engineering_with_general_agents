@@ -796,22 +796,54 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     # ("Remote - Berlin, Germany" / "Remote - Warsaw and Berlin").
     rf"\bremote\s*[-–,]\s*(?:{_RESIDENCY_COUNTRY_ALT})\s*(?:,|and|or|vs)\s+(?:{_RESIDENCY_COUNTRY_ALT})\b",
     rf"\b(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
-    # Phase 3 (A3): localized residency pins that leak past the English-only
-    # patterns — searched on lowercased text (accents preserved by .lower()).
-    # DE: "Wohnsitz in Deutschland", "mit Wohnsitz Deutschland",
-    #     "in Deutschland wohnen" / "müssen … wohnen", "Ansässigkeit in …".
+]
+
+# ── Phase 3 (A3): localized DE/FR residency pins ────────────────────────────
+# Searched on lowercased text (accents preserved by .lower()). Kept OUT of the
+# main list because these carry per-sentence polarity (M3): a match restricts
+# unless its sentence carries an explicit exemption (ohne Wohnsitz /
+# nicht erforderlich / non requise / without residence …).
+_LOCALIZED_RESIDENCY_PATTERNS = [
+    # DE: Wohnsitz / Wohnort / wohnen / Ansässigkeit / Aufenthalt
     r"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*(?:deutschland|germany|bundesrepublik(?:\s+deutschland)?)\b",
     r"\b(?:mit|ohne)\s+wohnsitz\s+(?:deutschland|germany)\b",
+    r"\bwohnort\b[^.!?\n]{0,40}\b(?:in\s+)?(?:deutschland|germany)\b",
     r"\bin\s+(?:deutschland|germany)\s+wohnen\b",
-    r"\bmuss(?:en)?\s+[^.!?]{0,60}\s+wohnen\b",
+    # M2: country required inside the SAME muss…wohnen clause; `[^.!?\n]`
+    # never bridges sentences or newlines (LOW fix). Umlaut forms: muss /
+    # müssen / muß / müßte (bare `muss` never matches `müssen` — M2 root cause).
+    r"\bm(?:u|ü)(?:ss|ß)(?:en|te)?\b[^.!?\n]{0,60}\b(?:in\s+)?(?:deutschland|germany)\b[^.!?\n]{0,40}\bwohnen\b",
     r"\bansässig(?:keit|en)?\s+(?:in\s+)?(?:deutschland|germany)\b",
-    # FR: "résidant en France", "doit résider en France",
-    #     "Résidence en France exigée".
-    r"\brésid(?:ant|ant\s+en|e\s+en|ée\s+en|é\s+en)\s+(?:la\s+)?france\b",
+    r"\baufenthaltserlaubnis\s+(?:für|in)\s+(?:deutschland|germany)\b",
+    # FR: résider / résidant / résidence / résidents / basé / domiciliation
+    r"\brésid(?:ant|erez)\s+en\s+france\b",
     r"\brésider\s+en\s+france\b",
     r"\brésidence\s+(?:en|dans)\s+france\b",
+    r"\brésident(?:e)?s?\s+en\s+france\b",
+    r"\bbas[eé]e?s?\s+en\s+france\b",
     r"\bdomicilié(?:e)?\s+en\s+france\b",
+    r"\bdomiciliation\s+en\s+france\b",
 ]
+
+# M3 + CodeRabbit: same-sentence exemptions — the pin is explicitly NOT
+# required, so the localized pattern must not restrict on this sentence.
+_LOCALIZED_RESIDENCY_EXEMPT = re.compile(
+    r"(?i)"
+    # DE open-neg
+    r"\bnicht\s+(?:erforderlich|benötigt|nötig|vorgeschrieben)\b"
+    r"|\bm(?:u|ü)(?:ss|ß)(?:en|te)?\s+nicht\b"
+    r"|\bohne\s+(?:[a-zäöüß]+\s+){0,2}wohnsitz\b"
+    r"|\bohne\s+ansässigkeit\b"
+    r"|\bkein(?:e|er|en)?\s+(?:wohnsitz|ansässigkeit)\b"
+    # FR open-neg
+    r"|\bnon\s+requi[s]?[te]s?\b"
+    r"|n'est\s+pas\s+(?:requis|requise|nécessaire)"
+    r"|\bsans\s+(?:résidence|résider|domicile)\b"
+    # EN equivalents (CodeRabbit: "residence not required" / "without residence")
+    r"|\b(?:residence|residency|domicile)\s+not\s+required\b"
+    r"|\bno\s+(?:residence|residency)\s+requirement\b"
+    r"|\bwithout\s+(?:a\s+)?(?:residence|residency)\b"
+)
 
 
 def is_description_restricted(description: str | None) -> bool:
@@ -825,6 +857,21 @@ def is_description_restricted(description: str | None) -> bool:
     low = description.lower()
     for pattern in _DESCRIPTION_RESTRICTION_PATTERNS:
         if re.search(pattern, low):
+            return True
+    # A3 localized pins with per-sentence polarity (M3): restrict unless the
+    # sentence(s) carrying the match are all explicitly exempted.
+    for pattern in _LOCALIZED_RESIDENCY_PATTERNS:
+        if not re.search(pattern, low):
+            continue
+        matching_segs = [
+            seg for seg in re.split(r"(?<=[.!?])\s+|\n+", low) if re.search(pattern, seg)
+        ]
+        if matching_segs:
+            if all(_LOCALIZED_RESIDENCY_EXEMPT.search(s) for s in matching_segs):
+                continue  # every occurrence explicitly negated → open
+            return True
+        # Matched only across a boundary → fail closed unless whole-text exempt.
+        if not _LOCALIZED_RESIDENCY_EXEMPT.search(low):
             return True
     # "100% Remote - USA Only" / "US-only" must only match the UPPERCASE abbreviation,
     # never the lowercase pronoun "us" (e.g. "gives us only ..."). Match on the original case.

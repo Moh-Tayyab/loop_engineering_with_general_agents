@@ -61,3 +61,45 @@ def test_apac_au_sg_worldwide_pass():
     assert not is_description_restricted(
         "Global remote position; candidates from any country, including AU and SG."
     )
+
+
+# ── M1 (checker, Beat 144): common FR/DE wording the English counterparts cover ──
+
+def test_m1_common_residency_wording_restricts():
+    assert is_description_restricted("Poste basé en France.")
+    assert is_description_restricted("Candidats basés en France.")
+    assert is_description_restricted("Vous devez être basée en France.")
+    assert is_description_restricted("Résidente en France uniquement.")
+    assert is_description_restricted("Résidents en France")
+    assert is_description_restricted("Vous résiderez en France.")
+    assert is_description_restricted("Domiciliation en France obligatoire.")
+    assert is_description_restricted("Wohnort in Deutschland.")
+    assert is_description_restricted("Ihr Wohnort muss in Deutschland liegen.")
+    assert is_description_restricted("Aufenthaltserlaubnis für Deutschland erforderlich.")
+
+
+# ── M2: muss…wohnen fires only with a country in the same clause ────────────
+
+def test_m2_muss_wohnen_clause_requires_country():
+    # direct-fire: no contiguous "in Deutschland wohnen" → muss branch must work
+    assert is_description_restricted("Sie müssen in Deutschland arbeiten und wohnen.")
+    # country-less living clauses stay open (country required, M2)
+    assert not is_description_restricted(
+        "Flexible working; no need to live in a specific city."
+    )
+
+
+# ── M3 + CodeRabbit: same-sentence exemptions stay open ─────────────────────
+
+def test_m3_localized_negation_exemptions_open():
+    assert not is_description_restricted("Muss nicht in Deutschland wohnen — weltweit möglich.")
+    assert not is_description_restricted("Ansässigkeit in Deutschland nicht erforderlich.")
+    assert not is_description_restricted("Ohne Wohnsitz in Deutschland möglich.")
+    assert not is_description_restricted("Résidence en France non requise pour ce poste.")
+    assert not is_description_restricted(
+        "Ce poste fonctionne partout; résidence en France non requise."
+    )
+    # paired: an independent pin in ANOTHER sentence still restricts
+    assert is_description_restricted(
+        "Résidence en France non requise. Cependant Wohnsitz in Deutschland verpflichtend."
+    )
