@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -809,10 +810,11 @@ _LOCALIZED_RESIDENCY_PATTERNS = [
     r"\b(?:mit|ohne)\s+wohnsitz\s+(?:deutschland|germany)\b",
     r"\bwohnort\b[^.!?\n]{0,40}\b(?:in\s+)?(?:deutschland|germany)\b",
     r"\bin\s+(?:deutschland|germany)\s+wohnen\b",
-    # M2: country required inside the SAME muss…wohnen clause; `[^.!?\n]`
-    # never bridges sentences or newlines (LOW fix). Umlaut forms: muss /
-    # müssen / muß / müßte (bare `muss` never matches `müssen` — M2 root cause).
-    r"\bm(?:u|ü)(?:ss|ß)(?:en|te)?\b[^.!?\n]{0,60}\b(?:in\s+)?(?:deutschland|germany)\b[^.!?\n]{0,40}\bwohnen\b",
+    # M2: country required inside the SAME muss-living clause; `[^.!?\n]`
+    # never bridges sentences. Umlaut forms: muss/musst/müssen/musste/mussten/
+    # müsste (bare `muss` never matches `müssen` — M2 root cause = umlaut).
+    # Round-2 (M3): living verbs extended to ansässig/leben for EN parity.
+    r"\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\b[^.!?\n]{0,60}\b(?:in\s+)?(?:deutschland|germany)\b[^.!?\n]{0,40}\b(?:wohnen|ansässig|leben)\b",
     r"\bansässig(?:keit|en)?\s+(?:in\s+)?(?:deutschland|germany)\b",
     r"\baufenthaltserlaubnis\s+(?:für|in)\s+(?:deutschland|germany)\b",
     # FR: résider / résidant / résidence / résidents / basé / domiciliation
@@ -825,19 +827,36 @@ _LOCALIZED_RESIDENCY_PATTERNS = [
     r"\bdomiciliation\s+en\s+france\b",
 ]
 
-# M3 + CodeRabbit: same-sentence exemptions — the pin is explicitly NOT
-# required, so the localized pattern must not restrict on this sentence.
+# Round-2 (run 36712129823): exemptions are searched INSIDE THE CLAUSE that
+# carries the pin (clause = text between , ; : — – ( ) [ ] inside one sentence)
+# — a sentence-global or whole-text search let unrelated "nicht erforderlich"
+# about another subject/country suppress the pin (M1/M2 HIGH).
+_LOCALIZED_CLAUSE_SPLIT = re.compile(r"[,;:—–()\[\]]+")
+# Candidate pins are required; a match preceded by client/partner-HQ context in
+# the same sentence ("Notre client, basé en France, recrute…") is not one.
+_LOCALIZED_CONTEXT_SKIP = re.compile(
+    r"\b(?:client|entreprise|soci[ée]t[ée]|kunde|firma|unternehmen|customer|"
+    r"company|employer|partner|si[èe]ge)\b[^.!?]{0,40}$"
+)
 _LOCALIZED_RESIDENCY_EXEMPT = re.compile(
     r"(?i)"
-    # DE open-neg
+    # DE open-neg (all muss/soll/mochte-style stems: muss, musst, müssen,
+    # musste, mussten — round-2 M4 dropped `musst`/`mussten` before)
     r"\bnicht\s+(?:erforderlich|benötigt|nötig|vorgeschrieben)\b"
-    r"|\bm(?:u|ü)(?:ss|ß)(?:en|te)?\s+nicht\b"
+    r"|\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\s+nicht\b"
     r"|\bohne\s+(?:[a-zäöüß]+\s+){0,2}wohnsitz\b"
     r"|\bohne\s+ansässigkeit\b"
     r"|\bkein(?:e|er|en)?\s+(?:wohnsitz|ansässigkeit)\b"
-    # FR open-neg
-    r"|\bnon\s+requi[s]?[te]s?\b"
-    r"|n'est\s+pas\s+(?:requis|requise|nécessaire)"
+    # possibility, not requirement ("in Deutschland wohnen möglich")
+    r"|\b(?:wohnen|leben)\s+(?:möglich|possible)\b"
+    r"|\b(?:wohnort|wohnsitz)\s+(?:frei|free)\b"
+    # "you may live…" permission
+    r"|\bk(?:a|ä|ö|o)nn(?:st|en)?\b[^.!?\n]{0,60}\b(?:wohnen|leben)\b"
+    # FR open-neg (round-2: `non requis` masculine missed by requi[s]?[te]s?,
+    # `pas obligatoire`, `pas besoin de` were absent)
+    r"|\bnon\s+requi(?:s|se|ses)\b"
+    r"|n'est\s+pas\s+(?:requis|requise|nécessaire|obligatoire)\b"
+    r"|\bpas\s+besoin\s+de\b"
     r"|\bsans\s+(?:résidence|résider|domicile)\b"
     # EN equivalents (CodeRabbit: "residence not required" / "without residence")
     r"|\b(?:residence|residency|domicile)\s+not\s+required\b"
@@ -854,24 +873,49 @@ def is_description_restricted(description: str | None) -> bool:
         return True
     if is_hybrid_work(description):
         return True
-    low = description.lower()
+    # NFC first: `.lower()` still raises AttributeError on non-str (parity with
+    # main), then NFD accents (Résident = e+U+0301) compose for every pattern.
+    low = unicodedata.normalize("NFC", description.lower())
+    description = unicodedata.normalize("NFC", description)
     for pattern in _DESCRIPTION_RESTRICTION_PATTERNS:
         if re.search(pattern, low):
             return True
-    # A3 localized pins with per-sentence polarity (M3): restrict unless the
-    # sentence(s) carrying the match are all explicitly exempted.
+    # A3 localized pins: clause-anchored polarity (round-2 M1/M2).
+    # Newlines are layout, not sentence breaks → collapse before matching so
+    # line-straddling pins ("Der Wohnort\nmuss in Deutschland sein") still hit
+    # (LOW2), while `.!?` still separates sentences for polarity.
+    loc = re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", low)
+    _sent_ends = [m.end() for m in re.finditer(r"[.!?]", loc)]
     for pattern in _LOCALIZED_RESIDENCY_PATTERNS:
-        if not re.search(pattern, low):
-            continue
-        matching_segs = [
-            seg for seg in re.split(r"(?<=[.!?])\s+|\n+", low) if re.search(pattern, seg)
-        ]
-        if matching_segs:
-            if all(_LOCALIZED_RESIDENCY_EXEMPT.search(s) for s in matching_segs):
-                continue  # every occurrence explicitly negated → open
-            return True
-        # Matched only across a boundary → fail closed unless whole-text exempt.
-        if not _LOCALIZED_RESIDENCY_EXEMPT.search(low):
+        for m in re.finditer(pattern, loc):
+            # sentence span containing the match (matches never contain .!?)
+            s_start = 0
+            s_end = len(loc)
+            for e in _sent_ends:
+                if e <= m.start():
+                    s_start = e
+                elif e >= m.end():
+                    s_end = e
+                    break
+            if s_start > m.start() or s_end < m.end():
+                return True  # boundary-spanning match → fail closed (M2)
+            sent = loc[s_start:s_end]
+            # clause region around the FULL match span (clause seps , ; : — – ( )):
+            # a pin whose internal gap crosses a sep ("wohnort frei — auch in
+            # Deutschland wohnen") is judged against every clause it touches;
+            # pins that end before the sep keep clause-local polarity (M1).
+            rel_start, rel_end = m.start() - s_start, m.end() - s_start
+            c_start, c_end = 0, len(sent)
+            for cm in _LOCALIZED_CLAUSE_SPLIT.finditer(sent):
+                if cm.end() <= rel_start:
+                    c_start = cm.end()
+                elif cm.start() >= rel_end:
+                    c_end = cm.start()
+                    break
+            if _LOCALIZED_CONTEXT_SKIP.search(loc[max(0, m.start() - 60) : m.start()]):
+                continue  # client/partner HQ location, not a candidate pin (M4)
+            if _LOCALIZED_RESIDENCY_EXEMPT.search(sent[c_start:c_end]):
+                continue  # every clause this pin touches explicitly negated → open
             return True
     # "100% Remote - USA Only" / "US-only" must only match the UPPERCASE abbreviation,
     # never the lowercase pronoun "us" (e.g. "gives us only ..."). Match on the original case.
