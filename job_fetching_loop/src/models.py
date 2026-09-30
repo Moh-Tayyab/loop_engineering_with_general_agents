@@ -796,6 +796,21 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     # ("Remote - Berlin, Germany" / "Remote - Warsaw and Berlin").
     rf"\bremote\s*[-–,]\s*(?:{_RESIDENCY_COUNTRY_ALT})\s*(?:,|and|or|vs)\s+(?:{_RESIDENCY_COUNTRY_ALT})\b",
     rf"\b(?:{_RESIDENCY_COUNTRY_ALT})\s+only\b",
+    # Phase 3 (A3): localized residency pins that leak past the English-only
+    # patterns — searched on lowercased text (accents preserved by .lower()).
+    # DE: "Wohnsitz in Deutschland", "mit Wohnsitz Deutschland",
+    #     "in Deutschland wohnen" / "müssen … wohnen", "Ansässigkeit in …".
+    r"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*(?:deutschland|germany|bundesrepublik(?:\s+deutschland)?)\b",
+    r"\b(?:mit|ohne)\s+wohnsitz\s+(?:deutschland|germany)\b",
+    r"\bin\s+(?:deutschland|germany)\s+wohnen\b",
+    r"\bmuss(?:en)?\s+[^.!?]{0,60}\s+wohnen\b",
+    r"\bansässig(?:keit|en)?\s+(?:in\s+)?(?:deutschland|germany)\b",
+    # FR: "résidant en France", "doit résider en France",
+    #     "Résidence en France exigée".
+    r"\brésid(?:ant|ant\s+en|e\s+en|ée\s+en|é\s+en)\s+(?:la\s+)?france\b",
+    r"\brésider\s+en\s+france\b",
+    r"\brésidence\s+(?:en|dans)\s+france\b",
+    r"\bdomicilié(?:e)?\s+en\s+france\b",
 ]
 
 
