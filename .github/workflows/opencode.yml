@@ -15,10 +15,13 @@ on:
 
 jobs:
   # On-demand beats: triggered by /oc or /opencode in a comment.
+  # Bot guard: never spawn from automated accounts (CodeRabbit/github-actions
+  # comments caused permission-error runs — endsWith(..., '[bot]') skips them).
   opencode:
     if: |
-      github.event_name == 'issue_comment' ||
-      github.event_name == 'pull_request_review_comment'
+      !endsWith(github.actor, '[bot]') &&
+      (github.event_name == 'issue_comment' ||
+       github.event_name == 'pull_request_review_comment')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -135,6 +138,7 @@ jobs:
   # Trigger: comment /oc check or /opencode check on an issue or PR.
   adversarial-checker:
     if: |
+      !endsWith(github.actor, '[bot]') &&
       (github.event_name == 'issue_comment' ||
        github.event_name == 'pull_request_review_comment') &&
       (contains(github.event.comment.body, '/oc check') ||
