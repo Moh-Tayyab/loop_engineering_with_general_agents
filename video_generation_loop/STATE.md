@@ -18,21 +18,16 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 32 — weekday 9am heartbeat: triage only, no video-loop code (CI 403-blind; `checker` spawn frozen 5th time)
+- **Date:** 2026-09-30
+- **Trigger:** schedule (`0 9 * * 1-5` autonomous job)
+- **Status:** **TRIAGE ONLY — 0 video-loop code changed, no PR.** Ran this loop's own gate locally (CI is 403-blind): `pip install -r video_generation_loop/requirements.txt` + `pip install -e .` + `pytest` (seconds), then `python -m pytest -q video_generation_loop/tests tests` → **273 passed, 1 failed**. Same single env-only failure as Beat 31 — `video_generation_loop/tests/test_flow_automation.py::test_clip_is_real_video_rejects_empty_and_audio_only`: this runner has no `ffmpeg`/`ffprobe`, so `flow_automation._clip_is_real_video` takes its documented pass-on-size fallback and the audio-only `.mp4` fixture reads as a real clip. `test-gate.yml` apt-installs ffmpeg, so CI is unaffected. **The hermeticity fix already exists as open PR #10** — not duplicated, and no PR is permissible anyway (`checker` spawn failed a 5th time). The job loop recorded the shared-infra root cause + prepared `actions: read` patch under its §10 task 20; the same missing scope affects this loop's CI gate, so it is owned by the job loop (task 7 here stays cross-reference only). `PASS` (nothing committed)
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 32 | 2026-09-30 | schedule — weekday 9am heartbeat | Local gate substitute (CI 403-blind): `python -m pytest -q video_generation_loop/tests tests` → 273 passed, 1 failed; failure is env-only (no ffprobe → pass-on-size fallback) and already covered by open PR #10; `checker` spawn fail #5 ⇒ no PR | **PASS** — no video-loop code changed; 1 pre-existing env-only failure, fix already on PR #10 |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -84,6 +79,15 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
    match (consistency only, no video-loop behavior change). Verify the Checker spawn works
    next session before this loop's next maker–checker cycle.
+8. **(2026-09-30, shared infra — HUMAN GATE, this loop's CI gate is blind too):** the
+   `autonomous` job in `.github/workflows/opencode.yml` has no `actions` scope, so
+   `gh run list --workflow=test-gate.yml` 403s and this loop's gate cannot be observed from a
+   heartbeat. Patch prepared (commit `a4e6951`, `actions: read`) but un-pushable — the App
+   token may not edit `.github/workflows/**`. Owned + documented by **job loop §10 task 20**;
+   not tracked here beyond this cross-reference. Until it lands, run this loop's gate locally:
+   `pip install -r video_generation_loop/requirements.txt && pip install -e . && python -m pytest -q video_generation_loop/tests`
+   (~5 s). Expect `test_clip_is_real_video_rejects_empty_and_audio_only` to FAIL on any runner
+   without ffmpeg — that is the runner, not the code (PR #10 pins the ffprobe seam).
 
 ## 11. Human Gate Decisions (video loop)
 
