@@ -18,21 +18,26 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 31 — weekday heartbeat: morning triage, no code landed
+- **Date:** 2026-10-01
+- **Trigger:** schedule (`0 9 * * 1-5` heartbeat)
+- **Status:** Done — triage only, no code, no PR. Video gate reproduced locally:
+  **273 passed, 1 failed, exit 1** on `main` (`video_generation_loop/tests` + root `tests`).
+  The single failure is **environment-only** — `test_clip_is_real_video_rejects_empty_and_audio_only`
+  needs `ffprobe`, which is absent on this runner (confirmed: `which ffprobe` → not found;
+  `apt-get install ffmpeg` could not complete in-budget). `_clip_is_real_video`
+  (src/flow_automation.py:153-154) then takes its **documented pass-on-size fallback**, so the
+  audio-only fixture sees `True`. `test-gate.yml` apt-installs ffmpeg, so CI is unaffected —
+  the fix (pin the ffprobe seam) is already open as **PR #10**, checker-APPROVED. **No
+  money-path touched: no generation, no planner run, no upload.** Open for a human: items
+  1–5 below, plus the two shared-infra blockers (`actions: read` + checker free-tier) tracked
+  in `job_fetching_loop/STATE.md` §10 items 20–21. `PASS`
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 31 | 2026-10-01 | schedule heartbeat (weekday 9am) | Morning triage, read-only. No product code touched. Reproduced both loop gates locally (CI unreadable — 403) | PASS — 273 passed / 1 env-only fail (no ffprobe); no money-path; PR #10 already carries the fix |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -84,6 +89,19 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
    match (consistency only, no video-loop behavior change). Verify the Checker spawn works
    next session before this loop's next maker–checker cycle.
+8. **(2026-10-01, HUMAN) Two shared-infra blockers freeze this loop's maker–checker cycle**
+   (full evidence + fixes in `job_fetching_loop/STATE.md` §10 items 20–21):
+   (a) the `autonomous` job has no `actions: read`, so every heartbeat is blind to CI
+   (403) — 1-line fix, but pushing it is refused for a workflow file without
+   `workflows` permission, so a human must hand-apply it; (b) the `checker` subagent
+   cannot spawn at all (free-tier restriction, 6th occurrence today), so **no video-loop
+   code change can obtain an APPROVED verdict and no PR may be opened** (§2 rule 1).
+   Until (b) is resolved this loop is read-only to the morning heartbeat.
+9. **(2026-10-01, HUMAN) PR #10 should be merged or closed.** It is the test-only fix that
+   pins the ffprobe seam, which is the sole cause of this loop's one local test failure.
+   Without it every ffprobe-less runner shows a spurious failure and invites a
+   "fix" to the *production* pass-on-size path — which would be a regression, not a fix
+   (re-generating a valid clip costs credits).
 
 ## 11. Human Gate Decisions (video loop)
 
