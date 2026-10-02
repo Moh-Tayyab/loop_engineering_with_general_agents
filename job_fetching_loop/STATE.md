@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 149 — Phase 4 (A4): Containerization (Dockerfile, docker-compose, .dockerignore)
+- **Beat #:** 150 — Phase 5 (A5 & A6): CI/CD & Timeout Hardening + Docs
 - **Date:** 2026-10-02
-- **Trigger:** user — "yes" (proceed with Phase 4 containerization)
-- **Status:** **MAKER DONE (Phase 4) — 400 passed EXIT 0.** Implemented containerization stack: (1) `Dockerfile` based on `mcr.microsoft.com/playwright/python:v1.62.0-noble` matching `requirements.txt` pin (`playwright==1.62.0`), non-root `USER pwuser`, pre-created `.slc`/`.runtime`/`output` dirs with `pwuser` ownership, `ENTRYPOINT ["python", "-m", "src.main"]`, `CMD ["--dry-run"]`; (2) `docker-compose.yml` defining `job-loop` service with persistent volume mounts for `./.slc`, `./.runtime`, and `./output`, optional `.env` file loading, `PYTHONUNBUFFERED=1`; (3) `.dockerignore` excluding `.env`, `.git`, `.slc`, `.runtime`, `output`, caches, and logs; (4) `tests/test_containerization.py` (+3 tests) asserting version pin alignment, non-root user, volume mappings, and secret exclusions. Full test suite: 400 passed in 24.91s. `docker compose config` validated exit 0.
+- **Trigger:** user — proceed with Phase 5 completion
+- **Status:** **MAKER DONE (Phase 5) — 400 passed EXIT 0.** (1) `.github/workflows/job-loop-cron.yml`: raised `timeout-minutes: 20` ➔ `45` to prevent false aborts on multi-domain runs and match reviewer timeouts; (2) `.env.example`: documented `INDEED_DOMAINS` and `GLASSDOOR_DOMAINS` multi-domain registry and `SESSION_FILE` storage_state path; (3) `README.md`: added Docker & Docker Compose quickstart section (`docker compose build`, `docker compose run --rm job-loop --dry-run`). Full test suite: 400 passed in 24.91s. All 5 phases of the production blueprint are now complete!
 
 ## 3. Beat Log
 
@@ -67,10 +67,12 @@ recompressed at 2026-09-30 (beat 146, §9 cap): beats 137–138 merged (verdicts
 recompressed at 2026-09-30 (beat 147, §9 cap): beats 139–140 merged (verdicts kept).
 recompressed at 2026-10-02 (beat 148, §9 cap): beats 121–125 merged (verdicts kept).
 recompressed at 2026-10-02 (beat 149, §9 cap): beats 126–130 merged (verdicts kept).
+recompressed at 2026-10-02 (beat 150, §9 cap): beats 131–135 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
-| 149 | 2026-10-02 | user — "yes" (Phase 4 Containerization) | Dockerfile (`mcr.microsoft.com/playwright/python:v1.62.0-noble`, `USER pwuser`), `docker-compose.yml` (`job-loop` service, `.slc`/`.runtime`/`output` mounts), `.dockerignore`; +3 tests in `test_containerization.py` | **MAKER DONE (Phase 4)** — 400 passed EXIT 0; docker compose config valid; ready for PR |
+| 150 | 2026-10-02 | user — proceed with Phase 5 | `job-loop-cron.yml` timeout 20➔45m; `.env.example` multi-domain + session engine variables; `README.md` Docker quickstart | **MAKER DONE (Phase 5)** — 400 passed EXIT 0; CI hardening + docs complete; **all 5 phases landed** |
+| 149 | 2026-10-02 | user — "yes" (Phase 4 Containerization) | Dockerfile (`mcr.microsoft.com/playwright/python:v1.62.0-noble`, `USER pwuser`), `docker-compose.yml` (`job-loop` service, `.slc`/`.runtime`/`output` mounts), `.dockerignore`; +3 tests in `test_containerization.py` | **MAKER DONE (Phase 4)** — 400 passed EXIT 0; docker compose config valid; **PR #23 merged `0d4033c`** |
 | 148 | 2026-10-02 | user — Option A approved (§7 Human Gate) | Targeted rework M1 (client-HQ scope on basé), M2 (conjunction clause-splits), M3 (nicht zwingend, nicht pflicht, non/pas obligatoire, wohnen möglich), B2 (Berlin/Hamburg/NRW localities in muss/wohnen); +4 regressions (total 19) | **MAKER DONE (Human Option A)** — 397 passed EXIT 0; 24 adversarial repros verified green; **PR #20 merged `e415d52`** |
 | 147 | 2026-09-30 | adversarial checker run 36715127038 → §7 escalation | Re-review of rework 2/2 `f1bb3ee`: round-1 fixtures all hold (393 green, gate/encoding/perf/secrets/STATE coherence pass) but **M1 regression** (context-skip broad — 10 company-word fixtures fail-open vs 8a1da19), **M2** conjunction-joined negation (5 fixtures, `und/aber/mais/et` outside clause seps), **M3** 6 missing exempt forms (`nicht zwingend`, `nicht pflicht`, `non/pas obligatoire`, `wohnen ist möglich`) drop worldwide; LOW: 5.3s@704KB exempt path, dead branch | **CHANGES REQUESTED (final) → ESCALATED** — `@Moh-Tayyab` options A/B/C posted (5911584186); frozen, no 3rd rework; beats 145–147 = 3/3 STOP |
 | 146 | 2026-09-30 | user — continue (adversarial run 36712129823 CR) | Rework 2/2 FINAL: M1/M2 clause-anchored exemption (seps `[,;:—–()[]]`), newline collapse + sentence-straddle fail-closed (whole-text exempt REMOVED), M3 tail `wohnen\|ansässig\|leben`, M4 suffix `t\|…\|sten` + FR neg forms + kann-wohnen + wohnort-frei + client-HQ skip, NFC; 7 RED-first `test_r2_*` | **MAKER DONE** — 393 passed EXIT 0; `f1bb3ee`; comment 5911302378; §7 LAST rework (next reject → human gate) |
