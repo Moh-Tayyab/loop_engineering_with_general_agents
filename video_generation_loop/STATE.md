@@ -110,6 +110,8 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    **Why it matters:** heartbeats have been CI-blind on every weekday since 2026-09-28
    (5+ consecutive no-user-visible-progress beats → §7 loop detection). Until it lands, no
    heartbeat can read `test-gate.yml` results and the triage step-2 is guesswork.
+   **Escalation surfaced in PR #26** (docs-only spine update; the patch is in the PR body,
+   not the diff, because the runner token cannot push workflow files).
 
 ## 11. Human Gate Decisions (video loop)
 
