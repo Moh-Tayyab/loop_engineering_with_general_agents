@@ -146,7 +146,8 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
     without workflows permission`. Chicken-and-egg: granting `workflows: write` is itself a
     workflow-file edit. Human options: (a) apply the one line from a local clone / PAT;
     (b) one `workflow_dispatch` run with a PAT that has `workflows: write`;
-    (c) leave it and accept blind heartbeats. Also unblocks re-verifying PR #25's checks.
+    (c) leave it and accept blind heartbeats. Also unblocks re-verifying PR #25's checks. **Escalation surfaced in PR #26** (docs-only; the
+    one-line patch is in the PR body, not the diff — the token cannot push workflow files).
 22. **(Beat 151, PR #25 — awaiting a grade):** `fix/localized-lows-title-coverage` (opened
     2026-10-02T07:46Z) closes the two task-20 residual LOWs (title-path localized pins,
     `Wohnsitz` without preposition). State: OPEN, `MERGEABLE/UNSTABLE`, **no review recorded**,
