@@ -598,10 +598,15 @@ def is_title_restricted(title: str | None) -> bool:
         return True
     if is_hybrid_work(title):
         return True
-    t = title.lower()
+    t = unicodedata.normalize("NFC", title.lower())
     # Underscore is a word char — normalize before every title token match
     # so "AI_Engineer_Onsite" / "ML Engineer_Hybrid" behave like spaces (R4).
     t_norm = t.replace("_", " ")
+    # Localized DE/FR residency pins in titles (task-20 LOW): fail-closed, no
+    # exemption machinery — titles are terse and carry no negation phrasing.
+    for _pat in _LOCALIZED_RESIDENCY_PATTERNS:
+        if re.search(_pat, t_norm):
+            return True
     # Foreign domestic-only restrictions in title (US, UK, Canada, Europe, Germany, Poland, LATAM)
     # A4: extend to APAC/ME foreign markets that previously slipped ("India Only", "Japan Only").
     _title_only_countries = (
@@ -813,7 +818,9 @@ _DE_LOCALITIES = (
 
 _LOCALIZED_RESIDENCY_PATTERNS = [
     # DE: Wohnsitz / Wohnort / wohnen / Ansässigkeit / Aufenthalt
-    rf"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*{_DE_LOCALITIES}\b",
+    # `in`-prefix optional (LOW2): "Wohnsitz Deutschland erforderlich" (no
+    # article/preposition) previously leaked past every pattern.
+    rf"\bwohnsitz\s+(?:(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*)?{_DE_LOCALITIES}\b",
     rf"\b(?:mit|ohne)\s+wohnsitz\s+{_DE_LOCALITIES}\b",
     rf"\bwohnort\b[^.!?\n]{{0,40}}\b(?:in\s+)?{_DE_LOCALITIES}\b",
     rf"\bin\s+{_DE_LOCALITIES}\s+wohnen\b",
