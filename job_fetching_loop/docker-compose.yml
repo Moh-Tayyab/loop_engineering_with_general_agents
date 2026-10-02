@@ -1,0 +1,17 @@
+services:
+  job-loop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-fetching-loop
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./.slc:/app/.slc
+      - ./.runtime:/app/.runtime
+      - ./output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["--dry-run"]
