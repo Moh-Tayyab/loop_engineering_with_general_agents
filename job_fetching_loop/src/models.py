@@ -804,18 +804,25 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
 # main list because these carry per-sentence polarity (M3): a match restricts
 # unless its sentence carries an explicit exemption (ohne Wohnsitz /
 # nicht erforderlich / non requise / without residence …).
+
+_DE_LOCALITIES = (
+    r"(?:deutschland|germany|bundesrepublik(?:\s+deutschland)?|berlin|hamburg|"
+    r"münchen|munich|frankfurt|köln|cologne|stuttgart|düsseldorf|leipzig|dresden|"
+    r"nrw|nordrhein-westfalen|bayern|bavaria|hessen|baden-württemberg)"
+)
+
 _LOCALIZED_RESIDENCY_PATTERNS = [
     # DE: Wohnsitz / Wohnort / wohnen / Ansässigkeit / Aufenthalt
-    r"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*(?:deutschland|germany|bundesrepublik(?:\s+deutschland)?)\b",
-    r"\b(?:mit|ohne)\s+wohnsitz\s+(?:deutschland|germany)\b",
-    r"\bwohnort\b[^.!?\n]{0,40}\b(?:in\s+)?(?:deutschland|germany)\b",
-    r"\bin\s+(?:deutschland|germany)\s+wohnen\b",
-    # M2: country required inside the SAME muss-living clause; `[^.!?\n]`
-    # never bridges sentences. Umlaut forms: muss/musst/müssen/musste/mussten/
-    # müsste (bare `muss` never matches `müssen` — M2 root cause = umlaut).
+    rf"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*{_DE_LOCALITIES}\b",
+    rf"\b(?:mit|ohne)\s+wohnsitz\s+{_DE_LOCALITIES}\b",
+    rf"\bwohnort\b[^.!?\n]{{0,40}}\b(?:in\s+)?{_DE_LOCALITIES}\b",
+    rf"\bin\s+{_DE_LOCALITIES}\s+wohnen\b",
+    # M2: country/locality required inside the SAME muss-living clause; `[^.!?\n]`
+    # never bridges sentences. Umlaut forms: muss/musst/müssen/musste/mussten/müsste.
+    # B2: includes major German cities/states (Berlin, Hamburg, NRW).
     # Round-2 (M3): living verbs extended to ansässig/leben for EN parity.
-    r"\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\b[^.!?\n]{0,60}\b(?:in\s+)?(?:deutschland|germany)\b[^.!?\n]{0,40}\b(?:wohnen|ansässig|leben)\b",
-    r"\bansässig(?:keit|en)?\s+(?:in\s+)?(?:deutschland|germany)\b",
+    rf"\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\b[^.!?\n]{{0,60}}\b(?:in\s+)?{_DE_LOCALITIES}\b[^.!?\n]{{0,40}}\b(?:wohnen|ansässig|leben)\b",
+    rf"\bansässig(?:keit|en)?\s+(?:in\s+)?{_DE_LOCALITIES}\b",
     r"\baufenthaltserlaubnis\s+(?:für|in)\s+(?:deutschland|germany)\b",
     # FR: résider / résidant / résidence / résidents / basé / domiciliation
     r"\brésid(?:ant|erez)\s+en\s+france\b",
@@ -827,34 +834,39 @@ _LOCALIZED_RESIDENCY_PATTERNS = [
     r"\bdomiciliation\s+en\s+france\b",
 ]
 
-# Round-2 (run 36712129823): exemptions are searched INSIDE THE CLAUSE that
-# carries the pin (clause = text between , ; : — – ( ) [ ] inside one sentence)
-# — a sentence-global or whole-text search let unrelated "nicht erforderlich"
-# about another subject/country suppress the pin (M1/M2 HIGH).
-_LOCALIZED_CLAUSE_SPLIT = re.compile(r"[,;:—–()\[\]]+")
-# Candidate pins are required; a match preceded by client/partner-HQ context in
-# the same sentence ("Notre client, basé en France, recrute…") is not one.
-_LOCALIZED_CONTEXT_SKIP = re.compile(
-    r"\b(?:client|entreprise|soci[ée]t[ée]|kunde|firma|unternehmen|customer|"
-    r"company|employer|partner|si[èe]ge)\b[^.!?]{0,40}$"
+# Clauses are separated by punctuation OR coordinating/adversative conjunctions (M2).
+_LOCALIZED_CLAUSE_SPLIT = re.compile(
+    r"[,;:—–()\[\]]+|\b(?:und|aber|oder|sondern|mais|et|ou|and|or|but)\b",
+    re.IGNORECASE,
 )
+
+# M1: client/partner-HQ skip ONLY applies to company/client headquarters mentions
+# directly preceding 'basé(e) en France' ("Notre client, basé en France, recrute…").
+# It must NEVER suppress personal candidate residency pins like Wohnsitz or Résidant.
+_CLIENT_HQ_SKIP = re.compile(
+    r"\b(?:notre\s+client|notre\s+entreprise|la\s+soci[ée]t[ée]|notre\s+partenaire|our\s+client|our\s+company)\b[^.!?\n]{0,25}\s*$",
+    re.IGNORECASE,
+)
+
 _LOCALIZED_RESIDENCY_EXEMPT = re.compile(
     r"(?i)"
-    # DE open-neg (all muss/soll/mochte-style stems: muss, musst, müssen,
-    # musste, mussten — round-2 M4 dropped `musst`/`mussten` before)
-    r"\bnicht\s+(?:erforderlich|benötigt|nötig|vorgeschrieben)\b"
+    # DE open-neg (muss/soll/mochte stems, zwingend, pflicht)
+    r"\bnicht\b[^.!?\n]{0,15}\b(?:erforderlich|benötigt|nötig|vorgeschrieben|zwingend|pflicht)\b"
+    r"|\bkeine?\s+pflicht\b"
     r"|\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\s+nicht\b"
     r"|\bohne\s+(?:[a-zäöüß]+\s+){0,2}wohnsitz\b"
     r"|\bohne\s+ansässigkeit\b"
     r"|\bkein(?:e|er|en)?\s+(?:wohnsitz|ansässigkeit)\b"
-    # possibility, not requirement ("in Deutschland wohnen möglich")
-    r"|\b(?:wohnen|leben)\s+(?:möglich|possible)\b"
+    # possibility, not requirement ("in Deutschland wohnen möglich", "wohnen ist möglich")
+    r"|\b(?:wohnen|leben)\s+(?:ist\s+)?(?:möglich|possible)\b"
+    r"|\b(?:wohnsitz|ansässigkeit)\b[^.!?\n]{0,30}\bmöglich\b"
+    r"|\bmöglich\s+für\s+(?:alle\b|kandidaten\b|bewerber\b)"
     r"|\b(?:wohnort|wohnsitz)\s+(?:frei|free)\b"
     # "you may live…" permission
     r"|\bk(?:a|ä|ö|o)nn(?:st|en)?\b[^.!?\n]{0,60}\b(?:wohnen|leben)\b"
-    # FR open-neg (round-2: `non requis` masculine missed by requi[s]?[te]s?,
-    # `pas obligatoire`, `pas besoin de` were absent)
+    # FR open-neg (non requis, non/pas obligatoire, pas besoin de, sans résidence)
     r"|\bnon\s+requi(?:s|se|ses)\b"
+    r"|\b(?:non|pas)\s+obligatoire\b"
     r"|n'est\s+pas\s+(?:requis|requise|nécessaire|obligatoire)\b"
     r"|\bpas\s+besoin\s+de\b"
     r"|\bsans\s+(?:résidence|résider|domicile)\b"
@@ -897,13 +909,11 @@ def is_description_restricted(description: str | None) -> bool:
                 elif e >= m.end():
                     s_end = e
                     break
-            if s_start > m.start() or s_end < m.end():
-                return True  # boundary-spanning match → fail closed (M2)
             sent = loc[s_start:s_end]
-            # clause region around the FULL match span (clause seps , ; : — – ( )):
+            # clause region around the FULL match span (clause seps , ; : — – ( ) [ ] or conjunctions):
             # a pin whose internal gap crosses a sep ("wohnort frei — auch in
             # Deutschland wohnen") is judged against every clause it touches;
-            # pins that end before the sep keep clause-local polarity (M1).
+            # pins that end before the sep keep clause-local polarity (M1/M2).
             rel_start, rel_end = m.start() - s_start, m.end() - s_start
             c_start, c_end = 0, len(sent)
             for cm in _LOCALIZED_CLAUSE_SPLIT.finditer(sent):
@@ -912,10 +922,13 @@ def is_description_restricted(description: str | None) -> bool:
                 elif cm.start() >= rel_end:
                     c_end = cm.start()
                     break
-            if _LOCALIZED_CONTEXT_SKIP.search(loc[max(0, m.start() - 60) : m.start()]):
-                continue  # client/partner HQ location, not a candidate pin (M4)
+            # M1: only skip client/partner HQ location for 'basé(e) en France'
+            if m.group(0).startswith("bas") and _CLIENT_HQ_SKIP.search(
+                loc[max(0, m.start() - 60) : m.start()]
+            ):
+                continue
             if _LOCALIZED_RESIDENCY_EXEMPT.search(sent[c_start:c_end]):
-                continue  # every clause this pin touches explicitly negated → open
+                continue  # clause this pin touches explicitly negated → open
             return True
     # "100% Remote - USA Only" / "US-only" must only match the UPPERCASE abbreviation,
     # never the lowercase pronoun "us" (e.g. "gives us only ..."). Match on the original case.

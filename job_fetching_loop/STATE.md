@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 147 — PR #20 escalation (§7): inner loop frozen, human decision requested
-- **Date:** 2026-09-30
-- **Trigger:** adversarial checker run 36715127038 on rework 2/2 (`f1bb3ee`) → final CHANGES REQUESTED
-- **Status:** **ESCALATED — `@Moh-Tayyab` pinged on PR #20 (comment 5911584186); NO third auto-rework (§7), no further pushes to `phase3-localized-residency`.** Verdict: rework-2 holds all round-1 fixtures (393 green) but introduced **M1 regression** (context-skip too broad — company word ≤40 chars before pin suppresses it, 10 fixtures fail-open), **M2** (punctuation-only clause split — `und/aber/mais/et`-joined negation suppresses pins, 5 fixtures), **M3 fail-closed** (6 missing exempt forms drop worldwide listings). LOWs: 5.3s @704KB exempt path (file), pre-existing no-`in` coverage, title path (task 20), dead branch. **Options given: (A) targeted third rework [recommended], (B) merge as-is [not recommended — Rule 11], (C) revert A3 block to English-only + follow-up issue.** Budget: beats 145–147 = **3/3 ceiling → STOP this run.** Phase 4 (Docker) / Phase 5 blocked on PR #20 merge; resume next run per human decision.
+- **Beat #:** 148 — Human-authorized Option A targeted rework for PR #20 (M1/M2/M3/B2)
+- **Date:** 2026-10-02
+- **Trigger:** user — Option A approved via human gate (§7): targeted fix for M1/M2/M3/B2 findings
+- **Status:** **MAKER DONE (Human Option A) — 397 passed EXIT 0.** All 24 adversarial cases verified: (1) M1: `_CLIENT_HQ_SKIP` restricted exclusively to `basé(e) en France` with preceding client/company noun (`Notre client, basé en France...`), so candidate residency pins (`Unsere Firma sucht Entwickler mit Wohnsitz in Deutschland`) correctly restrict; (2) M2: `_LOCALIZED_CLAUSE_SPLIT` expanded with conjunctions (`und/aber/oder/sondern/mais/et/ou/and/or/but`) so unrelated negative clauses (`und Deutschkenntnisse sind nicht erforderlich`) do not suppress the residency pin; (3) M3: `_LOCALIZED_RESIDENCY_EXEMPT` added `nicht zwingend`, `(nicht/keine) pflicht`, `(non/pas) obligatoire`, `wohnen ist möglich`, and `möglich für alle Kandidaten`; (4) B2: added German localities/cities (`_DE_LOCALITIES`: Berlin, Hamburg, NRW, München, etc.) to muss/wohnen patterns. +4 regression tests in `tests/test_localized_residency.py` (total 19 tests). Full suite 397 passed. Ready to push and merge PR #20.
 
 ## 3. Beat Log
 
@@ -65,12 +65,11 @@ recompressed at 2026-09-30 (beat 144, §9 cap): beats 117–120 merged (verdicts
 recompressed at 2026-09-30 (beat 145, §9 cap): beats 141–142 merged (verdicts kept).
 recompressed at 2026-09-30 (beat 146, §9 cap): beats 137–138 merged (verdicts kept).
 recompressed at 2026-09-30 (beat 147, §9 cap): beats 139–140 merged (verdicts kept).
-recompressed at 2026-09-25 (beat 138, §9 cap): beats 110–113 merged (111–113 PASS; 110 CHANGES REQUESTED).
-recompressed at 2026-09-25 (beat 141, §9 cap): beats 114–115 merged (114 CR; 115 Maker done, verdicts kept).
-recompressed at 2026-09-25 (beat 142, §9 cap): beats 121–122 merged (verdicts kept).
+recompressed at 2026-10-02 (beat 148, §9 cap): beats 121–125 merged (verdicts kept).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 148 | 2026-10-02 | user — Option A approved (§7 Human Gate) | Targeted rework M1 (client-HQ scope on basé), M2 (conjunction clause-splits), M3 (nicht zwingend, nicht pflicht, non/pas obligatoire, wohnen möglich), B2 (Berlin/Hamburg/NRW localities in muss/wohnen); +4 regressions (total 19) | **MAKER DONE (Human Option A)** — 397 passed EXIT 0; 24 adversarial repros verified green; ready for PR #20 merge |
 | 147 | 2026-09-30 | adversarial checker run 36715127038 → §7 escalation | Re-review of rework 2/2 `f1bb3ee`: round-1 fixtures all hold (393 green, gate/encoding/perf/secrets/STATE coherence pass) but **M1 regression** (context-skip broad — 10 company-word fixtures fail-open vs 8a1da19), **M2** conjunction-joined negation (5 fixtures, `und/aber/mais/et` outside clause seps), **M3** 6 missing exempt forms (`nicht zwingend`, `nicht pflicht`, `non/pas obligatoire`, `wohnen ist möglich`) drop worldwide; LOW: 5.3s@704KB exempt path, dead branch | **CHANGES REQUESTED (final) → ESCALATED** — `@Moh-Tayyab` options A/B/C posted (5911584186); frozen, no 3rd rework; beats 145–147 = 3/3 STOP |
 | 146 | 2026-09-30 | user — continue (adversarial run 36712129823 CR) | Rework 2/2 FINAL: M1/M2 clause-anchored exemption (seps `[,;:—–()[]]`), newline collapse + sentence-straddle fail-closed (whole-text exempt REMOVED), M3 tail `wohnen\|ansässig\|leben`, M4 suffix `t\|…\|sten` + FR neg forms + kann-wohnen + wohnort-frei + client-HQ skip, NFC; 7 RED-first `test_r2_*` | **MAKER DONE** — 393 passed EXIT 0; `f1bb3ee`; comment 5911302378; §7 LAST rework (next reject → human gate) |
 | 145 | 2026-09-30 | user — continue (PR #20 checker M1/M2/M3) | Rework 1/2: M1 7 pins (basé/résident*/résiderez/domiciliation/Wohnort/Aufenthaltserlaubnis), M2 **umlaut root cause** (`müssen`=m-ü) → `(?:u\|ü)(?:ss\|ß)` + country-in-clause + `[^.!?\n]`, M3 per-sentence `_LOCALIZED_RESIDENCY_EXEMPT`; merged origin/main (STATE 143+144+task20); PR body → 378+8=386; re-review comment 5910803656 | **MAKER DONE** — 386 passed EXIT 0; push `8a1da19`; task20 rework 1/2 (1 left §7) |

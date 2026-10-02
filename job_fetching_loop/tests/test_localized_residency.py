@@ -187,3 +187,54 @@ def test_r2_low3_nfd_accents_normalize():
     # NFD decomposition of "résident" = e + COMBINING ACUTE on the FIRST vowel
     assert is_description_restricted("re\u0301sident en France")  # NFD
     assert is_description_restricted("RÉSIDENCE EN FRANCE")  # case handled by .lower()
+
+
+# ── Round-3 (adversarial, run 36715127038): M1, M2, M3, B2 regressions ─────
+
+def test_r3_m1_company_word_does_not_suppress_pins():
+    cases = [
+        "Unsere Firma sucht Entwickler mit Wohnsitz in Deutschland.",
+        "Die Firma verlangt Ansässigkeit in Deutschland.",
+        "Unser Unternehmen sucht Remote-Entwickler mit Ansässigkeit in Deutschland.",
+        "Unser Kunde sucht Mitarbeiter mit Wohnsitz in Deutschland.",
+        "Notre entreprise recherche un professeur résidant en France.",
+        "Notre client cherche un professeur résidant en France pour ce poste.",
+        "La société recherche des professeurs résidant en France.",
+        "The company requires candidates with a Wohnsitz in Germany.",
+        "Our customer seeks talent with Wohnsitz in Deutschland.",
+        "Unsere Firma sucht Projektleiter, Wohnort in Deutschland.",
+    ]
+    for c in cases:
+        assert is_description_restricted(c), f"Failed to restrict: {c}"
+
+
+def test_r3_m2_conjunction_joined_negation_does_not_suppress_pins():
+    cases = [
+        "Worldwide remote. Sie müssen in Deutschland wohnen und Deutschkenntnisse sind nicht erforderlich.",
+        "Wohnsitz in Deutschland erforderlich und Englisch ist nicht erforderlich.",
+        "Kein Wohnsitz Österreich erforderlich aber Wohnsitz in Deutschland ist Pflicht.",
+        "Résidence en France requise mais l'expérience non requise.",
+        "Résidence en France requise et l'expérience non requise pour ce poste.",
+    ]
+    for c in cases:
+        assert is_description_restricted(c), f"Failed to restrict: {c}"
+
+
+def test_r3_m3_missing_exempt_forms_stay_open():
+    cases = [
+        "Worldwide remote. Wohnsitz in Deutschland ist nicht zwingend.",
+        "Global remote. Wohnsitz in Deutschland ist hier nicht Pflicht.",
+        "Résidence en France non obligatoire pour ce poste, ouvert au monde entier.",
+        "Poste ouvert au monde entier, résidence en France pas obligatoire.",
+        "Worldwide. In Deutschland wohnen ist möglich.",
+        "Global remote. Wohnsitz in Deutschland möglich für alle Kandidaten.",
+    ]
+    for c in cases:
+        assert not is_description_restricted(c), f"Failed to stay open: {c}"
+
+
+def test_r3_b2_german_localities_muss_wohnen():
+    assert is_description_restricted("Der Kandidat muss in Berlin wohnen.")
+    assert is_description_restricted("Die Bewerberin muss in Hamburg wohnen.")
+    assert is_description_restricted("Bewerber müssen in NRW wohnen.")
+
