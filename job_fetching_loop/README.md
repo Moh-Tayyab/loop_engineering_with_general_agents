@@ -21,6 +21,7 @@ Cloud skips Playwright/CAPTCHA sources (`indeed`, `glassdoor`, `justremote`,
 
 ## Quick Start
 
+### Local Python Environment
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -29,6 +30,19 @@ python -m venv .venv
 cp .env.example .env   # Telegram bot token, chat id, JOB_LOOP_PRIMARY
 .venv/bin/python -m src.main --list-sources
 .venv/bin/python -m src.main --dry-run
+```
+
+### Docker & Docker Compose (Phase 4)
+The container environment uses `mcr.microsoft.com/playwright/python:v1.62.0-noble` with a non-root `pwuser`:
+```bash
+# Build the container image
+docker compose build
+
+# Rehearsal run (dry-run mode without mutations or notifications)
+docker compose run --rm job-loop --dry-run
+
+# Run scheduled fetch
+docker compose run --rm job-loop
 ```
 
 ## Schedule
