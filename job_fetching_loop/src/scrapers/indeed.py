@@ -76,6 +76,12 @@ class IndeedScraper(BaseScraper):
         errors: list[Exception] = []
         async with launch_browser(self.name, persistent=True, headless=cfg.board_headless()) as context:
             page = await context.new_page()
+            try:
+                await warm_up(page, self._HOME, self.name)
+            except (CaptchaDetected, CaptchaTimeout):
+                raise
+            except Exception as e:
+                log.debug("[%s] warm_up non-fatal error: %s", self.name, e)
             for kw in keywords:
                 from urllib.parse import quote_plus
                 ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
@@ -171,8 +177,8 @@ class IndeedScraper(BaseScraper):
                 from src.matcher import match_usama_cv
                 is_match, _, _ = match_usama_cv(title, description=desc)
                 if is_match:
-                    await title_el.click()
-                    await asyncio.sleep(0.5)
+                    await human_click(page, title_el)
+                    await human_read_pause(0.5, 1.5)
                     full_desc_el = await page.query_selector("#jobDescriptionText, div.jobsearch-jobDescriptionText")
                     if full_desc_el:
                         full_text = (await full_desc_el.inner_text()).strip()

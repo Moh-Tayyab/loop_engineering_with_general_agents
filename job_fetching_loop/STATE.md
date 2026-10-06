@@ -22,12 +22,16 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 152 — Production readiness audit & hardening (Maker)
+- **Beat #:** 153 — Human-like stealth & evasion for Indeed & Glassdoor (Maker)
 - **Date:** 2026-10-06
-- **Trigger:** user — production readiness audit & gap hardening
-- **Status:** **MAKER DONE — 413 passed EXIT 0.** Completed Phase 2b (storage_state wired into `launch_browser` + persistent cookie seeding in `browser.py`); enforced owner-only `0700` permissions on `.runtime/`; resolved task-21 residual gaps in `models.py` (title-path EN residency pins `must reside in`/`residence in`, German post-verb locality `müssen wohnen in`, French European coverage `Résidence en Europe`, bare `Wohnsitz` requirement-guarded); negative title fixtures locked (LOW1); verified `--dry-run` purity and docker compose config.
+- **Trigger:** user — fix indeed and glassdoor to act like a human and avoid bot detection
+- **Status:** **MAKER DONE — 413 passed EXIT 0.** Hardened stealth fingerprinting in `src/browser.py` (`window.chrome`, `navigator.plugins`, `mimeTypes`, WebGL unmasking, permissions); injected stealth init script into persistent contexts; wired `warm_up` homepage lingering and `human_click` on `pk.indeed.com` and `glassdoor.com`; upgraded Turnstile checkbox element coordinates and auto-saved `storage_state` upon clearance.
 
 ## 3. Beat Log
+
+| Beat | Date | Trigger | Changes | Verdict |
+|:---:|:---:|:---|:---|:---|
+| 153 | 2026-10-06 | user — fix indeed & glassdoor human behavior | Hardened stealth profile in persistent contexts; wired warm_up homepage lingering on Indeed/Glassdoor; human_click + read pauses; Turnstile checkbox auto-solve + storage_state save | **MAKER DONE** — 413 passed EXIT 0 |
 
 compressed at 2026-09-17: beats 26–62 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge, outage honesty, DLQ replay, salary/cron hardening, strict 24h cutoff, EPIPE shield, feed gate, timeout safety, canonical URL dedup).
 

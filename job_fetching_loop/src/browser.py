@@ -62,6 +62,10 @@ STEALTH_ARGS = [
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--no-default-browser-check",
+    "--no-first-run",
+    "--lang=en-US,en",
 ]
 
 
@@ -113,6 +117,7 @@ def _profile_dir(source: str) -> str:
 
 STEALTH_INIT_SCRIPT = """
 (() => {
+    // 1. Webdriver evasion
     try {
         const proto = Object.getPrototypeOf(navigator);
         delete proto.webdriver;
@@ -124,15 +129,68 @@ STEALTH_INIT_SCRIPT = """
         });
     } catch (e) {}
 
+    // 2. Mock complete window.chrome object
     if (!window.chrome) {
         window.chrome = {
-            app: { isInstalled: false },
-            runtime: {},
+            app: {
+                isInstalled: false,
+                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+            },
+            runtime: {
+                OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' }
+            },
             loadTimes: function() {},
             csi: function() {},
         };
     }
 
+    // 3. Realistic Plugins & MimeTypes Array
+    try {
+        const makePlugin = (name, description, filename) => ({ name, description, filename, length: 0 });
+        const plugins = [
+            makePlugin('PDF Viewer', 'Portable Document Format', 'internal-pdf-viewer'),
+            makePlugin('Chrome PDF Viewer', 'Portable Document Format', 'internal-pdf-viewer'),
+            makePlugin('Chromium PDF Viewer', 'Portable Document Format', 'internal-pdf-viewer'),
+            makePlugin('Microsoft Edge PDF Viewer', 'Portable Document Format', 'internal-pdf-viewer'),
+            makePlugin('WebKit built-in PDF', 'Portable Document Format', 'internal-pdf-viewer'),
+        ];
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => plugins,
+            configurable: true,
+        });
+        Object.defineProperty(navigator, 'mimeTypes', {
+            get: () => [{ type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' }],
+            configurable: true,
+        });
+    } catch (e) {}
+
+    // 4. Languages
+    try {
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en'],
+            configurable: true,
+        });
+    } catch (e) {}
+
+    // 5. Hardware Concurrency & Device Memory
+    try {
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8,
+            configurable: true,
+        });
+        Object.defineProperty(navigator, 'deviceMemory', {
+            get: () => 8,
+            configurable: true,
+        });
+    } catch (e) {}
+
+    // 6. Permissions query
     try {
         const origPermissions = window.navigator.permissions.query;
         window.navigator.permissions.query = (parameters) => (
@@ -140,6 +198,24 @@ STEALTH_INIT_SCRIPT = """
                 ? Promise.resolve({ state: Notification.permission })
                 : origPermissions(parameters)
         );
+    } catch (e) {}
+
+    // 7. WebGL Vendor & Renderer Unmasking
+    try {
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Google Inc. (Intel)';
+            if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
+            return getParameter.apply(this, [parameter]);
+        };
+        if (typeof WebGL2RenderingContext !== 'undefined') {
+            const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
+            WebGL2RenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) return 'Google Inc. (Intel)';
+                if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                return getParameter2.apply(this, [parameter]);
+            };
+        }
     } catch (e) {}
 })();
 """
@@ -206,8 +282,11 @@ async def launch_browser(
                     user_agent=fp["user_agent"],
                     viewport=fp["viewport"],
                     locale="en-US",
-                    timezone_id="UTC",
                 )
+            try:
+                await browser.add_init_script(STEALTH_INIT_SCRIPT)
+            except Exception as exc:
+                log.debug("[%s] add_init_script error: %s", source, exc)
             if saved_state and isinstance(saved_state.get("cookies"), list):
                 try:
                     await browser.add_cookies(saved_state["cookies"])
@@ -378,25 +457,50 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
                     for f in frames:
                         f_url = getattr(f, "url", None)
                         if isinstance(f_url, str) and "challenges.cloudflare.com" in f_url:
-                            el = await f.frame_element()
-                            box = await el.bounding_box()
-                            if box:
-                                target_x = box["x"] + random.uniform(27.0, 33.0)
-                                target_y = box["y"] + (box["height"] / 2.0) + random.uniform(-2.5, 2.5)
-                                log.info("[%s] Human mouse moving to Cloudflare Turnstile (%d, %d)...",
-                                         source, int(target_x), int(target_y))
-                                await human_mouse_move(page, target_x, target_y, steps=random.randint(22, 35))
-                                await asyncio.sleep(random.uniform(0.2, 0.45))
-                                if hasattr(page, "mouse") and hasattr(page.mouse, "click"):
-                                    await page.mouse.click(target_x, target_y)
-                                log.info("[%s] Clicked Turnstile checkbox with human motion", source)
-                                last_turnstile_click = time.monotonic()
+                            clicked_inside = False
+                            for sel in ("input[type='checkbox']", ".ctp-checkbox-label", "#challenge-stage", "label.ctp-checkbox-label", "div.cb-i"):
                                 try:
-                                    await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+                                    el = await f.query_selector(sel)
+                                    if el:
+                                        box = await el.bounding_box()
+                                        if box:
+                                            target_x = box["x"] + box["width"] * random.uniform(0.3, 0.7)
+                                            target_y = box["y"] + box["height"] * random.uniform(0.3, 0.7)
+                                            log.info("[%s] Human mouse moving to Turnstile checkbox element (%d, %d)...",
+                                                     source, int(target_x), int(target_y))
+                                            await human_mouse_move(page, target_x, target_y, steps=random.randint(22, 35))
+                                            await asyncio.sleep(random.uniform(0.2, 0.45))
+                                            try:
+                                                await el.click(timeout=3000)
+                                            except Exception:
+                                                if hasattr(page, "mouse") and hasattr(page.mouse, "click"):
+                                                    await page.mouse.click(target_x, target_y)
+                                            clicked_inside = True
+                                            break
                                 except Exception:
                                     pass
-                                await asyncio.sleep(3.0)
-                                break
+
+                            if not clicked_inside:
+                                el = await f.frame_element()
+                                box = await el.bounding_box()
+                                if box:
+                                    target_x = box["x"] + random.uniform(27.0, 33.0)
+                                    target_y = box["y"] + (box["height"] / 2.0) + random.uniform(-2.5, 2.5)
+                                    log.info("[%s] Human mouse moving to Cloudflare Turnstile (%d, %d)...",
+                                             source, int(target_x), int(target_y))
+                                    await human_mouse_move(page, target_x, target_y, steps=random.randint(22, 35))
+                                    await asyncio.sleep(random.uniform(0.2, 0.45))
+                                    if hasattr(page, "mouse") and hasattr(page.mouse, "click"):
+                                        await page.mouse.click(target_x, target_y)
+
+                            log.info("[%s] Clicked Turnstile checkbox with human motion", source)
+                            last_turnstile_click = time.monotonic()
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+                            except Exception:
+                                pass
+                            await asyncio.sleep(3.0)
+                            break
             except Exception as e:
                 log.debug("[%s] Turnstile click attempt error: %s", source, e)
 
@@ -407,6 +511,15 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
             except Exception:
                 pass
             await asyncio.sleep(2.0)
+            try:
+                from src.session import save as save_session
+                ctx = getattr(page, "context", None)
+                if ctx and hasattr(ctx, "storage_state") and callable(ctx.storage_state):
+                    solved_state = await ctx.storage_state()
+                    save_session(source, solved_state)
+                    log.info("[%s] saved freshly cleared session cookies to storage_state", source)
+            except Exception as e:
+                log.debug("[%s] save cleared session error: %s", source, e)
             return True
         if int(waited) % 15 == 0:
             log.info("  still waiting (%ds)...", int(waited))
