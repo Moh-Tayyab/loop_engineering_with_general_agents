@@ -22,15 +22,22 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 153 — Human-like stealth & evasion for Indeed & Glassdoor (Maker)
+- **Beat #:** 154 (heartbeat; the 2026-10-05 heartbeat mislabeled itself 151, colliding
+  with main's 151)
 - **Date:** 2026-10-06
-- **Trigger:** user — fix indeed and glassdoor to act like a human and avoid bot detection
-- **Status:** **MAKER DONE — 413 passed EXIT 0.** Hardened stealth fingerprinting in `src/browser.py` (`window.chrome`, `navigator.plugins`, `mimeTypes`, WebGL unmasking, permissions); injected stealth init script into persistent contexts; wired `warm_up` homepage lingering and `human_click` on `pk.indeed.com` and `glassdoor.com`; upgraded Turnstile checkbox element coordinates and auto-saved `storage_state` upon clearance.
+- **Trigger:** schedule — weekday 9am morning triage loop
+- **Status:** **ESCALATED — no code, no new PR (§7 freeze active).** `gh run list
+  --workflow=test-gate.yml` still HTTP 403 → no last-night failures inspectable; no push
+  re-probe (2026-10-05 proof stands: the App cannot edit workflow files). No new job-loop
+  issues (open set is root-trainer only — recorded in the video spine). Main advanced today
+  (PR #25 merged 06:37Z; beats 152 Phase 2b, 153 stealth) → escalation PR #27 now
+  conflicts with main. Beat 154 STATE update pushed to schedule branch, no PR.
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Changes | Verdict |
 |:---:|:---:|:---|:---|:---|
+| 154 | 2026-10-06 | schedule heartbeat | Morning triage: `gh run list` still 403 (blind; human-only fix §10 item 22, no re-probe); no new job issues; job main advanced (151–153) → PR #27 conflicts; no job code touched | **ESCALATED — frozen**; no new PR per §7 loop detection |
 | 153 | 2026-10-06 | user — fix indeed & glassdoor human behavior | Hardened stealth profile in persistent contexts; wired warm_up homepage lingering on Indeed/Glassdoor; human_click + read pauses; Turnstile checkbox auto-solve + storage_state save | **MAKER DONE** — 413 passed EXIT 0 |
 
 compressed at 2026-09-17: beats 26–62 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge, outage honesty, DLQ replay, salary/cron hardening, strict 24h cutoff, EPIPE shield, feed gate, timeout safety, canonical URL dedup).
@@ -140,6 +147,16 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 19. ~~**(Beat 139→140 — adversarial model block)**~~ **RESOLVED Beat 143:** model fix published to main (`4e5d38f`), adversarial job ran (later cancelled by the merged cycle), **PR #16 MERGED `842223b` (Phase 2 landed)**, and the `[bot]` comment-trigger guard landed as `7fd4d3c` so CodeRabbit/github-actions comments no longer spawn permission-error runs. In-session `checker` subagent spawn still gated (task 14).
 20. ~~**(Beat 147, PR #20 A3 — ESCALATED, awaiting human decision):**~~ **RESOLVED Beats 148 & 151:** Option A approved, PR #20 merged (`e415d52`), and PR #25 merged (`778ee5c`).
 21. ~~**(Beat 151, PR #25 follow-ups — open, non-blocking):**~~ **RESOLVED Beat 152:** (a) title-path EN pins `must reside in` / `residence in` and description-path `Residence in Germany required` covered; (b) German post-verb locality `müssen wohnen in` and French European `Résidence en Europe` covered; (c) bare `Wohnsitz <locality>` guarded by requirement-phrasing check so questionnaire and Standort frames stay open; (d) negative title fixtures locked (LOW1). 413 tests green.
+22. **(2026-10-06, beat 154 heartbeat — HUMAN, freeze active):** CI blindness persists —
+    one-line fix is to add `actions: read` to `.github/workflows/opencode.yml` job
+    `autonomous` explicit `permissions:`; the loop cannot push workflow files (App lacks
+    `workflows` scope; 2026-10-05 probe rejected). Freeze from that beat stands: **no new
+    triage PRs or branches until a human resolves this.** **New: escalation PR #27 is now
+    stale** — its base predates job beats 151–153 (PR #25 merged, Phase 2b, stealth), so it
+    conflicts with main. Human path: apply the fix → merge-or-close stale triage PRs
+    #21/#22/#26/#27 (keep one record) → re-number the heartbeat rows. Parallel record:
+    video spine §10 item 8. Beat 154 STATE update pushed to schedule branch
+    `opencode/schedule-456a1a-20261006154711` (no PR, per freeze).
 
 ## 11. Human Gate Decisions (job loop)
 

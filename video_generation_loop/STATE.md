@@ -18,21 +18,23 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 33 (heartbeat 2026-10-06; beats 31–32 exist only in unmerged PRs
+  #9/#26/#27 — renumber on merge per §10 item 8)
+- **Date:** 2026-10-06
+- **Trigger:** schedule — weekday 9am morning triage loop
+- **Status:** **ESCALATED — no code, no PR (§7 freeze honored).** CI `test-gate.yml`
+  list still HTTP 403 (human-only `actions: read` fix; no push re-probe — 2026-10-05
+  rejection proof stands). Issues #1/#3/#4/#6 unchanged: #6 re-repro'd leaking on `main`
+  (3/3 repros pass through), `wrap_text` still missing — fixes already live in PRs #5/#9
+  (verified prior beat); merge/close = human (§10 item 3). Root trainer gate run as CI
+  substitute: **123 passed**. Main advanced (job beats 151–153) → escalation PR #27 now
+  conflicts. STATE update pushed to schedule branch, no PR.
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 33 | 2026-10-06 | schedule heartbeat | Morning triage: CI list 403 (blind, no re-probe — human-only fix); issues #1/#3/#4/#6 re-checked — #6 still leaks on main, fixes in PRs #5/#9, merge=human; no code touched. Root gate **123 passed** (CI substitute). PR #27 conflicts w/ main (job beats 151–153). | **ESCALATED — frozen**; no new PR per §7; STATE on schedule branch only |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -84,6 +86,15 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
    match (consistency only, no video-loop behavior change). Verify the Checker spawn works
    next session before this loop's next maker–checker cycle.
+8. **(2026-10-06, beat 33 heartbeat — HUMAN, freeze active):** CI blindness unchanged —
+   `opencode.yml` job `autonomous` explicit `permissions:` lacks `actions: read`, and the
+   loop cannot push workflow files (App has no `workflows` scope; 2026-10-05 probe
+   rejected). §7 loop detection from the 2026-10-05 beat stands: **no new triage PRs or
+   branches until a human resolves this.** Escalation record is split across unmerged PRs
+   #21/#22/#26/#27, and **PR #27 is now stale** — its base predates job beats 151–153, so
+   it conflicts with main. Human path: apply the one-line fix → merge-or-close the stale
+   triage PRs (keep one) → re-number video beats 31/32 on merge. Beat 33 STATE update is on
+   schedule branch `opencode/schedule-456a1a-20261006154711` (pushed, no PR, per freeze).
 
 ## 11. Human Gate Decisions (video loop)
 
