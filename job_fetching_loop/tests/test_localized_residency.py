@@ -238,3 +238,73 @@ def test_r3_b2_german_localities_muss_wohnen():
     assert is_description_restricted("Die Bewerberin muss in Hamburg wohnen.")
     assert is_description_restricted("Bewerber müssen in NRW wohnen.")
 
+
+
+# ── Round-3 (adversarial run 36715127038, human-authorized §7 exception) ────
+
+def test_r3_m1_company_word_before_pin_does_not_skip():
+    # context-skip regression: company word near a pin is NOT an HQ appositive
+    assert is_description_restricted("Unsere Firma sucht Entwickler mit Wohnsitz in Deutschland.")
+    assert is_description_restricted(
+        "Ein wachsendes Unternehmen sucht Mitarbeitende mit Wohnsitz in Deutschland."
+    )
+    assert is_description_restricted("Die Firma verlangt Ansässigkeit in Deutschland.")
+    assert is_description_restricted("Die Firma verlangt, dass der Bewerber in Deutschland wohnen muss.")
+    assert is_description_restricted("Notre entreprise recherche un professeur résidant en France.")
+    assert is_description_restricted("Notre client cherche un professeur résidant en France pour ce poste.")
+    assert is_description_restricted("La société recherche des professeurs résidant en France.")
+    assert is_description_restricted("The company requires candidates with a Wohnsitz in Germany.")
+    assert is_description_restricted("Our customer seeks talent with Wohnsitz in Deutschland.")
+    assert is_description_restricted("Unsere Firma sucht Projektleiter, Wohnort in Deutschland.")
+
+
+def test_r3_m1_appositive_hq_pin_stays_open():
+    # the ONE shape the skip was written for: client, <pin>, recrute
+    assert not is_description_restricted(
+        "Worldwide remote role. Notre client, basé en France, recrute pour le monde entier."
+    )
+
+
+def test_r3_m2_conjunction_joined_negation_does_not_suppress_pin():
+    assert is_description_restricted(
+        "Worldwide remote. Sie müssen in Deutschland wohnen und Deutschkenntnisse sind nicht erforderlich."
+    )
+    assert is_description_restricted(
+        "Wohnsitz in Deutschland erforderlich und Englisch ist nicht erforderlich."
+    )
+    assert is_description_restricted(
+        "Kein Wohnsitz Österreich erforderlich aber Wohnsitz in Deutschland ist Pflicht."
+    )
+    assert is_description_restricted("Résidence en France requise mais l'expérience non requise.")
+    assert is_description_restricted(
+        "Résidence en France requise et l'expérience non requise pour ce poste."
+    )
+    # same-clause (conjunction-joined) genuine exemption still opens
+    assert not is_description_restricted(
+        "Wohnsitz in Deutschland nicht erforderlich und weltweit möglich."
+    )
+
+
+def test_r3_m3_exempt_gap_forms_worldwide_stay_open():
+    assert not is_description_restricted("Worldwide remote. Wohnsitz in Deutschland ist nicht zwingend.")
+    assert not is_description_restricted("Global remote. Wohnsitz in Deutschland ist hier nicht Pflicht.")
+    assert not is_description_restricted(
+        "Résidence en France non obligatoire pour ce poste, ouvert au monde entier."
+    )
+    assert not is_description_restricted(
+        "Poste ouvert au monde entier, résidence en France pas obligatoire."
+    )
+    assert not is_description_restricted("Worldwide. In Deutschland wohnen ist möglich.")
+    assert not is_description_restricted(
+        "Global remote. Wohnsitz in Deutschland möglich für alle Kandidaten."
+    )
+
+
+def test_r3_low2_wohnssitz_country_without_in_restricts():
+    assert is_description_restricted("Wohnsitz Deutschland erforderlich.")
+
+
+def test_r3_low3_title_path_localized_pins_restrict():
+    from src.models import is_title_restricted
+    assert is_title_restricted("Engineer – Remote, Wohnsitz in Deutschland")
+    assert is_title_restricted("Dev (Wohnsitz in Deutschland)")
