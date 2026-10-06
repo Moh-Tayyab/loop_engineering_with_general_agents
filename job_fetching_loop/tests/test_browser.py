@@ -104,3 +104,60 @@ def test_indeed_and_glassdoor_24h_filter_url():
 
     gd_url = GlassdoorScraper._SEARCH.format(kw="AI", days=days)
     assert "fromAge=1" in gd_url
+
+
+def test_launch_browser_loads_session_state_in_new_context():
+    from src.browser import launch_browser
+
+    mock_context = AsyncMock()
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+    mock_pw_inst = AsyncMock()
+    mock_pw_inst.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw_inst)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+    fake_session = {"cookies": [{"name": "test_cookie", "value": "val123"}]}
+
+    with patch("playwright.async_api.async_playwright", return_value=mock_cm), \
+         patch("src.session.load", return_value=fake_session):
+        async def _test():
+            async with launch_browser("test_source", persistent=False) as ctx:
+                assert ctx is mock_context
+
+        _run(_test())
+
+    assert mock_browser.new_context.call_count == 1
+    call_kwargs = mock_browser.new_context.call_args[1]
+    assert call_kwargs.get("storage_state") == fake_session
+
+
+def test_launch_browser_seeds_cookies_in_persistent_context():
+    from src.browser import launch_browser
+
+    mock_browser = AsyncMock()
+    mock_browser.add_cookies = AsyncMock()
+
+    mock_pw_inst = AsyncMock()
+    mock_pw_inst.chromium.launch_persistent_context = AsyncMock(return_value=mock_browser)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw_inst)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+    fake_cookies = [{"name": "auth", "value": "token"}]
+    fake_session = {"cookies": fake_cookies}
+
+    with patch("playwright.async_api.async_playwright", return_value=mock_cm), \
+         patch("src.session.load", return_value=fake_session):
+        async def _test():
+            async with launch_browser("test_source", persistent=True) as ctx:
+                assert ctx is mock_browser
+
+        _run(_test())
+
+    assert mock_browser.add_cookies.call_count == 1
+    assert mock_browser.add_cookies.call_args[0][0] == fake_cookies

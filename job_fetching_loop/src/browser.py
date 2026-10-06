@@ -169,9 +169,22 @@ async def launch_browser(
 
     async with async_playwright() as pw:
         launch_args = list(STEALTH_ARGS)
+        saved_state = None
+        try:
+            from src.session import load as load_session
+            saved_state = load_session(source)
+            if saved_state:
+                log.info("[%s] loaded active session state for browser context", source)
+        except Exception as exc:
+            log.debug("[%s] load session state error: %s", source, exc)
+
         if persistent:
             user_data_dir = _profile_dir(source)
             cfg.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(cfg.RUNTIME_DIR, 0o700)
+            except OSError:
+                pass
             use_channel = None if headless else channel
             try:
                 browser = await pw.chromium.launch_persistent_context(
@@ -195,6 +208,12 @@ async def launch_browser(
                     locale="en-US",
                     timezone_id="UTC",
                 )
+            if saved_state and isinstance(saved_state.get("cookies"), list):
+                try:
+                    await browser.add_cookies(saved_state["cookies"])
+                    log.debug("[%s] seeded %d session cookies into persistent context", source, len(saved_state["cookies"]))
+                except Exception as exc:
+                    log.debug("[%s] add_cookies error: %s", source, exc)
             try:
                 yield browser
             finally:
@@ -208,12 +227,16 @@ async def launch_browser(
                 args=launch_args,
                 channel=channel,
             )
-            context = await browser.new_context(
-                user_agent=fp["user_agent"],
-                viewport=fp["viewport"],
-                locale="en-US",
-                timezone_id="UTC",
-            )
+            context_kwargs = {
+                "user_agent": fp["user_agent"],
+                "viewport": fp["viewport"],
+                "locale": "en-US",
+                "timezone_id": "UTC",
+            }
+            if saved_state:
+                context_kwargs["storage_state"] = saved_state
+
+            context = await browser.new_context(**context_kwargs)
             try:
                 await context.add_init_script(STEALTH_INIT_SCRIPT)
                 yield context

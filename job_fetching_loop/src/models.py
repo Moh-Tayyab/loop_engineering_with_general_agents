@@ -607,6 +607,8 @@ def is_title_restricted(title: str | None) -> bool:
     for _pat in _LOCALIZED_RESIDENCY_PATTERNS:
         if re.search(_pat, t_norm):
             return True
+    if re.search(rf"\bwohnsitz\s+(?:(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*)?{_DE_LOCALITIES}\b", t_norm):
+        return True
     # Foreign domestic-only restrictions in title (US, UK, Canada, Europe, Germany, Poland, LATAM)
     # A4: extend to APAC/ME foreign markets that previously slipped ("India Only", "Japan Only").
     _title_only_countries = (
@@ -624,6 +626,16 @@ def is_title_restricted(title: str | None) -> bool:
     if re.search(rf"\b(?:{_title_only_countries}|eu|european|emirates)\s+candidates?\s+only\b", t_norm):
         return True
     if re.search(r"\b(?:us|usa|u\.s\.|uk|canada|eu|european|israel)\s+based\b", t_norm):
+        return True
+    if re.search(
+        rf"\b(?:must\s+reside\s+in|residen(?:ce|cy)\s+in)\s+(?:the\s+)?(?:{_title_only_countries})\b",
+        t_norm,
+    ):
+        return True
+    if re.search(
+        rf"\bresiden(?:ce|cy)\s+(?:in\s+(?:the\s+)?(?:{_title_only_countries})\s+)?(?:is\s+)?(?:required|mandatory)\b",
+        t_norm,
+    ):
         return True
     if re.search(r"\[(?:[^\]]*\b)?(?:us|usa|uk|canada|europe|germany|poland|latam|israel)[- ]only(?:\b[^\]]*)?\]", t_norm):
         return True
@@ -720,6 +732,8 @@ _DESCRIPTION_RESTRICTION_PATTERNS = [
     r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america|poland|japan|singapore|saudi|uae|australia|israel)\b",
     r"\bmust\s+be\s+in\s+the\s+(?:us|usa|united states|uk|europe|canada|japan|australia|israel)\b",
     r"\bmust\s+be\s+located\s+in\s+(?:the\s+)?(?:us|usa|united states|north america|canada|uk|europe|germany|latin america|poland|japan|singapore|saudi|uae|australia|israel)\b",
+    r"\bresiden(?:ce|cy)\s+(?:in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|europe|germany|france|poland|spain|italy|japan|singapore|australia|israel)\s+)?(?:is\s+)?(?:required|mandatory|essential|erforderlich)\b",
+    r"\bresiden(?:ce|cy)\s+in\s+(?:the\s+)?(?:us|usa|united states|uk|canada|eu|europe|germany|france|poland|spain|italy|japan|singapore|australia|israel)\b",
     r"\b(?:us|usa)\s+(?:citizenship|citizen|resident|residency|based|candidates?)\s+only\b",
     r"\b(?:us|usa|u\.s\.)\s+citizens?\s+or\s+permanent\s+residents?\b",
     r"\b(?:uk|canada|eu|european)\s+citizens?\s+or\s+permanent\s+residents?\b",
@@ -818,24 +832,29 @@ _DE_LOCALITIES = (
 
 _LOCALIZED_RESIDENCY_PATTERNS = [
     # DE: Wohnsitz / Wohnort / wohnen / Ansässigkeit / Aufenthalt
-    # `in`-prefix optional (LOW2): "Wohnsitz Deutschland erforderlich" (no
-    # article/preposition) previously leaked past every pattern.
-    rf"\bwohnsitz\s+(?:(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*)?{_DE_LOCALITIES}\b",
-    rf"\b(?:mit|ohne)\s+wohnsitz\s+{_DE_LOCALITIES}\b",
+    # Preposition form ("Wohnsitz in Deutschland")
+    rf"\bwohnsitz\s+(?:in|innerhalb\s+der|i\.?\s*d\.?)\s+{_DE_LOCALITIES}\b",
+    # Preposition-optional form ("Wohnsitz Deutschland") requires requirement phrasing
+    # to avoid false positives on questionnaire prompts or company location mentions (Beat 151 LOW2).
+    rf"\bwohnsitz\s+{_DE_LOCALITIES}\b[^.!?\n]{{0,40}}\b(?:erforderlich|pflicht|voraussetzung|zwingend|nötig|benötigt|notwendig|required|must)\b",
+    rf"\b(?:erforderlich|pflicht|voraussetzung|zwingend|nötig|benötigt|notwendig|required|must)\b[^.!?\n]{{0,40}}\bwohnsitz\s+{_DE_LOCALITIES}\b",
+    rf"\bmit\s+wohnsitz\s+(?:(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*)?{_DE_LOCALITIES}\b",
+    rf"\bohne\s+wohnsitz\s+(?:(?:in|innerhalb\s+der|i\.?\s*d\.?)\s*)?{_DE_LOCALITIES}\b",
     rf"\bwohnort\b[^.!?\n]{{0,40}}\b(?:in\s+)?{_DE_LOCALITIES}\b",
-    rf"\bin\s+{_DE_LOCALITIES}\s+wohnen\b",
+    rf"\b(?:in\s+{_DE_LOCALITIES}\s+wohnen|wohnen\s+in\s+{_DE_LOCALITIES})\b",
     # M2: country/locality required inside the SAME muss-living clause; `[^.!?\n]`
     # never bridges sentences. Umlaut forms: muss/musst/müssen/musste/mussten/müsste.
     # B2: includes major German cities/states (Berlin, Hamburg, NRW).
     # Round-2 (M3): living verbs extended to ansässig/leben for EN parity.
     rf"\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\b[^.!?\n]{{0,60}}\b(?:in\s+)?{_DE_LOCALITIES}\b[^.!?\n]{{0,40}}\b(?:wohnen|ansässig|leben)\b",
+    # Post-verb locality: "Bewerber müssen wohnen in Deutschland"
+    rf"\bm(?:u|ü)(?:ss|ß)(?:t|en|te|ten|st|sten)?\b[^.!?\n]{{0,60}}\b(?:wohnen|ansässig|leben)\b[^.!?\n]{{0,40}}\b(?:in\s+)?{_DE_LOCALITIES}\b",
     rf"\bansässig(?:keit|en)?\s+(?:in\s+)?{_DE_LOCALITIES}\b",
     r"\baufenthaltserlaubnis\s+(?:für|in)\s+(?:deutschland|germany)\b",
     # FR: résider / résidant / résidence / résidents / basé / domiciliation
-    r"\brésid(?:ant|erez)\s+en\s+france\b",
-    r"\brésider\s+en\s+france\b",
-    r"\brésidence\s+(?:en|dans)\s+france\b",
-    r"\brésident(?:e)?s?\s+en\s+france\b",
+    r"\brésid(?:ant|erez|er)\s+en\s+(?:france|europe)\b",
+    r"\brésidence\s+(?:en|dans\s+l'|dans\s+le|dans\s+la|dans)?\s*(?:france|europe|union\s+européenne|ue)\b",
+    r"\brésident(?:e)?s?\s+en\s+(?:france|europe)\b",
     r"\bbas[eé]e?s?\s+en\s+france\b",
     r"\bdomicilié(?:e)?\s+en\s+france\b",
     r"\bdomiciliation\s+en\s+france\b",

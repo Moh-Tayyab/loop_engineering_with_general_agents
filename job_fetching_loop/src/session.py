@@ -114,6 +114,10 @@ def save(source: str, state: dict, base_dir: Path | None = None) -> Path:
         raise TypeError("storage_state must be a dict")
     path = session_file(source, base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_name)
     try:

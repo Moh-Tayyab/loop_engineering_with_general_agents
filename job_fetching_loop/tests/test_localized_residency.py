@@ -308,3 +308,46 @@ def test_r3_low3_title_path_localized_pins_restrict():
     from src.models import is_title_restricted
     assert is_title_restricted("Engineer – Remote, Wohnsitz in Deutschland")
     assert is_title_restricted("Dev (Wohnsitz in Deutschland)")
+
+
+# ── Beat 152 (Production Hardening & Residual LOWs) ─────────────────────────
+
+def test_beat152_precision_wohnsitz_no_prep():
+    """Bare Wohnsitz + locality requires requirement phrasing so non-restrictive forms stay open."""
+    assert not is_description_restricted("Bitte geben Sie Ihren Wohnsitz Deutschland an.")
+    assert not is_description_restricted("Unser Standort: Wohnsitz Deutschland")
+    assert not is_description_restricted("Wohnsitz Deutschland Erfahrung von Vorteil.")
+    assert is_description_restricted("Wohnsitz Deutschland erforderlich.")
+    assert is_description_restricted("Wohnsitz Deutschland zwingend.")
+
+
+def test_beat152_german_post_verb_locality():
+    """müssen wohnen in <country> with post-verb locality must restrict."""
+    assert is_description_restricted("Bewerber müssen wohnen in Deutschland")
+    assert is_description_restricted("Sie müssen leben in Berlin")
+
+
+def test_beat152_french_europe_residency():
+    """FR residency expanded to Europe / EU."""
+    assert is_description_restricted("Résidence en Europe requise.")
+    assert is_description_restricted("Résidant en Europe uniquement.")
+
+
+def test_beat152_english_residency_in_description_and_title():
+    from src.models import is_title_restricted
+    assert is_description_restricted("Residence in Germany required.")
+    assert is_description_restricted("Residence in Europe required.")
+    assert is_title_restricted("AI Engineer (Must reside in Germany)")
+    assert is_title_restricted("Dev (Residence in Germany required)")
+    assert is_title_restricted("Staff ML Engineer (Must reside in Europe)")
+    assert is_title_restricted("Engineer (Wohnsitz Deutschland)")
+
+
+def test_beat152_negative_title_fixture():
+    """LOW1: Ensure fail-closed title scan never drops legitimate Worldwide/Global remote titles."""
+    from src.models import is_title_restricted
+    assert not is_title_restricted("Senior AI Engineer - Worldwide Remote")
+    assert not is_title_restricted("Staff ML Engineer (Remote, Work from Anywhere)")
+    assert not is_title_restricted("AI/ML Research Scientist - Global Remote")
+    assert not is_title_restricted("Full Stack Engineer - 100% Remote")
+

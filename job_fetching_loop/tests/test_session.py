@@ -113,9 +113,10 @@ def test_save_is_atomic_no_tmp_left(tmp_path):
 
 def test_save_file_is_owner_only_0600(tmp_path):
     # Checker R1 (PR #15): auth cookies must never be world-readable,
-    # regardless of the process umask (mkstemp forces 0600).
+    # regardless of the process umask (mkstemp forces 0600, parent dir 0700).
     path = session.save("indeed", _state(), base_dir=tmp_path)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
 # ── attempt_login: A1 automation-runner refusal ──────────────────────────────
