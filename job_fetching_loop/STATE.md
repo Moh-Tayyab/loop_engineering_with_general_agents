@@ -26,8 +26,8 @@
   renumber on merge)
 - **Date:** 2026-10-07
 - **Trigger:** schedule — weekday 9am morning triage loop
-- **Status:** **SHARED INFRA — checker-spawn fix ready, FROZEN (§7) pending verification.**
-  Task 14 root-caused: `checker.md` pinned the free-tier `mimo-v2.6-flash-free`, which the
+- **Status:** **SHARED INFRA — checker-spawn fix ready, ESCALATED (§7 freeze) pending
+  verification.** Task 14 root-caused: `checker.md` pinned the free-tier `mimo-v2.6-flash-free`, which the
   Actions runner rejects ("free tier can only be used from within OpenCode") — 3
   consecutive spawn failures today; explore control probe OK (subagent infra works).
   One-line fix (`opencode/big-pickle`, same as maker/main) on branch
@@ -41,7 +41,7 @@
 
 | Beat | Date | Trigger | Changes | Verdict |
 |:---:|:---:|:---|:---|:---|
-| 155 | 2026-10-07 | schedule heartbeat | Shared infra: task 14 root-caused (checker free-tier model rejected ×3 in runner; explore probe OK) → `checker.md` pin → `big-pickle` on branch `heartbeat-20261007-checker-model`; CI 403 gone (Actions API 200); test-gate on bot PRs = `action_required` (human approve); no job issues; job suite 413 green | **FROZEN (§7)** — branch pushed, no PR; next session re-verify spawn first |
+| 155 | 2026-10-07 | schedule heartbeat | Shared infra: task 14 root-caused (checker free-tier model rejected ×3 in runner; explore probe OK) → `checker.md` pin → `big-pickle` on branch `heartbeat-20261007-checker-model`; CI 403 gone (Actions API 200); test-gate on bot PRs = `action_required` (human approve); no job issues; job suite 413 green | **ESCALATED (§7 freeze)** — branch pushed, no PR; next session re-verify spawn first |
 | 153 | 2026-10-06 | user — fix indeed & glassdoor human behavior | Hardened stealth profile in persistent contexts; wired warm_up homepage lingering on Indeed/Glassdoor; human_click + read pauses; Turnstile checkbox auto-solve + storage_state save | **MAKER DONE** — 413 passed EXIT 0 |
 
 compressed at 2026-09-17: beats 26–62 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge, outage honesty, DLQ replay, salary/cron hardening, strict 24h cutoff, EPIPE shield, feed gate, timeout safety, canonical URL dedup).
@@ -85,6 +85,7 @@ recompressed at 2026-10-02 (beat 149, §9 cap): beats 126–130 merged (verdicts
 recompressed at 2026-10-02 (beat 150, §9 cap): beats 131–135 merged (verdicts kept).
 recompressed at 2026-10-02 (beat 151, §9 cap): PR #15 rows 126–135 + PR #13 rows 117–123 merged into 3 rows (verdicts kept); log back at the 20-row cap.
 recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beats summary (verdict kept: CHECKER REVIEWED 309 green).
+compressed at 2026-10-07 (beat 155, §9 cap 20): beats 117–128 folded (verdicts kept: 117–123 PR#13 maker cycle → CR×2 + FREEZE task 16; 124 maker done 318 → checker stalled 4× → FREEZE; 125 PASS — PR #13 merged `6e98459`; 126–128 `session.py` rework 1/2, 335 green).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
@@ -104,10 +105,6 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 | 136 | 2026-09-25 | user — verify & approve PR #15 | Checker pass on `731f934` (not authored by me): audited both guards, 342-test gate, 4 hand repros (bad `__str__`, circular, unserializable, CAPTCHA+secret scan); APPROVED verdict as review comment (self-approve blocked by GitHub) | **APPROVED** — **PR #15 merged `f1defd6` → Phase 1 LANDED**; Phase 2 next run |
 | 134–133 | 2026-09-25 | PR #15 final checker + human gate (§9 compress) | 134: probes found malformed `__str__` escaping CAPTCHA classification + non-JSON state escaping the OSError save guard → **CHANGES REQUESTED, human gate, rework 2/2**; 135 (user-approved): safe `str(exc)` + `(OSError, TypeError, ValueError)` save guard, +2 regressions; 133 (user Option a): `load()` catches `OverflowError` → unlink+None, non-finite expiries rejected, +3 regressions | **CR → MAKER DONE (342)** — PR #15 ready to land → merged `f1defd6` |
 | 132–129 | 2026-09-25 | PR #15 checker syncs + rework (§9 compress) | 132: re-review `c2321b3` (overflow still raised); 131: final `169fddb` (repro'd escape); 129: re-review `4aad984` — R1/R2 fixed, found non-UTF-8 raise + unguarded `save()` (**CR 2/2**); 130 (final rework): `read_bytes`+`except ValueError`, guarded `save()`, +2 regressions | **CHANGES REQUESTED — human gate** both cycles; rework bound 2/2 → human Option (a) → 133 landed the fix |
-| 128–126 | 2026-09-25 | PR #15 Phase 1 open + rework 1/2 (§9 compress) | 126: blueprint approved, `src/session.py` (atomic state, A1 cloud refusal, CAPTCHA fail-closed) +15 tests; 127: reviewed, 333-test gate + adversarial probes → **CR** (0644 save, `str(exc)` leak); 128: R1 `save()` 0644→`mkstemp` 0600 + `stat` regression, R2 login/load logs → class-name only + `caplog` regression | **MAKER DONE (rework 1/2)** — 335 passed EXIT 0; pushed for re-review |
-| 125 | 2026-09-25 | user — forwarded summary, Option 1 (merge PR #13 now) | Applied 2 CodeRabbit minors from 10:10 review: wfa guard admits `in world` (`(?:the\s+)?`); polish requirement-context patterns (`Polish required`, `Fluency in Polish required`); +2 asserts; cancelled stalled reviewer; merged | **PASS** — 318 passed + test-gate green on `e9d3ec7`; **PR #13 merged `6e98459`** (verdict waived by human, 4× infra stall); branch deleted |
-| 124 | 2026-09-25 | user — roadmap Steps 1–3 + "fix critical subset" | timeout 20→45 (`40664a8`); topology=github, secrets verified, 15 CR comments triaged; CodeRabbit crit ×5 (wfa-country, abbr finditer+isupper, APAC-tz lookbehind, polish context, dry-run ops-alert) +4 tests | **MAKER DONE** — 318 passed; checker blocked 4× (3×20m + 45m run stalled 09:20→kill) → **FREEZE (§7)**, `@Moh-Tayyab` pinged on PR #13 |
-| 123–117 | 2026-09-24/25 | PR #13 maker/checker cycle (§9 compress) | 123: markers-after-pins + foreign-hyphen/enumeration/bare-`X only` desc patterns (+2); 122: CR on 121 (US pin fail-open); 121: clause charset, locality tokens, finditer stop (+3); 120: CR on 119; 119: foreign-aware group-walk + `&` clause charset, `_utc_today` leak fix (**311**); 118: re-review of 117 → bound hit, human gate; 117: pin-gated group-walk + residency pins, +5 tests (**309**) | **MAKER DONE 309 → 314 CI-green**; CR ×2 (118, 120); reviewer cancelled 3× → **FREEZE (§7)** (task 16) |
 
 
 

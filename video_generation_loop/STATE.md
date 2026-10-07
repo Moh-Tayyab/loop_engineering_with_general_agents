@@ -22,8 +22,8 @@
   PRs #14/#17–#19/#21/#22/#26/#27/#28 — renumber on merge)
 - **Date:** 2026-10-07
 - **Trigger:** schedule — weekday 9am morning triage loop
-- **Status:** **FROZEN (§7) after 3 failed `checker` spawns — branches pushed, NO PRs.**
-  CLEAR FIX shipped for issue #4: `wrap_text(text, width=80)` + 26 tests on
+- **Status:** **ESCALATED (§7 freeze) after 3 failed `checker` spawns — branches pushed,
+  NO PRs.** CLEAR FIX shipped for issue #4: `wrap_text(text, width=80)` + 26 tests on
   `opencode/heartbeat-20261007-wraptext` (supersedes CONFLICTING PR #5). Local CI
   substitute (exact test-gate steps): root **149 passed**, trainer+video **300 passed**,
   job **413 passed EXIT=0**. Issue #6: PR #9 re-verified against main (**137 passed,
@@ -37,7 +37,7 @@
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
-| 34 | 2026-10-07 | schedule heartbeat | wrap_text (issue #4) + 26 tests on `heartbeat-20261007-wraptext` (supersedes conflicting #5); #6: #9 re-verified 137 green + 3/3 repros fixed, MERGEABLE → merge #9/close #7#8 = human; CI 403 gone; checker spawn failed ×3 (task 14) → freeze, no PRs; comments on #4/#6/PR#28 | **FROZEN (§7)** — 149/300/413 local green; branches pushed |
+| 34 | 2026-10-07 | schedule heartbeat | wrap_text (issue #4) + 26 tests on `heartbeat-20261007-wraptext` (supersedes conflicting #5); #6: #9 re-verified 137 green + 3/3 repros fixed, MERGEABLE → merge #9/close #7#8 = human; CI 403 gone; checker spawn failed ×3 (task 14) → freeze, no PRs; comments on #4/#6/PR#28 | **ESCALATED (§7 freeze)** — 149/300/413 local green; branches pushed |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
