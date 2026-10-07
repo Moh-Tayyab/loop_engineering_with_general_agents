@@ -22,15 +22,26 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 153 — Human-like stealth & evasion for Indeed & Glassdoor (Maker)
-- **Date:** 2026-10-06
-- **Trigger:** user — fix indeed and glassdoor to act like a human and avoid bot detection
-- **Status:** **MAKER DONE — 413 passed EXIT 0.** Hardened stealth fingerprinting in `src/browser.py` (`window.chrome`, `navigator.plugins`, `mimeTypes`, WebGL unmasking, permissions); injected stealth init script into persistent contexts; wired `warm_up` homepage lingering and `human_click` on `pk.indeed.com` and `glassdoor.com`; upgraded Turnstile checkbox element coordinates and auto-saved `storage_state` upon clearance.
+- **Beat #:** 155 (heartbeat 2026-10-07; beat 154 exists only on unmerged PR #28 —
+  renumber on merge)
+- **Date:** 2026-10-07
+- **Trigger:** schedule — weekday 9am morning triage loop
+- **Status:** **SHARED INFRA — checker-spawn fix ready, FROZEN (§7) pending verification.**
+  Task 14 root-caused: `checker.md` pinned the free-tier `mimo-v2.6-flash-free`, which the
+  Actions runner rejects ("free tier can only be used from within OpenCode") — 3
+  consecutive spawn failures today; explore control probe OK (subagent infra works).
+  One-line fix (`opencode/big-pickle`, same as maker/main) on branch
+  `opencode/heartbeat-20261007-checker-model` — pushed, **no PR** (checker gate +
+  session-start config caching makes it unverifiable this session). No job-loop issues
+  open. CI 403 gone (Actions API all 200); bot-authored PR test-gate runs sit
+  `action_required` → maintainer approval needed. Main green ×2 (10-06); job suite
+  **413 passed EXIT=0** locally.
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Changes | Verdict |
 |:---:|:---:|:---|:---|:---|
+| 155 | 2026-10-07 | schedule heartbeat | Shared infra: task 14 root-caused (checker free-tier model rejected ×3 in runner; explore probe OK) → `checker.md` pin → `big-pickle` on branch `heartbeat-20261007-checker-model`; CI 403 gone (Actions API 200); test-gate on bot PRs = `action_required` (human approve); no job issues; job suite 413 green | **FROZEN (§7)** — branch pushed, no PR; next session re-verify spawn first |
 | 153 | 2026-10-06 | user — fix indeed & glassdoor human behavior | Hardened stealth profile in persistent contexts; wired warm_up homepage lingering on Indeed/Glassdoor; human_click + read pauses; Turnstile checkbox auto-solve + storage_state save | **MAKER DONE** — 413 passed EXIT 0 |
 
 compressed at 2026-09-17: beats 26–62 all PASS (prod-readiness, spine split, schedule, heartbeat, lock watchdog, weekly retry, volume scaling, scaffolds purge, outage honesty, DLQ replay, salary/cron hardening, strict 24h cutoff, EPIPE shield, feed gate, timeout safety, canonical URL dedup).
@@ -132,14 +143,29 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 11. ~~**(Beat 110, ESCALATED)**~~ Done Beat 111 (PASS); **committed+pushed Beat 112.** External WIP still parked in `/tmp/opencode/b11*_wip*` (Dockerfile, docker-compose, .github workflows, config/linkedin drift) — decide restore vs drop.
 12. **(Beat 112–113, HUMAN)** Open gaps: (a) ~~PR `job-fetching-loop→main`~~ **DONE Beat 125 — PR #13 merged `6e98459`**; (b) restore-or-drop parked external WIP `/tmp/opencode/b11*_wip*`; (c) Indeed/Glassdoor CAPTCHA once; (d) weekly human spot-check (task 9); (e) ~~confirm Actions schedule~~ resolved Beat 124: `JOB_LOOP_PRIMARY=github` (cloud primary, cron 08:00 PKT weekdays).
 13. ~~**(Beat 122, HUMAN, PR #13)**~~ **Fixed Beat 123 (user-authorized):** (A) target-marker exception moved below all hard US pins in `_is_us_restricted` — marker'd text with a real pin now restricts (daily+digest); (B) `is_description_restricted` gained sole-foreign-hyphen, foreign-only-enumeration, and bare `X only` patterns. 314 tests green; awaiting Checker re-review on PR #13.
-14. **(Beat 116–118, SHARED INFRA — STILL OPEN)** `checker` subagent spawn: Beat 116 updated `.opencode/agent/checker.md` to `opencode/mimo-v2.6-flash-free`, but a real spawn on 2026-09-24 still fails in the Actions runner ("OpenCode's free tier can only be used from within OpenCode"). Beat 118 Checker pass ran in-main. Needs a runner-side model/creds fix before the next maker→checker cycle.
+14. **(Beat 116–118 → 155, SHARED INFRA — fix ready, verify next session)** `checker`
+    subagent spawn: Beat 116 pinned `mimo-v2.6-flash-free`, still fails in the Actions
+    runner (2026-10-07: 3 consecutive "free tier can only be used from within OpenCode";
+    explore control probe OK → infra fine, model pin = blocker; config loads at session
+    start, so the fix is unverifiable mid-session). **Fix on branch
+    `opencode/heartbeat-20261007-checker-model`** (pin → `opencode/big-pickle`, same as
+    maker/main). Next session: spawn `checker` FIRST — works → grade open branches +
+    unblock maker–checker; still fails → human: model/creds decision (try non-free model
+    or run checker outside Actions).
 15. **Proposed durable lesson (human approval):** Evaluate explicit Worldwide/APAC markers only after hard residency-pin detection; add mixed-marker and foreign-city/country-only regressions. (Implemented Beat 123; approve for AGENTS.md §11.)
 16. ~~**(Beat 124, HUMAN, shared infra)**~~ **MOSTLY RESOLVED Beats 127+129:** autonomous reviewer **completed twice in a row on PR #15** (11:17Z CR with real findings; 11:46Z re-review verifying R1/R2 fixed) — 45-min timeout (Beat 124 fix) + no stall on either attempt; PR #13's 4× failures look transient/first-run. Keep watching (stall signature: 32-min silence + orphan playwright — `gh run view 36116678518 --log`). Still open: CodeRabbit comment-runs spawning `opencode` noise jobs (2× fast-fail 11:33Z on this PR), and `checker` subagent spawn (task 14). Verdict-waiver precedent applies only to PR #13 (human Option 1).
 17. **(Next beat, Mon 2026-09-28 — cloud watchdog):** first weekday cron on **merged `main`** (checkout is default ref, so Monday uses Beat 104–125 code) — verify `gh run list --workflow=job-loop-cron.yml`, `.slc/state.json` advanced, Telegram digest landed, then task-9 spot-check (5 jobs, Rule 11 fidelity, live URLs). **Observed schedule latency:** cron is `0 3 * * 1-5` (03:00Z/08:00 PKT intended) but Sep 24/25 runs were created ~08:20–08:42Z (GitHub queue delay → digest ~13:30 PKT); if the delay persists and 08:00 PKT delivery matters, human decision: accept or shift cron earlier.
 18. ~~**(Approved blueprint — remaining phases, amendments A2–A6):**~~ **ALL PHASES LANDED:** Phase 1 (`f1defd6`), Phase 2 (`842223b`), Phase 3 (`e415d52`), Phase 4 (`0d4033c`), Phase 5 (`d2684c9`), and **Phase 2b completed Beat 152** (`session.load()` storage_state wired into `launch_browser` context creation + persistent cookie seeding + `.runtime/` 0700 mode).
 19. ~~**(Beat 139→140 — adversarial model block)**~~ **RESOLVED Beat 143:** model fix published to main (`4e5d38f`), adversarial job ran (later cancelled by the merged cycle), **PR #16 MERGED `842223b` (Phase 2 landed)**, and the `[bot]` comment-trigger guard landed as `7fd4d3c` so CodeRabbit/github-actions comments no longer spawn permission-error runs. In-session `checker` subagent spawn still gated (task 14).
 20. ~~**(Beat 147, PR #20 A3 — ESCALATED, awaiting human decision):**~~ **RESOLVED Beats 148 & 151:** Option A approved, PR #20 merged (`e415d52`), and PR #25 merged (`778ee5c`).
-21. ~~**(Beat 151, PR #25 follow-ups — open, non-blocking):**~~ **RESOLVED Beat 152:** (a) title-path EN pins `must reside in` / `residence in` and description-path `Residence in Germany required` covered; (b) German post-verb locality `müssen wohnen in` and French European `Résidence en Europe` covered; (c) bare `Wohnsitz <locality>` guarded by requirement-phrasing check so questionnaire and Standort frames stay open; (d) negative title fixtures locked (LOW1). 413 tests green.
+21. ~~**(Beat 151, PR #25 follow-ups — open, non-blocking):**~~ **RESOLVED Beat 152:** (a) title-path EN pins `must reside in` / `residence in` and description-path `Residence in Germany required` covered; (b) German post-verb locality `müssen wohnen in` and French European `Résidence en Europe` covered; (c) bare `Wohnsitz <locality>`     guarded by requirement-phrasing check so questionnaire and Standort frames stay open; (d) negative title fixtures locked (LOW1). 413 tests green.
+22. **(Beat 155, shared CI — HUMAN)** CI-blindness is **GONE**: `gh run list
+    --workflow=test-gate.yml`, `gh run view`, `gh api …/actions/workflows` all return 200
+    from the runner (2026-10-07; yesterday's 403 did not reproduce — no `opencode.yml`
+    edit needed unless it recurs). Remaining gap: test-gate runs on **bot-authored PRs**
+    conclude `action_required` with zero jobs → **maintainer approves the run in the
+    Actions UI** (human-authored PRs run normally, PR #25 pattern). Stale schedule PRs to
+    merge-or-close (keep one record): #12/#14/#17/#18/#19/#21/#22/#26/#27/#28.
 
 ## 11. Human Gate Decisions (job loop)
 
