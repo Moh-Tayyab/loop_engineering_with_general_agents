@@ -17,5 +17,6 @@ venv/
 
 # runtime + loop artifacts (agentic-loop convention)
 loop.log
+manual_todo.txt
 .agents/
 skills-lock.json

@@ -19,7 +19,7 @@ level up. A task inside this loop touches only this loop's spine.
   paid Google Flow generation → ffmpeg merge+eval → 4-platform post package → YouTube
   private scheduled upload.
 - **Layout:** `src/` (main, config, state, flow_automation, gemini_web, planner_templates,
-  video_upload, flow_clipper, merger, evaluator, poster), `tests/` (151 tests),
+  video_upload, flow_clipper, merger, evaluator, poster), `tests/` (202 tests),
   `references/` (presenter images), `docs/PRODUCTION_RUNBOOK.md`, `.slc/` runtime state.
 - **Runtime state lives in `.slc/`** (state.json, uploaded.json, clip_attempts) — never commit.
 

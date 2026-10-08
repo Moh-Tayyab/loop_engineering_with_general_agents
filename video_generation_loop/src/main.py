@@ -440,43 +440,57 @@ def _run_real_locked(state: st.LoopState, args: argparse.Namespace) -> int:
         )
 
     clips_dir = day_dir / "clips"
-    clips_dir.mkdir(parents=True, exist_ok=True)
 
     # Money-safety preflight: any presenter reference must exist BEFORE the
     # first browser opens — a missing image surfaces here, never after credits
     # were spent generating earlier scenes.
     _preflight_references(sb)
 
-    clip_paths: list[Path] = []
-    try:
-        for scene in sb.scenes:
-            clip_path = clips_dir / f"clip_{scene.number:02d}.mp4"
-            if clip_path.exists() and clip_path.stat().st_size > 0:
-                print(f"[reuse] {clip_path.name} (already downloaded)")
+    if cfg.extend_mode():
+        # Extend mode: ONE continuous scene grown in Flow's scene editor and
+        # downloaded once (no per-clip downloads, no ffmpeg concat).
+        final_path = day_dir / "final.mp4"
+        try:
+            _generate_extend_chain(sb, final_path, day_state, state)
+        except RuntimeError:
+            return 1
+        # Veo clips are fixed-length, so the chain always lands on the
+        # smallest clip multiple >= target (60 -> 64s); gate on THAT length,
+        # otherwise any target ≡ 1-2 (mod clip) fails eval after paying.
+        from src.flow_automation import expected_final_s
+
+        expected_s = expected_final_s(cfg.extend_target_s(), cfg.clip_duration_s())
+    else:
+        clips_dir.mkdir(parents=True, exist_ok=True)
+        clip_paths: list[Path] = []
+        try:
+            for scene in sb.scenes:
+                clip_path = clips_dir / f"clip_{scene.number:02d}.mp4"
+                if clip_path.exists() and clip_path.stat().st_size > 0:
+                    print(f"[reuse] {clip_path.name} (already downloaded)")
+                    clip_paths.append(clip_path)
+                    continue
+                _generate_one(scene, clip_path, day_state, state)
                 clip_paths.append(clip_path)
-                continue
-            _generate_one(scene, clip_path, day_state, state)
-            clip_paths.append(clip_path)
-            state.mark_clip_done(day_state, clip_path.name)
-            state.save()
-    except RuntimeError:
-        # _generate_one exhausted its retry budget and _esc_relay already
-        # called finish_day(ok=False) + block_topic + state.save().  The
-        # day is durably failed; propagate so the caller sees a non-zero exit
-        # without calling die() (which would leave state in limbo).
-        return 1
+                state.mark_clip_done(day_state, clip_path.name)
+                state.save()
+        except RuntimeError:
+            # _generate_one exhausted its retry budget and _esc_relay already
+            # called finish_day(ok=False) + block_topic + state.save().  The
+            # day is durably failed; propagate so the caller sees a non-zero exit
+            # without calling die() (which would leave state in limbo).
+            return 1
 
-    final_path = day_dir / "final.mp4"
-    print("[merge] concatenating clips with ffmpeg ...")
-    try:
-        merger.concat_clips(clip_paths, final_path)
-    except Exception as exc:  # noqa: BLE001 - escalate to human, don't spin
-        state.finish_day(day_state, ok=False, error=f"merge: {exc}")
-        cfg.die(f"merge failed: {exc}")
+        final_path = day_dir / "final.mp4"
+        print("[merge] concatenating clips with ffmpeg ...")
+        try:
+            merger.concat_clips(clip_paths, final_path)
+        except Exception as exc:  # noqa: BLE001 - escalate to human, don't spin
+            state.finish_day(day_state, ok=False, error=f"merge: {exc}")
+            cfg.die(f"merge failed: {exc}")
+        expected_s = SCENES * cfg.clip_duration_s()
 
-    check = merger.evaluate_final(
-        final_path, expected_s=SCENES * cfg.clip_duration_s()
-    )
+    check = merger.evaluate_final(final_path, expected_s=expected_s)
     if not check["ok"]:
         state.finish_day(day_state, ok=False, error=f"eval: {check}")
         cfg.die(f"final video failed evaluation: {check}")
@@ -529,6 +543,85 @@ def _generate_one(scene, clip_path: Path, day_state: st.DayState, state: st.Loop
     raise RuntimeError(
         f"clip {scene.number} exceeded retry budget (day {day_state.day})"
     )
+
+
+def _generate_extend_chain(sb, final_path: Path, day_state: st.DayState, state: st.LoopState) -> None:
+    """Extend-mode day driver: build ONE continuous video via Flow's Extend
+    feature (scene prompts as continuation prompts, padded to the target
+    duration) and download a single final.mp4. Same bounded-retry contract as
+    _generate_one: the per-clip ledger keys on final.mp4, escalates at
+    MAX_CLIP_ATTEMPTS, and never re-runs a day that already burned its budget."""
+    from src.flow_automation import (
+        FlowAutomationError,  # noqa: F401 - exception type used implicitly by callers
+        FlowClipper,
+        extend_plan,
+        validate_reference_image,
+    )
+
+    day_dir = final_path.parent
+    key = final_path.name
+    target_s = cfg.extend_target_s()
+    clip_s = cfg.clip_duration_s()
+    progress_path = day_dir / "extend_progress.json"
+    try:
+        prompts = extend_plan(
+            [scene.flow_prompt for scene in sb.scenes], target_s, clip_s
+        )
+        # Segment 1 is a presenter scene in the template storyboard; resolve
+        # its reference image up front (preflight already validated existence).
+        raw_ref = None
+        if sb.scenes and sb.scenes[0].needs_presenter and sb.scenes[0].reference_image:
+            candidate = Path(sb.scenes[0].reference_image)
+            if not candidate.is_absolute() and not candidate.exists():
+                candidate = (
+                    Path(__file__).resolve().parent.parent
+                    / "references" / sb.scenes[0].reference_image
+                )
+            raw_ref = str(candidate)
+        ref = validate_reference_image(raw_ref)
+    except Exception as exc:  # noqa: BLE001 - setup error: close the day loudly
+        # Not a paid retry (no ledger burn, no topic block): finish the day
+        # failed and surface as RuntimeError so the caller exits non-zero
+        # instead of leaving state in_progress with a raw traceback.
+        state.finish_day(day_state, ok=False, error=f"extend setup: {exc}")
+        raise RuntimeError(f"extend setup failed (day {day_state.day}): {exc}") from exc
+
+    print(f"[extend] {len(prompts)} segments -> {target_s}s target (single final download)")
+    for attempt in range(1, MAX_CLIP_ATTEMPTS + 1):
+        # Durable gate: a chain that already burned its budget (before a
+        # crash) must never be silently re-run — every retry costs credits.
+        if day_state.clip_attempts.get(key, 0) >= MAX_CLIP_ATTEMPTS:
+            break
+        try:
+            with FlowClipper() as clipper:
+                clipper.generate_extended_video(
+                    prompts,
+                    final_path,
+                    target_s=target_s,
+                    clip_s=clip_s,
+                    reference_image=ref,
+                    progress_path=progress_path,
+                    day=day_state.day,
+                )
+            assert final_path.exists() and final_path.stat().st_size > 0
+            day_state.clip_succeeded(key)
+            state.save()
+            return
+        except Exception as exc:  # noqa: BLE001 - budget-bounded, escalate at cap
+            made = day_state.clip_failed(key)
+            state.save()  # durable: the per-clip attempt ledger survives crashes
+            print(f"[warn] extend chain attempt {made}/{MAX_CLIP_ATTEMPTS} failed: {exc}")
+            if made >= MAX_CLIP_ATTEMPTS:
+                _esc_relay(day_state, state, exc)
+                raise RuntimeError(
+                    f"extend chain exceeded retry budget (day {day_state.day})"
+                ) from exc
+    # durable cap (crash between attempts): escalate without touching the chain again
+    _esc_relay(
+        day_state, state,
+        RuntimeError("extend chain left over from prior failed attempts"),
+    )
+    raise RuntimeError(f"extend chain exceeded retry budget (day {day_state.day})")
 
 
 if __name__ == "__main__":

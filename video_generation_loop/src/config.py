@@ -94,6 +94,38 @@ def clip_duration_s() -> int:
         return 8
 
 
+def extend_mode() -> bool:
+    """True when a day's video is built with Flow's Extend feature — one
+    continuous scene grown 8s at a time and downloaded ONCE — instead of the
+    legacy per-scene clips + ffmpeg concat. Default OFF (env-gated) so the
+    proven per-clip path and its tests stay untouched; production .env opts in.
+    Override with FLOW_EXTEND_MODE=1."""
+    return os.environ.get("FLOW_EXTEND_MODE", "").strip().lower() in ("1", "true", "yes")
+
+
+def extend_target_s() -> int:
+    """Target duration for an extend-built final video (seconds).
+
+    Veo 3.1 clips are 8s, so the real length is the smallest multiple of
+    clip_duration_s() that reaches this target (60 -> 64s) — the final
+    evaluator gates on that rounded-up multiple (±5s), not on this raw
+    target and not on SCENES*clip_duration_s.
+    Clamped to 8..96s so a fat-fingered env can never queue dozens of paid
+    extends. Override with FLOW_TARGET_DURATION_S."""
+    raw = os.environ.get("FLOW_TARGET_DURATION_S", "60").strip()
+    try:
+        target = int(raw)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"[config] FLOW_TARGET_DURATION_S must be a number, got {raw!r}"
+        ) from None
+    if not 8 <= target <= 96:
+        raise SystemExit(
+            f"[config] FLOW_TARGET_DURATION_S must be 8..96 seconds, got {target}"
+        )
+    return target
+
+
 def browser_profile_dir() -> Path:
     return Path(os.environ.get("FLOW_PROFILE_DIR", str(BROWSER_PROFILE_DIR)))
 

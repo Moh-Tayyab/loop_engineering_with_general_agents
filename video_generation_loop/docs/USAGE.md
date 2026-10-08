@@ -103,10 +103,19 @@ FLOW_HEADLESS=0 .venv/bin/python -m src.main
 > doc. Unscreened output either fails (`--strict`) or degrades to the
 > deterministic template — never a paid generation with unscreened content.
 
+> **Extend mode** (`FLOW_EXTEND_MODE=1`, set in this repo's `.env`): the day is
+> built as **ONE Flow scene** — the storyboard prompts are chained through the
+> scene editor's **Extend** feature (Veo 3.1 Lite, +8s per continuation until
+> `FLOW_TARGET_DURATION_S`, 60 → 64s) and downloaded **once** as `final.mp4`.
+> No per-clip downloads, no ffmpeg concat; each extend re-opens the credit
+> gate, and a crash resumes from `output/day_NN/extend_progress.json`.
+> `FLOW_EXTEND_MODE=0` restores the legacy 6×8s clips + concat path.
+
 Outputs land in `output/day_NN/`:
 - `storyboard.json` — the 6-scene plan (template or Gemini)
-- `clips/clip_01..06.mp4` — raw Flow downloads (reused on resume)
-- `final.mp4` — merged ~60s video
+- `clips/clip_01..06.mp4` — raw Flow downloads (legacy mode only; reused on resume)
+- `extend_progress.json` — extend-mode resume file (segment counter + scene URL)
+- `final.mp4` — the finished ~60s video (concatenated, or extend-built)
 - `caption_{tiktok,instagram_reels,facebook,youtube_shorts}.txt` — ready captions
 - `post.json` — machine-readable package manifest
 
@@ -230,7 +239,7 @@ Add to cron (daily 18:00 PKT = 13:00 UTC):
 .venv/bin/python -m pytest
 ```
 
-**144 tests** in this repo (`src/planner.py`, `src/gemini_web.py`, `src/state.py`,
+**202 tests** in this repo (`src/planner.py`, `src/gemini_web.py`, `src/state.py`,
 `src/youtube_upload.py`, `src/main.py --dry-run` preflight capture, Flow automation
 capture, YouTube upload error contract incl. post-commit-failure recovery),
 all runnable without network/keys (template planner + mocked ffmpeg + mocked

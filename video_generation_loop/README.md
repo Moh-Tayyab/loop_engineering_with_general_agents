@@ -41,5 +41,5 @@ Full instructions: [`docs/USAGE.md`](docs/USAGE.md). Outputs → `output/day_NN/
 - `course/topics.json` — the 15 crash-course concepts (editable queue)
 - `src/` — state, planner (template default, Gemini optional), Flow automation,
   merge/evaluate, post package, orchestrator
-- `tests/` — 49 pytest cases (no network/keys needed)
+- `tests/` — 202 pytest cases (no network/keys needed)
 - `.slc/state.json` — resume-safe run state (gitignored)

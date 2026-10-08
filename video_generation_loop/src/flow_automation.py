@@ -14,10 +14,15 @@ Only imported when a browser run is requested (keeps --dry-run dependency-free).
 """
 from __future__ import annotations
 
+import json
+import math
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 import src.config as cfg
 import src.merger as merger
@@ -46,6 +51,15 @@ DOWNLOAD_HINTS = [
     "[title*='Download' i]:visible",
     "a[download]:visible",
     "button:has-text('Save'):visible",
+]
+# The project grid renders finished scenes as a poster tile (alt 'Generated
+# video thumbnail'), NOT as a <video> element (live-verified Sep 2026: zero
+# video nodes on the project page even after a completed 8s generation).
+# This is what a done-but-undetected generation looks like — detection must
+# count it, otherwise `_wait_until_finished` waits out the full 900s budget.
+RESULT_THUMB_HINTS = [
+    "img[alt='Generated video thumbnail']:visible",
+    "img[alt*='Generated video' i]:visible",
 ]
 # Flow "Characters" presenter pipeline (MCP-verified Sep 2026, live PRO account):
 # Flow's consistent-presenter mechanism is the Characters feature, NOT a raw
@@ -105,6 +119,192 @@ APPROVAL_SCOPES = [
 # and re-download (never re-generate) this many times before giving up.
 REDOWNLOAD_RETRIES = 2
 
+# --- Extend mode (one continuous scene, single download) -----------------------
+# Flow's "Extend" grows a scene by one 8s Veo 3.1 segment per continuation
+# prompt; the scene editor's top-bar "Download media" then saves the WHOLE
+# chain as one MP4 — no per-clip downloads, no ffmpeg concat.
+# Filler prompt for segments beyond the storyboard (target 60s needs 8
+# segments; a 6-scene storyboard only supplies 6).
+CONTINUE_PROMPT = (
+    "Continue the same scene seamlessly from where the previous clip ends — "
+    "same setting, same lighting, camera style, pacing and on-screen text "
+    "overlays; keep the same characters and narration style."
+)
+# Resume-file schema for output/$DAY/extend_progress.json.
+EXTEND_PROGRESS_SCHEMA = 1
+# Hard cap on segments per chain: a config typo must never queue dozens of
+# paid extends (60s target at 8s clips = 8 segments; 16 is generous slack).
+EXTEND_MAX_SEGMENTS = 16
+
+
+def parse_duration_timecode(text: str | None) -> int | None:
+    """Seconds from Flow's scene-editor duration timecode.
+
+    Live-verified format is MM:SS:FF (an 8s scene shows ``00:08:00``; with a
+    pending extend slot ``00:16:00``), so seconds = field0*60 + field1 and
+    the frame field is ignored. A two-field value is treated as MM:SS.
+    Unparseable input returns None — the caller decides whether that is fatal
+    (pure seam, unit-tested without a browser)."""
+    if not text:
+        return None
+    parts = [p.strip() for p in str(text).strip().split(":")]
+    if len(parts) not in (2, 3):
+        return None
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if any(n < 0 for n in nums):
+        return None
+    minutes, seconds = nums[0], nums[1]
+    if seconds >= 60:
+        return None
+    return minutes * 60 + seconds
+
+
+def expected_final_s(target_s: int, clip_s: int) -> int:
+    """Duration the extend-built final is EXPECTED to land on: the smallest
+    clip multiple >= target (Veo clips are fixed-length — 60s at 8s -> 64s).
+    Shared by the generator's already-complete short-circuit and main.py's
+    final evaluation, so both gate on the SAME number (pure seam)."""
+    if clip_s <= 0 or target_s <= 0:
+        raise ValueError(f"target_s/clip_s must be positive, got {target_s!r}/{clip_s!r}")
+    return math.ceil(int(target_s) / int(clip_s)) * int(clip_s)
+
+
+def extend_plan(scene_prompts: list[str], target_s: int, clip_s: int) -> list[str]:
+    """Full ordered prompt list for an extend-built video — one entry per
+    segment (entry 0 = the initial generation, entry i = continuation for
+    segment i+1).
+
+    Segments needed is ceil(target_s / clip_s) (Veo clips are fixed-length,
+    so a 60s target at 8s = 8 segments = 64s). Storyboard scene prompts fill
+    the earliest segments in order; once they run out, CONTINUE_PROMPT pads
+    to the target. Pure seam, unit-tested without a browser."""
+    try:
+        target_s = int(target_s)
+        clip_s = int(clip_s)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"target_s/clip_s must be integers, got {target_s!r}/{clip_s!r}"
+        ) from exc
+    if clip_s <= 0:
+        raise ValueError(f"clip_s must be positive, got {clip_s!r}")
+    if target_s <= 0:
+        raise ValueError(f"target_s must be positive, got {target_s!r}")
+    if not scene_prompts:
+        raise ValueError("scene_prompts must not be empty (segment 1 needs a prompt)")
+    if any(not str(p).strip() for p in scene_prompts):
+        raise ValueError("scene_prompts contains a blank prompt")
+    segments = max(1, math.ceil(target_s / clip_s))
+    plan = list(scene_prompts[:segments])
+    while len(plan) < segments:
+        plan.append(CONTINUE_PROMPT)
+    return plan
+
+
+def write_extend_progress(path: Path, data: dict) -> None:
+    """Atomically persist the extend-chain resume file (temp file + rename,
+    same contract as state.save(): a crash never leaves a half-written JSON)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(data)
+    payload["schema_version"] = EXTEND_PROGRESS_SCHEMA
+    payload["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, str(path))
+    finally:
+        if Path(tmp).exists():
+            Path(tmp).unlink()
+
+
+def read_extend_progress(path: Path | None) -> dict | None:
+    """Load the extend-chain resume file; None when it does not exist.
+
+    Money safety: a corrupt, newer-than-supported, or structurally invalid
+    file RAISES instead of returning None — a silent restart would generate a
+    fresh project and re-spend credits the previous run already paid for.
+    Returns a normalised dict (missing optional fields defaulted)."""
+    if path is None:
+        return None
+    p = Path(path)
+    if not p.exists():
+        return None
+    bad = lambda why: FlowAutomationError(  # noqa: E731 - one-line raiser
+        f"extend progress file is unusable ({why}) — refusing to risk a double "
+        f"generation; inspect or delete {p} manually"
+    )
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise bad(str(exc)) from exc
+    if not isinstance(raw, dict):
+        raise bad("not a JSON object")
+    try:
+        schema = int(raw.get("schema_version", EXTEND_PROGRESS_SCHEMA))
+    except (TypeError, ValueError):
+        raise bad(f"non-integer schema_version: {raw.get('schema_version')!r}") from None
+    if schema > EXTEND_PROGRESS_SCHEMA:
+        raise bad(f"schema v{schema} written by a newer build (supports v{EXTEND_PROGRESS_SCHEMA})")
+    project_url = str(raw.get("project_url") or "")
+    edit_url = str(raw.get("edit_url") or "")
+    if not project_url and not edit_url:
+        raise bad("no project_url/edit_url")
+    try:
+        segments_done = int(raw.get("segments_done", -1))
+        duration_s = int(raw.get("duration_s", -1))
+        target_s = int(raw.get("target_s", 0))
+        clip_s = int(raw.get("clip_s", 0))
+    except (TypeError, ValueError) as exc:
+        raise bad(f"non-integer counter field ({exc})") from None
+    day_raw = raw["day"] if "day" in raw else 0  # default ONLY on missing key
+    try:
+        day = int(day_raw)
+    except (TypeError, ValueError):
+        raise bad(f"non-integer day: {day_raw!r}") from None
+    pending_raw = raw.get("pending_extend", False)
+    if isinstance(pending_raw, bool):
+        pending = pending_raw
+    elif pending_raw in (0, 1):
+        pending = bool(pending_raw)
+    elif isinstance(pending_raw, str):
+        # bool("false") would be True — accept ONLY explicit tokens; a typo
+        # in this flag is exactly what the segment-1 double-pay guard keys on.
+        token = pending_raw.strip().lower()
+        if token not in ("1", "true", "yes", "0", "false", "no"):
+            raise bad(f"bad pending_extend value: {pending_raw!r}")
+        pending = token in ("1", "true", "yes")
+    else:
+        raise bad(f"bad pending_extend value: {pending_raw!r}")
+    if segments_done < 0 or duration_s < 0 or target_s <= 0 or clip_s <= 0:
+        raise bad(
+            f"counters out of range (segments_done={segments_done}, "
+            f"duration_s={duration_s}, target_s={target_s}, clip_s={clip_s})"
+        )
+    prompts = raw.get("prompts")
+    if (
+        not isinstance(prompts, list)
+        or not prompts
+        or not all(isinstance(x, str) and x.strip() for x in prompts)
+    ):
+        raise bad("prompts missing or not a list of non-empty strings")
+    return {
+        "schema_version": schema,
+        "day": day,
+        "project_url": project_url,
+        "edit_url": edit_url,
+        "segments_done": segments_done,
+        "duration_s": duration_s,
+        "target_s": target_s,
+        "clip_s": clip_s,
+        "pending_extend": pending,
+        "prompts": [str(x) for x in prompts],
+        "ts": str(raw.get("ts") or ""),
+    }
+
 
 def _approval_candidates() -> list[tuple[str, str]]:
     """(scope, selector) pairs tried in click order while approving credits.
@@ -121,18 +321,24 @@ def _approval_candidates() -> list[tuple[str, str]]:
 
 
 def _is_generation_finished(
-    *, has_stop: bool, vids: int, has_download: bool, has_done_btn: bool
+    *,
+    has_stop: bool,
+    vids: int,
+    has_download: bool,
+    has_done_btn: bool,
+    has_result_thumb: bool = False,
 ) -> bool:
     """Completion predicate (pure seam, unit-tested without a browser).
 
     Done means the 'Stop' control is gone AND a real result exists (a visible
-    <video>, a download control, or a completion 'Done' button). Placeholder
-    editor chrome (title / timeline / media thumbnail) is NOT a completion
-    signal: judging 'done' from it could fire a second paid generation while
-    Veo is still rendering — that is the double-charge we harden against."""
+    <video>, a download control, a completion 'Done' button, or the project
+    grid's generated-video thumbnail). Placeholder editor chrome (title /
+    timeline / media thumbnail) is NOT a completion signal: judging 'done'
+    from it could fire a second paid generation while Veo is still rendering —
+    that is the double-charge we harden against."""
     if has_stop:
         return False
-    return vids > 0 or has_download or has_done_btn
+    return vids > 0 or has_download or has_done_btn or has_result_thumb
 
 
 def _clip_is_real_video(path: Path) -> bool:
@@ -185,25 +391,6 @@ def validate_reference_image(image_path: str | None) -> str:
 
 class FlowAutomationError(RuntimeError):
     pass
-
-
-# Google SSO session cookies (names stable for many years). Presence means the
-# persistent profile holds a real signed-in Google session — far more concrete
-# than scanning page text for "sign in", which survives on many logged-in pages.
-GOOGLE_SESSION_COOKIES = {
-    "SID",
-    "SAPISID",
-    "SIDCC",
-    "__Secure-1PSID",
-    "__Secure-3PSID",
-    "__Secure-1PAPISID",
-    "__Secure-3PAPISID",
-}
-
-
-def _has_google_session(cookies: list[dict[str, object]]) -> bool:
-    """True if any Google SSO auth cookie is present in the profile's jars."""
-    return any(c.get("name") in GOOGLE_SESSION_COOKIES for c in cookies)
 
 
 class FlowClipper:
@@ -268,17 +455,6 @@ class FlowClipper:
         Preferred over accessing ``_browser`` directly."""
         return self._browser.new_page()
 
-    def sign_in_required(self) -> bool:
-        """Best-effort check for an active Google session on the Flow page."""
-        page = self._browser.new_page()
-        try:
-            page.goto(cfg.flow_url(), wait_until="domcontentloaded", timeout=30_000)
-            time.sleep(2)
-            text = page.content().lower()
-            return "sign in" in text or "log in" in text or "accounts.google.com/signin" in text
-        finally:
-            page.close()
-
     def wait_for_sign_in(self, timeout_s: int = 600) -> bool:
         """MANUAL LOGIN GATE — the only sanctioned way to give this agent
         access to a Google account.
@@ -289,28 +465,86 @@ class FlowClipper:
         agent, files, env, or git — only the saved browser session in
         ``.runtime/flow-profile/`` is reused on every later run.
 
-        Returns True when a Google session exists; False if it timed out.
+        Verified SERVER-side every poll. After Google revokes a session the
+        profile still holds a full, unexpired cookie set — a cookie-presence
+        check false-passed on that and closed the window before the human could
+        ever sign in. A second (probe) page therefore loads the Flow home
+        DIRECTLY: a signed-out request to https://flow.google.com/ is
+        server-302'd to flow.google.com/about (the URL is already /about at
+        domcontentloaded — no client-side hop, measured live), while a working
+        session is served the Flow workspace shell at flow.google.com/. A short
+        watch loop backstops any slower client-side drift toward /about. The
+        session counts as verified only after TWO consecutive polls end on the
+        flow.google.com host with a NON-``/about`` path. (A myaccount.google.com
+        probe was tried first and rejected: its signed-out page served that host
+        for seconds before a client redirect, falsely verifying two polls in a
+        row.) The visible window keeps Flow open for the human; password/2FA
+        never touch the agent. An unreachable probe is logged and keeps waiting
+        (fail-closed) rather than ever passing.
+
+        Returns True when the session is verified; False on timeout, or if the
+        login window fails to open / is closed before verification.
         """
         page = self._browser.new_page()
+        probe = None
         try:
-            page.goto(cfg.flow_url(), wait_until="domcontentloaded", timeout=60_000)
+            try:
+                page.goto(cfg.flow_url(), wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                print("[flow] could not open Flow in the login window — "
+                      "closing the gate; re-run --login")
+                return False
             print("\n============================================================")
             print("SIGN-IN GATE")
             print("In the browser window that just opened, sign in with the")
             print("Google account that has your PRO plan (Flow).")
+            print("If the page shows a 'Sign in' link, click it first.")
             print("The agent never sees your password or 2FA code — it only")
             print("reuses this session afterwards. Close the window when done.")
             print("============================================================\n")
+            probe = self._browser.new_page()
             deadline = time.time() + timeout_s
+            verified_streak = False
+            probe_fails = 0
             while time.time() < deadline:
                 try:
-                    cookies = self._browser.cookies()
+                    page.url  # visible window still open? (human may close it)
                 except Exception:  # window closed / browser gone by the human
                     print("[flow] browser window closed — stopping the gate")
                     return False
-                if _has_google_session(cookies):
-                    print("[flow] Google session detected — profile is fully signed in.")
-                    return True
+                try:
+                    # Direct Flow-home probe: signed-out is server-302'd to
+                    # /about at domcontentloaded (no client race); the watch
+                    # loop backstops any slower client-side drift.
+                    probe.goto(
+                        "https://flow.google.com/", wait_until="domcontentloaded",
+                        timeout=45_000,
+                    )
+                    for _ in range(16):
+                        probe.wait_for_timeout(500)
+                        if urlparse(probe.url).path.startswith("/about"):
+                            break
+                    parsed = urlparse(probe.url)
+                    flow_ok = (
+                        parsed.scheme == "https"
+                        and parsed.netloc == "flow.google.com"
+                        and not parsed.path.startswith("/about")
+                    )
+                    if flow_ok:
+                        probe_fails = 0
+                        if verified_streak:
+                            print("[flow] session verified server-side "
+                                  "(Flow workspace loaded) — signed in.")
+                            return True
+                        verified_streak = True
+                    else:
+                        verified_streak = False
+                except Exception:
+                    verified_streak = False  # transient probe failure — retry
+                    probe_fails += 1
+                    if probe_fails == 3:
+                        print("[flow] sign-in probe unreachable — the profile "
+                              "may be locked; still waiting (gate is fail-closed)")
                 try:
                     on_login_page = "accounts.google.com" in page.url
                 except Exception:
@@ -320,7 +554,15 @@ class FlowClipper:
             print(f"[flow] sign-in gate timed out after {timeout_s}s — run --login again")
             return False
         finally:
-            page.close()
+            # Cleanup must never mask the verdict (an exception here would turn
+            # a verified True into a crash, or skip the probe page entirely).
+            for _p in (page, probe):
+                if _p is None:
+                    continue
+                try:
+                    _p.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def generate_clip(self, prompt: str, output_path: Path,
                       reference_image: str | None = None) -> None:
@@ -373,6 +615,575 @@ class FlowClipper:
             self._manual_assist(prompt, output_path)
         finally:
             page.close()
+
+    # --- extend mode: one continuous scene, one download ---------------------------
+    def generate_extended_video(
+        self,
+        prompts: list[str],
+        output_path: Path,
+        *,
+        target_s: int,
+        clip_s: int,
+        reference_image: str | None = None,
+        progress_path: Path | None = None,
+        day: int = 0,
+    ) -> None:
+        """Build ONE continuous video by extending a scene in Flow's scene
+        editor, then download a single final file (no per-clip downloads, no
+        ffmpeg concat).
+
+        `prompts` is the full segment plan from :func:`extend_plan` (entry 0 =
+        initial generation, entry i = "What happens next?" continuation for
+        segment i+1). The chain grows until the scene duration (scene-editor
+        timecode) reaches `target_s`; the last extend therefore lands on the
+        smallest clip multiple >= target (60s at 8s clips -> 64s).
+
+        Crash safety (paid steps): `progress_path` is rewritten atomically
+        after every paid step — with `pending_extend=True` BEFORE each extend
+        click — so a resume re-opens the same scene, waits out any in-flight
+        render, reconciles the segment counter against the real duration, and
+        continues instead of regenerating from scratch. An already-complete
+        `output_path` short-circuits before anything is spent."""
+        if not prompts:
+            raise FlowAutomationError("extend plan is empty")
+        if len(prompts) > EXTEND_MAX_SEGMENTS:
+            raise FlowAutomationError(
+                f"extend plan has {len(prompts)} segments — over the "
+                f"{EXTEND_MAX_SEGMENTS}-segment money cap; check "
+                "FLOW_TARGET_DURATION_S / FLOW_CLIP_DURATION_S"
+            )
+        output_path = Path(output_path)
+        target_s, clip_s = int(target_s), int(clip_s)
+
+        # Already finished (resume after download, or a re-run): never pay again.
+        # Gate on the same rounded-up clip multiple that main.py's final
+        # evaluation uses — a leftover OUTSIDE that ±5 window (too short OR
+        # too long) would skip generation here and then fail eval with no
+        # in-loop recovery; either side continues the chain instead.
+        if output_path.exists() and output_path.stat().st_size > 0:
+            existing = merger.probe_duration(output_path)
+            expected = expected_final_s(target_s, clip_s)
+            if existing is None or expected - 5 <= existing <= expected + 5:
+                self.manifest(
+                    f"final already present ({existing}s) — skipping generation"
+                )
+                return
+            self.manifest(
+                f"existing final is {existing}s (outside {expected}s ±5) — continuing the chain"
+            )
+
+        progress = read_extend_progress(progress_path)
+        if progress:
+            if progress["target_s"] != target_s or progress["clip_s"] != clip_s:
+                raise FlowAutomationError(
+                    "extend config changed since the progress file was written "
+                    f"(was {progress['target_s']}s/{progress['clip_s']}s clips, now "
+                    f"{target_s}s/{clip_s}s) — refusing to continue a paid chain "
+                    "under different settings"
+                )
+            if progress["prompts"] != list(prompts):
+                self.manifest(
+                    "storyboard prompts changed since progress — keeping the "
+                    "prompts already paid for"
+                )
+            prompts = progress["prompts"]
+
+        self._credits_approved = False  # each extend re-opens the money gate
+        project_url = edit_url = ""
+        segments_done, dur_s = 0, 0
+        page = self._browser.new_page()
+        page.set_default_timeout(60_000)
+        try:
+            if progress:
+                project_url, edit_url, segments_done, dur_s = self._resume_extend(
+                    page, progress, clip_s, progress_path, reference_image
+                )
+            else:
+                project_url, edit_url, segments_done, dur_s = self._start_extend(
+                    page, prompts, target_s, clip_s, reference_image,
+                    progress_path, day,
+                )
+
+            while dur_s < target_s:
+                if segments_done >= len(prompts):
+                    raise FlowAutomationError(
+                        f"extend plan exhausted at {dur_s}s "
+                        f"({segments_done}/{len(prompts)} segments) before "
+                        f"reaching the {target_s}s target — refusing to invent "
+                        "extra paid prompts"
+                    )
+                self._enter_extend_mode(page)
+                self._fill_extend_prompt(page, prompts[segments_done])
+                if progress_path:
+                    write_extend_progress(progress_path, {
+                        "day": day, "project_url": project_url,
+                        "edit_url": edit_url, "segments_done": segments_done,
+                        "duration_s": dur_s, "target_s": target_s,
+                        "clip_s": clip_s, "pending_extend": True,
+                        "prompts": prompts,
+                    })
+                self._start_extend_generation(page)
+                new_dur = self._wait_for_scene_extend(page, dur_s, clip_s)
+                self._exit_extend_mode(page)
+                if new_dur > target_s + clip_s + 5:
+                    raise FlowAutomationError(
+                        f"scene duration {new_dur}s is implausible for a "
+                        f"{target_s}s target — the timecode parse or the UI "
+                        "changed; refusing to continue"
+                    )
+                segments_done += 1
+                dur_s = new_dur
+                edit_url = page.url.split("?")[0]
+                if progress_path:
+                    write_extend_progress(progress_path, {
+                        "day": day, "project_url": project_url,
+                        "edit_url": edit_url, "segments_done": segments_done,
+                        "duration_s": dur_s, "target_s": target_s,
+                        "clip_s": clip_s, "pending_extend": False,
+                        "prompts": prompts,
+                    })
+                self.manifest(
+                    f"extend: {segments_done} segments, {dur_s}s "
+                    f"(target {target_s}s)"
+                )
+
+            self.manifest(
+                f"extend chain complete: {segments_done} segments, {dur_s}s — "
+                "downloading the single final video"
+            )
+            self._download_clip(page, output_path)
+            self._ensure_real_video(page, output_path)
+        except Exception as exc:
+            self.manifest(f"EXTEND AUTO-STEP FAILED ({type(exc).__name__}): {exc}")
+            self._manual_assist(
+                _extend_assist_text(
+                    prompts, output_path,
+                    segments_done=segments_done,
+                    edit_url=edit_url or project_url,
+                    duration_s=dur_s,
+                    target_s=target_s,
+                ),
+                output_path,
+            )
+        finally:
+            page.close()
+
+    def _start_extend(
+        self, page, prompts: list[str], target_s: int, clip_s: int,
+        reference_image: str | None, progress_path: Path | None, day: int,
+        project_url: str = "",
+    ) -> tuple[str, str, int, int]:
+        """Fresh chain: enter the workspace (or a RE-usable saved project when
+        resuming a never-started segment 1), record the project URL BEFORE the
+        first paid step, generate segment 1, open the scene editor, and settle
+        the counters. Returns (project_url, edit_url, segments_done, duration_s).
+
+        Deliberately does NOT scavenge a random visible video for recovery —
+        Flow can reopen a PREVIOUS day's project, and extending the wrong
+        scene would burn credits on garbage; recovery only ever happens
+        through the progress file's own project_url."""
+        if project_url:
+            page.goto(project_url, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(4000)
+        else:
+            page.goto(cfg.flow_url(), wait_until="domcontentloaded", timeout=60_000)
+        self._enter_workspace(page)
+        project_url = page.url.split("?")[0]
+        if progress_path:
+            # pending BEFORE paying: a crash mid-generation is recoverable
+            # (a finished result tile lets a resume skip the re-generation).
+            write_extend_progress(progress_path, {
+                "day": day, "project_url": project_url, "edit_url": "",
+                "segments_done": 0, "duration_s": 0, "target_s": target_s,
+                "clip_s": clip_s, "pending_extend": True, "prompts": prompts,
+            })
+
+        # Segment 1: same paid sequence as generate_clip, minus the download.
+        if reference_image:
+            self._ensure_presenter_character(page, reference_image)
+        self._fill_prompt(page, prompts[0])
+        if reference_image:
+            if not self._attach_character_to_prompt(page):
+                raise FlowAutomationError(
+                    "presenter character was NOT attached to the prompt — "
+                    "refusing to generate a presenter clip without the "
+                    "reference image in the prompt (paid-account guard)."
+                )
+        self._select_video_mode(page)
+        self._click_generate(page)
+        self._approve_credits(page)
+        self._wait_until_finished(page)
+
+        edit_url = self._open_scene_editor(page, project_url)
+        dur_s = self._read_duration_s(page)
+        segments_done = max(1, dur_s // clip_s)
+        if progress_path:
+            write_extend_progress(progress_path, {
+                "day": day, "project_url": project_url, "edit_url": edit_url,
+                "segments_done": segments_done, "duration_s": dur_s,
+                "target_s": target_s, "clip_s": clip_s,
+                "pending_extend": False, "prompts": prompts,
+            })
+        self.manifest(
+            f"extend: segment 1 ready ({dur_s}s) — scene {edit_url.split('/')[-1]}"
+        )
+        return project_url, edit_url, segments_done, dur_s
+
+    def _resume_extend(
+        self, page, progress: dict, clip_s: int, progress_path: Path | None,
+        reference_image: str | None = None,
+    ) -> tuple[str, str, int, int]:
+        """Re-enter the saved scene, wait out any in-flight paid extend, and
+        reconcile counters against the real scene duration.
+        Returns (project_url, edit_url, segments_done, duration_s)."""
+        project_url, edit_url = progress["project_url"], progress["edit_url"]
+        segments_done = progress["segments_done"]
+        dur_s = progress["duration_s"]
+        pending = progress["pending_extend"]
+        target_s, clip_s_progress = progress["target_s"], progress["clip_s"]
+
+        page.goto(edit_url or project_url, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(6000)
+
+        # Settle ANY in-flight paid step FIRST (works from both the main
+        # editor and the scene editor): never queue a second paid extend on
+        # top of one that is still rendering.
+        if self._generation_in_progress(page):
+            self.manifest("resume: waiting for the in-flight generation to finish")
+            self._wait_until_finished(page)
+
+        if "/edit/" not in page.url:
+            try:
+                edit_url = self._open_scene_editor(page, project_url)
+            except FlowAutomationError:
+                if segments_done > 0:
+                    raise  # scenes exist but the editor is unreachable: LOUD
+                if pending:
+                    # pending=True exists only between the pre-pay write and
+                    # the settled segment-1 counters — segment 1 may already
+                    # be PAID; regenerating here would burn credits twice.
+                    raise FlowAutomationError(
+                        "resume: pending segment 1 is paid but its scene "
+                        "editor is unreachable — not regenerating; finish or "
+                        "inspect the scene manually first"
+                    )
+                # Segment 1 never produced a usable result — regenerate it in
+                # the SAME project (progress file already owns the URLs).
+                self.manifest(
+                    "resume: no finished segment 1 to resume — generating it fresh"
+                )
+                return self._start_extend(
+                    page, progress["prompts"], target_s, clip_s_progress,
+                    reference_image, progress_path, progress["day"],
+                    project_url=project_url,
+                )
+        else:
+            edit_url = page.url.split("?")[0]
+
+        if pending:
+            # pending was written before the extend's Start-generation click.
+            # The scene editor shows NO persistent live progress for a
+            # server-side render, so nothing here can distinguish "never
+            # started" from "still rendering" — and a wrong "never started"
+            # would re-pay a render that IS running (the double-pay we harden
+            # against; Veo renders take 5-12 min). Wait the FULL generation
+            # budget for the COMMITTED duration to grow; if it never lands,
+            # RAISE so the chain goes to manual assist / escalation instead of
+            # ever clicking Start generation on the same segment again.
+            self._wait_for_scene_extend(page, dur_s, clip_s_progress, budget=900)
+
+        self._exit_extend_mode(page)
+        page.wait_for_timeout(1000)
+        cur = self._read_duration_s(page)
+
+        if cur < dur_s:
+            raise FlowAutomationError(
+                f"scene duration went backwards on resume ({dur_s}s -> {cur}s) "
+                "— refusing to continue a paid chain from an unknown state"
+            )
+        if cur > dur_s:
+            # The pending (or unsaved) step really did land — trust the UI.
+            segments_done = max(segments_done + (1 if pending else 0), cur // clip_s)
+            dur_s = cur
+            self.manifest(
+                f"resume: reconciled to {segments_done} segments, {dur_s}s "
+                "(an extend completed before the crash)"
+            )
+        elif pending:
+            # The unconditional pending wait above only returns on growth, so
+            # reaching here with pending=True means this read came back stale
+            # (== the pre-wait duration). Re-wait for the commit — fail-closed:
+            # RAISE to manual assist rather than ever re-clicking Start
+            # generation on the same segment.
+            cur = self._wait_for_scene_extend(page, dur_s, clip_s_progress, budget=900)
+            segments_done = max(segments_done + 1, cur // clip_s)
+            dur_s = cur
+            self.manifest(
+                f"resume: reconciled to {segments_done} segments, {dur_s}s "
+                "(the pending extend landed late)"
+            )
+        else:
+            self.manifest(
+                f"resume: {segments_done} segments, {dur_s}s — continuing"
+            )
+        if progress_path:
+            write_extend_progress(progress_path, {
+                "day": progress["day"], "project_url": project_url,
+                "edit_url": edit_url, "segments_done": segments_done,
+                "duration_s": dur_s, "target_s": target_s,
+                "clip_s": clip_s_progress, "pending_extend": False,
+                "prompts": progress["prompts"],
+            })
+        return project_url, edit_url, segments_done, dur_s
+
+    # --- extend-mode scene-editor UI (all selectors live-verified Sep 2026) --------
+    def _open_scene_editor(self, page, project_url: str) -> str:
+        """Open the scene editor for the project's generated clip (URL pattern
+        ``/project/<pid>/edit/<sid>``) — the only view that exposes the Extend
+        controls and the whole-scene 'Download media' button. Clicking the
+        result video navigates there (live-verified)."""
+        if "/edit/" in page.url:
+            return page.url.split("?")[0]
+
+        def _click_until_edit(selectors: list[str], per_selector: int) -> str | None:
+            for sel in selectors:
+                els = page.locator(sel)
+                try:
+                    count = min(els.count(), per_selector)
+                except Exception:
+                    continue
+                for i in range(count):
+                    try:
+                        els.nth(i).click(timeout=5_000)
+                    except Exception:
+                        continue
+                    for _ in range(6):
+                        page.wait_for_timeout(1000)
+                        if "/edit/" in page.url:
+                            return page.url.split("?")[0]
+            return None
+
+        tiles = [
+            # Project grid + main editor show a poster tile, not a <video>
+            # (live-verified Sep 2026) — this is the reliable way in.
+            "img[alt='Generated video thumbnail']:visible",
+            "img[alt*='Generated video' i]:visible",
+            "video:visible",
+            "img[src*='media']:visible",
+            "img[src*='blob']:visible",
+        ]
+        found = _click_until_edit(tiles, per_selector=3)
+        if found:
+            self.manifest("scene editor opened from the result video")
+            return found
+
+        # Last resort: the project overview lists finished clips as tiles.
+        try:
+            page.goto(project_url, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(5000)
+        except Exception:
+            pass
+        found = _click_until_edit(tiles, per_selector=5)
+        if found:
+            self.manifest("scene editor opened from the project overview")
+            return found
+        self._dump_controls(page)
+        raise FlowAutomationError(
+            "could not open the scene editor (no /edit/ navigation after "
+            "clicking the result)"
+        )
+
+    def _extend_ui_visible(self, page) -> bool:
+        """True when the scene editor is in extend mode ('Exit extend mode'
+        chip or the 'What happens next?' placeholder is on screen)."""
+        try:
+            if page.locator("[aria-label='Exit extend mode']:visible").count() > 0:
+                return True
+            if page.locator("button:has-text('Exit extend mode'):visible").count() > 0:
+                return True
+            return (
+                page.locator(
+                    ".prosemirror-placeholder:has-text('What happens next?'):visible"
+                ).count()
+                > 0
+            )
+        except Exception:
+            return False
+
+    def _enter_extend_mode(self, page) -> None:
+        """Enter extend mode from the scene editor: timeline 'Add clip' (+)
+        -> menuitem 'Extend (Veo 3.1 - Lite)', with a direct 'Extend' button
+        as fallback. Credit-free (only opens the continuation prompt box)."""
+        if self._extend_ui_visible(page):
+            self.manifest("extend: already in extend mode")
+            return
+        entered = False
+        add = page.get_by_role("button", name="Add clip").first
+        if add.count() == 0:
+            add = page.locator("button[aria-label*='Add clip' i]:visible").first
+        if add.count() > 0:
+            try:
+                add.click(timeout=6_000)
+                page.wait_for_timeout(1000)
+                item = page.get_by_role("menuitem", name="Extend").first
+                if item.count() == 0:
+                    item = page.locator("[role='menuitem']:has-text('Extend'):visible").first
+                if item.count() > 0:
+                    item.click(timeout=6_000)
+                    entered = True
+            except Exception:
+                pass
+        if not entered:
+            btn = page.get_by_role("button", name="Extend", exact=True).first
+            if btn.count() > 0:
+                try:
+                    btn.click(timeout=6_000)
+                    entered = True
+                except Exception:
+                    pass
+        if not entered:
+            self._dump_controls(page)
+            raise FlowAutomationError(
+                "could not enter extend mode ('Add clip' -> 'Extend' not found)"
+            )
+        for _ in range(10):
+            if self._extend_ui_visible(page):
+                self.manifest("extend: extend mode active")
+                return
+            page.wait_for_timeout(1000)
+        raise FlowAutomationError(
+            "extend mode UI ('What happens next?') did not appear after clicking Extend"
+        )
+
+    def _fill_extend_prompt(self, page, prompt: str) -> None:
+        """Type the continuation prompt into extend mode's 'What happens next?'
+        box (the scene editor's single contenteditable; falls back to the
+        first visible one)."""
+        box = page.locator(
+            "div[contenteditable='true']:has(.prosemirror-placeholder):visible"
+        ).first
+        if box.count() == 0:
+            box = page.locator("[contenteditable='true']:visible").first
+        if box.count() == 0:
+            self._dump_controls(page)
+            raise FlowAutomationError(
+                "extend prompt box ('What happens next?') not found"
+            )
+        try:
+            box.click(timeout=5_000)
+            box.fill(prompt, timeout=5_000)
+        except Exception as exc:
+            raise FlowAutomationError(
+                f"could not type the extend prompt: {exc}"
+            ) from exc
+        self.manifest("extend: continuation prompt typed")
+
+    def _start_extend_generation(self, page) -> None:
+        """Click 'Start generation' in extend mode and confirm the render
+        really started. The scene editor ALWAYS shows a video + 'Download
+        media', so the generic post-click sanity would false-positive and
+        `_wait_until_finished` could return before anything was generated —
+        this gate waits for an actual progress control, re-opening the money
+        gate if the credit dialog shows up mid-wait (free daily credits can
+        run out mid-chain; a paid dialog without FLOW_APPROVE_CREDITS raises)."""
+        btn = page.get_by_role("button", name="Start generation").first
+        if btn.count() == 0:
+            btn = page.locator("button:has-text('Start generation'):visible").first
+        if btn.count() == 0:
+            self._dump_controls(page)
+            raise FlowAutomationError(
+                "'Start generation' button not found in extend mode"
+            )
+        for _ in range(15):
+            if btn.get_attribute("aria-disabled") != "true":
+                break
+            page.wait_for_timeout(2000)
+        btn.click(timeout=8_000)
+        self.manifest("extend: clicked Start generation")
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            dialog = page.locator(
+                "[role='dialog']:visible, [role='alertdialog']:visible, "
+                "[aria-modal='true']:visible"
+            )
+            if dialog.count() > 0:
+                self._approve_credits(page, force=True)  # paid w/o opt-in raises
+            if self._generation_in_progress(page):
+                self.manifest("extend: generation started")
+                return
+            page.wait_for_timeout(1000)
+        raise FlowAutomationError(
+            "extend generation did not start within 90s (no progress control) — "
+            "stopped before anything further could be charged; check the browser "
+            "for a pending dialog"
+        )
+
+    def _exit_extend_mode(self, page) -> None:
+        """Leave extend mode (credit-free) so the duration timecode reflects
+        only REAL segments — while extend mode is active Flow can show the
+        pending +clip_s slot inside the total. If extend UI is visible but the
+        exit control cannot be used, RAISE: silently continuing would
+        over-count the duration and stop the chain one segment short."""
+        if not self._extend_ui_visible(page):
+            return
+        chip = page.locator("[aria-label='Exit extend mode']:visible").first
+        if chip.count() == 0:
+            chip = page.get_by_role("button", name="Exit extend mode").first
+        if chip.count() == 0:
+            self._dump_controls(page)
+            raise FlowAutomationError(
+                "extend mode is active but the 'Exit extend mode' control was "
+                "not found — duration would include the pending slot; refusing "
+                "to continue with a wrong segment count"
+            )
+        try:
+            chip.click(timeout=5_000)
+            page.wait_for_timeout(1000)
+        except Exception as exc:
+            raise FlowAutomationError(
+                f"could not exit extend mode ({exc}) — the duration timecode "
+                "would include the pending slot; refusing to continue"
+            ) from exc
+        for _ in range(5):
+            if not self._extend_ui_visible(page):
+                self.manifest("extend: exited extend mode")
+                return
+            page.wait_for_timeout(1000)
+        raise FlowAutomationError(
+            "extend mode still active after clicking 'Exit extend mode'"
+        )
+
+    def _duration_value(self, page) -> str | None:
+        """Raw text of the scene-editor duration timecode (e.g. '00:08:00')."""
+        for sel in ("span.duration-timecode-value:visible", ".duration-timecode-value"):
+            try:
+                el = page.locator(sel).first
+                if el.count() and el.is_visible():
+                    return " ".join(el.inner_text().split())
+            except Exception:
+                continue
+        return None
+
+    def _read_duration_s(self, page) -> int:
+        """Total scene duration in seconds from the scene-editor timecode.
+        Raises when the element never appears or never parses — a
+        wrong-but-confident number here could stop the chain short of the
+        target (or extend forever), so garbage is fatal, not guessed.
+        Right after /edit/ navigation the timecode reads '00:00:00' while the
+        player is still loading (live-verified) then settles to the real
+        duration — a 0 read is NOT ready, so it is skipped, never returned."""
+        raw = None
+        for _ in range(10):
+            raw = self._duration_value(page)
+            if raw:
+                secs = parse_duration_timecode(raw)
+                if secs is not None and secs > 0:
+                    return secs
+            page.wait_for_timeout(1000)
+        raise FlowAutomationError(
+            f"could not read a non-zero scene duration timecode (last value: {raw!r})"
+        )
+
 
     # --- internals (each best-effort, degrade to manual-assist) ---------------------
     def _enter_workspace(self, page) -> None:
@@ -987,7 +1798,7 @@ class FlowClipper:
             )
         raise FlowAutomationError("no generate button found")
 
-    def _approve_credits(self, page) -> None:
+    def _approve_credits(self, page, *, force: bool = False) -> None:
         """Money gate (live-verified Sep 2026): the current Flow UI consumes the
         account's FREE daily credits silently — no modal — and only shows an
         approval dialog when a paid generation is attempted.
@@ -998,13 +1809,16 @@ class FlowClipper:
               * FLOW_APPROVE_CREDITS=1 (supervised runs only) -> click it once.
               * otherwise -> HARD STOP (never auto-spend paid credits).
           - FLOW_CREDITS_PREAPPROVED=1 still bypasses the gate entirely (compat).
+          - force=True (extend mode): re-scan for the dialog even when an
+            earlier generation in this run was free — free daily credits can
+            run out MID-CHAIN, and the next extend must hit this gate again.
         Approval clicks, when they happen, are scoped to a real overlay marker
         (role=dialog / alertdialog / aria-modal), never page-wide, so a stray
         Continue/OK/Yes button in the page background cannot spend credits."""
-        if self._credits_approved:
+        if self._credits_approved and not force:
             self.manifest("credits already approved this clip")
             return
-        if self._run_credits_approved:
+        if self._run_credits_approved and not force:
             # Free-credit mode already confirmed earlier in this run — no need
             # to re-scan for a dialog on every clip.
             self._credits_approved = True
@@ -1047,23 +1861,76 @@ class FlowClipper:
             elapsed = int(time.time() - (deadline - 900))
             # A running generation shows a "Stop" control on the submit button,
             # a progressbar, or a percent chip (Sep 2026 UI); when none is
-            # present AND a result (video or download control) exists, the
+            # present AND a result (video, download control, 'Done' button, or
+            # the project grid's generated-video thumbnail) exists, the
             # generation is truly done.
             generating = self._generation_in_progress(page)
             if not generating:
                 vids = page.locator("video:visible").count()
                 dl = any(page.locator(s).count() > 0 for s in DOWNLOAD_HINTS)
                 done_btn = page.locator("button:has-text('Done'):visible").count() > 0
+                thumb = any(page.locator(s).count() > 0 for s in RESULT_THUMB_HINTS)
                 if _is_generation_finished(
                     has_stop=generating, vids=vids,
                     has_download=dl, has_done_btn=done_btn,
+                    has_result_thumb=thumb,
                 ):
                     self.manifest("generation finished (result present)")
                     return
             if elapsed % 60 == 0:
                 self.manifest(f"waiting for generation... ({elapsed}s)")
             time.sleep(6)
-        raise FlowAutomationError("generation did not finish in 900s")
+        # Evidence dump on timeout: the flow above FAILED to recognize a result
+        # it may have already rendered, so on the next run of these selectors
+        # we want the real page signals, not a guess.
+        generating = self._generation_in_progress(page)
+        vids = page.locator("video:visible").count()
+        dl = any(page.locator(s).count() > 0 for s in DOWNLOAD_HINTS)
+        thumb = any(page.locator(s).count() > 0 for s in RESULT_THUMB_HINTS)
+        body = ""
+        try:
+            body = " ".join(page.evaluate("document.body.innerText").split())[:300]
+        except Exception:
+            pass
+        self._dump_controls(page)
+        raise FlowAutomationError(
+            "generation did not finish in 900s "
+            f"(generating={generating} videos={vids} download={dl} "
+            f"result_thumb={thumb}; page text: {body!r})"
+        )
+
+    def _wait_for_scene_extend(
+        self, page, before_s: int, clip_s: int, *, budget: int = 900,
+    ) -> int:
+        """Wait until an extend render has COMMITTED to the scene timeline.
+
+        The scene editor permanently shows Download/'Done' chrome, so the
+        generic `_wait_until_finished` returns the moment a percent chip dips —
+        long before the server-side render commits its +clip_s to the timecode
+        (that gap stalled the Sep 2026 chain). This wait instead keeps reading
+        the REAL duration (safely exiting extend mode each pass so the pending
+        +slot is never counted) and returns only once it grew past `before_s`.
+        Exiting the panel can't cancel a server render — a closed browser
+        doesn't either (verified). Raises when the committed duration never
+        moves within `budget` seconds; nothing was re-paid in that window."""
+        deadline = time.time() + budget
+        while time.time() < deadline:
+            if self._generation_in_progress(page):
+                time.sleep(6)
+                continue
+            self._exit_extend_mode(page)
+            try:
+                cur = self._read_duration_s(page)
+            except FlowAutomationError:
+                cur = before_s
+            if cur > before_s:
+                self.manifest(f"extend landed: scene grew {before_s}s -> {cur}s")
+                return cur
+            time.sleep(6)
+        raise FlowAutomationError(
+            f"scene duration did not grow past {before_s}s within {budget}s — "
+            "the extend render never committed"
+        )
 
     def _download_clip(self, page, output_path: Path) -> None:
         """Flow's download path. Primary (MCP-verified Aug 2026): a visible
@@ -1079,7 +1946,10 @@ class FlowClipper:
                     and other["y"] + other["height"] <= box["y"] + box["height"] + margin)
 
         def _tile_box():
-            tile = page.locator("video:visible, img[src*='media']:visible, img[src*='blob']:visible").first
+            tile = page.locator(
+                "video:visible, img[alt*='Generated video' i]:visible, "
+                "img[src*='media']:visible, img[src*='blob']:visible"
+            ).first
             if tile.count() == 0:
                 return None
             try:
@@ -1279,6 +2149,32 @@ class FlowClipper:
         raise FlowAutomationError(
             f"manual assist timed out waiting for {output_path}"
         )
+
+
+def _extend_assist_text(
+    prompts: list[str], output_path: Path, *,
+    segments_done: int, edit_url: str, duration_s: int, target_s: int,
+) -> str:
+    """Manual-assist message for a failed extend chain: where the scene lives,
+    how far it got, and the remaining continuation prompts IN ORDER (one per
+    extend, pasted as 'What happens next?'). Also what lands in
+    manual_todo.txt on an unattended run."""
+    lines = [
+        "EXTEND CHAIN — continue in the Flow scene editor, one prompt per extend:",
+        f"scene: {edit_url or '(open the project and its scene in flow.google.com)'}",
+        f"progress: {segments_done} segment(s) done, {duration_s}s of {target_s}s target",
+        f"save the FINAL full video to: {output_path}",
+    ]
+    remaining = list(prompts[max(0, segments_done):])
+    if not remaining:
+        lines.append(
+            "nothing left to extend — just use the scene editor's "
+            "'Download media' and save the file to the path above"
+        )
+    for i, prompt in enumerate(remaining, start=max(0, segments_done) + 1):
+        lines.append(f"--- extend for segment {i} (paste as 'What happens next?') ---")
+        lines.append(prompt)
+    return "\n".join(lines)
 
 
 def _log_manual_todo(prompt: str, output_path: Path) -> Path:

@@ -18,21 +18,30 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 30 (root AGENTS.md removed) — after beat 29 root-STATE removal
-- **Date:** 2026-09-15
-- **Trigger:** manual — user: "don't use root STATE.md and AGENTS.md make 2 STATE.md and
-  AGENTS.md for these loops"
-- **Status:** Done — root `AGENTS.md` deleted; THIS loop's `AGENTS.md` now carries the full
-  rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation,
-  §11 lessons). Every loop owns exactly one `STATE.md` + one `AGENTS.md`.
-  **Open (external):** G5 supervised live run is the last gate; YouTube re-consent needed
-  (token past testing-mode ~7d expiry); stale PRs #5/#7/#8 decision; rclone Drive sync still
-  pending. `PASS`
+- **Beat #:** 35 (login-gate hardened → waiting on HUMAN sign-in; then day-9 resume)
+- **Date:** 2026-10-07
+- **Trigger:** manual — continue after session-revocation diagnosis (beats 33-34)
+- **Status:** **WAITING ON HUMAN** — Google session is revoked server-side
+  everywhere (cookies intact but signed-out). Login gate v4 hardens the `--login`
+  path: probe = raw `https://flow.google.com/` (signed-out ⇒ server-302 to
+  /about at domcontentloaded — no client race), 8s watch-loop backstop,
+  two-consecutive streak, exact-host; 7 gate tests + checker round-5 APPROVED
+  (213 loop / 213 CI gate). NEXT operation: user signs in via a headed
+  `--login` window (password/2FA stay with the user). After verified sign-in:
+  clear `output/day_09/extend_progress.json` `pending_extend` (evidence: seg-3
+  render never started — 90s no-start + 2×900s no-growth) and resume day 9
+  (1 attempt budget left for segments 3-8 → final.mp4). Day 8 = `failed`
+  (`clip_attempts[final.mp4]=3`). Day 9 = `in_progress` (`attempts=2`,
+  `segments_done=2`, `duration_s=16`).
 
 ## 3. Beat Log
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 34 | 2026-10-07 | manual | **Login-gate server-side hardening (final):** gate v1 (cookies) + v2 (myaccount probe) both false-verified a REVOKED session live. v3/v4: probe now navigates RAW `https://flow.google.com/` (signed-out ⇒ server-302 to /about at domcontentloaded, no client race — measured), 16×500ms watch loop backstops slow client hops, startswith-aligned, TWO-consecutive streak, probe-fails hint, exact-host netloc. Tests: `_HopProbePage` pins the watch loop (deletable-proof), probe-destination test, 7 gate tests | **APPROVED** — checker round 5 (adversarial: urlparse bypasses, races, hop pin); 213 loop / 213 CI gate |
+| 33 | 2026-10-07 | manual | **Day-8/9 live runs + session-revocation diagnosis:** run10 setsid — day 8 escalated correctly (extend seg-2 never committed, 3/3 attempts, `@Moh-Tayyab` fired). run11 — day 9 seg1 done + seg2 extended 8→16s, seg-3 Start never started (90s gate + 2 pending waits); day 9 kept `attempts=2`/1 budget. Diags: cookies fully intact (SID/SECURE/2PSIDTS exp 2027) yet myaccount/gemini/flow ALL server-side signed-out → session revoked everywhere. Flow facts: project-listing shows poster thumb (`img[alt='Generated video thumbnail']`), not `<video>`; edit_url/project_url → /about; extend wait deadlocked → `pending_extend=True` must be cleared (with evidence) pre-resume | **ESCALATED** — no valid Google session; generation impossible until fresh human sign-in (headed `--login` gate); day 9 in_progress preserves one attempt |
+| 32 | 2026-10-06 | manual | **Extend LIVE run (no-ref):** user: "final video generate kro" + "ref images use nhi karni" → storyboard refs stripped (5 scenes), MCP chrome killed (profile free), `FLOW_APPROVE_CREDITS=1 ... --resume` launched; segment-1 generate clicked (free-credit accepted) → 900s timeout → manual assist; resume pending-guard refused re-pay (correct), editor unreachable ×2 → budget 3/3 | **ESCALATED** — day 7 failed, `clip_attempts[final.mp4]=3` durable gate, esc_relay pinged, loop FROZEN; manual_todo 16:57 |
+| 31 | 2026-10-06 | manual | **Extend mode (single download):** user chose Recommended — use Flow's Extend to build one ~60s scene, download ONCE. Added env-gated `FLOW_EXTEND_MODE`/`FLOW_TARGET_DURATION_S`, pure seams (timecode parse, `extend_plan`, atomic `extend_progress.json` resume, `expected_final_s`), scene-editor UI (`_enter/_fill/_start/_exit_extend`, duration gate), `_resume_extend` reconcile, force money-gate per segment, `_generate_extend_chain` retry ledger; docs/env wired; `manual_todo.txt` untracked; legacy path untouched | PASS — 202 tests; 4 checker rounds (10+6+5 findings) → APPROVED; 0 credits spent |
 | 30 | 2026-09-15 | manual | **Root AGENTS.md removed:** root `AGENTS.md` deleted by user request; THIS loop's `AGENTS.md` now carries the full rules (§0 self-containment, §2 non-negotiables, §3 budget, §5 inner/outer, §7 escalation, §11 lessons); consumers updated (opencode.yml, maker.md, skills, other loop) | PASS — 151 tests; checker APPROVED |
 | 29 | 2026-09-15 | manual | **Root STATE.md removed:** root `STATE.md` deleted by user request; budget/maker-checker/escalation moved to root `AGENTS.md` (§3/§5/§7); THIS STATE.md self-contained; consumers updated (opencode.yml, maker.md, loop-prompt.md, verify/triage skills) | PASS — 151 tests; checker APPROVED |
 | 28 | 2026-09-14 | manual | **Project split (dual spine):** created THIS `STATE.md` + `AGENTS.md` (identity, beats 13-25, §10/§11); loop-prompt.md now points here | PASS — 151 tests; leak scan clean; checker APPROVED |
@@ -68,22 +77,29 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 
 ## 10. Next Actionable Tasks (video loop)
 
-1. **G5 supervised live run (the last gate):** `FLOW_PLANNER=template FLOW_HEADLESS=0
-   .venv/bin/python -m src.main` on a fresh day (concept-03); accept 6/6 real clips →
-   merge → post package → `--upload-today` (tombstone `done` + video_id).
-   Use `docs/PRODUCTION_RUNBOOK.md`.
-2. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
+1. **Extend-mode supervised live run (NEW, beat 31):** release the Flow profile
+   lock (Playwright MCP chrome holds `.runtime/flow-profile`), then
+   `.venv/bin/python -m src.main --resume` (day 7, `.env` already has
+   `FLOW_EXTEND_MODE=1`) — expect 8 generations ≈ 40-96 min, ONE `final.mp4`
+   (64s ±5 gate), progress file updates after every paid step; user checks the
+   final output. Money gate: no paid dialog expected (free credits) — if one
+   appears the run hard-stops (supervised opt-in = `FLOW_APPROVE_CREDITS=1`).
+2. **G5 supervised live run (the last legacy gate):** same command with
+   `FLOW_EXTEND_MODE=0` if the legacy 6-clip path must be re-accepted;
+   otherwise covered by task 1. Use `docs/PRODUCTION_RUNBOOK.md`.
+3. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-3. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
-4. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
+4. Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.
+5. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
-5. `_approve_credits` live verification on the credit dialog (part of G5).
-6. Beat 6-12 follow-ups (verify-loop-state graduation) remain available.
-7. **(2026-09-24, shared infra — owned by job loop Beat 116):** retired `checker` model
+6. `_approve_credits` live verification on the credit dialog (part of G5 / extend chain).
+7. Beat 6-12 follow-ups (verify-loop-state graduation) remain available.
+8. **(2026-09-24, shared infra — owned by job loop Beat 116):** retired `checker` model
    `opencode/mimo-v2.5-free` was fixed to `opencode/mimo-v2.6-flash-free` in
    `.opencode/agent/checker.md`; this loop's `AGENTS.md` §11 lesson line was updated to
-   match (consistency only, no video-loop behavior change). Verify the Checker spawn works
-   next session before this loop's next maker–checker cycle.
+   match (consistency only, no video-loop behavior change). NOTE: `checker` subagent
+   spawn hit "free tier only within OpenCode" this beat — checker ran as read-only
+   `general` instead; verify `checker` agent next session.
 
 ## 11. Human Gate Decisions (video loop)
 

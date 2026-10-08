@@ -107,3 +107,41 @@ def test_decide_fail_fast_interactive_stays_blocking():
 def test_manual_todo_path_is_project_root_file():
     assert cfg.manual_todo_path().name == "manual_todo.txt"
     assert cfg.manual_todo_path().parent == cfg.ROOT
+
+def test_extend_mode_defaults_off(monkeypatch):
+    monkeypatch.delenv("FLOW_EXTEND_MODE", raising=False)
+    assert cfg.extend_mode() is False
+
+
+def test_extend_mode_env_opt_in(monkeypatch):
+    for value, expected in (("1", True), ("true", True), ("YES", True),
+                            ("0", False), ("", False), ("no", False)):
+        monkeypatch.setenv("FLOW_EXTEND_MODE", value)
+        assert cfg.extend_mode() is expected, value
+    monkeypatch.delenv("FLOW_EXTEND_MODE", raising=False)
+
+
+def test_extend_target_s_defaults_to_60(monkeypatch):
+    monkeypatch.delenv("FLOW_TARGET_DURATION_S", raising=False)
+    assert cfg.extend_target_s() == 60
+
+
+def test_extend_target_s_env_override(monkeypatch):
+    monkeypatch.setenv("FLOW_TARGET_DURATION_S", "48")
+    assert cfg.extend_target_s() == 48
+    monkeypatch.delenv("FLOW_TARGET_DURATION_S", raising=False)
+
+
+def test_extend_target_s_rejects_garbage(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("FLOW_TARGET_DURATION_S", "sixty")
+    with pytest.raises(SystemExit):
+        cfg.extend_target_s()
+    monkeypatch.setenv("FLOW_TARGET_DURATION_S", "4")  # below 8s (one clip)
+    with pytest.raises(SystemExit):
+        cfg.extend_target_s()
+    monkeypatch.setenv("FLOW_TARGET_DURATION_S", "500")  # would queue 60+ paid extends
+    with pytest.raises(SystemExit):
+        cfg.extend_target_s()
+    monkeypatch.delenv("FLOW_TARGET_DURATION_S", raising=False)
