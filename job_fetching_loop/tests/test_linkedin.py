@@ -196,7 +196,7 @@ def test_feed_url_uses_quote_plus_for_hiring_phrase():
 def test_linkedin_guest_public_outage_raises_on_failure(monkeypatch):
     import pytest
     import requests
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from src.scrapers.linkedin import LinkedInScraper
 
     def fail(*a, **kw):
@@ -212,7 +212,7 @@ def test_linkedin_guest_public_http_error_raises_when_all_fail(monkeypatch):
     import pytest
     import requests
     from unittest.mock import MagicMock
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from src.scrapers.linkedin import LinkedInScraper
 
     mock_resp = MagicMock()
@@ -462,3 +462,178 @@ def test_post_location_onsite_and_us_restrictions():
     }, "AI")
     assert raw_world is not None
     assert raw_world.url == "https://www.linkedin.com/feed/update/urn:li:activity:123456789/"
+
+# ── Beat 172: board search carries the guest-pass worldwide filters ───────────
+
+def test_linkedin_board_url_worldwide_remote_recency():
+    """Authenticated board URL must mirror guest filters: remote-only (f_WT=2),
+    Worldwide, newest-first, past-24h TPR — no Easy Apply unless opted in."""
+    from datetime import datetime, timedelta, timezone
+    from src.scrapers.linkedin import LinkedInScraper
+
+    now = datetime.now(timezone.utc)
+    url = LinkedInScraper._board_url("AI Engineer", now - timedelta(hours=12))
+    assert "keywords=AI+Engineer" in url
+    assert "f_WT=2" in url
+    assert "location=Worldwide" in url
+    assert "sortBy=DD" in url
+    assert "f_TPR=r86400" in url  # clamped to 24h minimum
+    assert "f_AL" not in url
+
+
+def test_linkedin_board_url_tpr_scales_with_window():
+    from datetime import datetime, timedelta, timezone
+    from src.scrapers.linkedin import LinkedInScraper
+
+    now = datetime.now(timezone.utc)
+    url = LinkedInScraper._board_url("AI Engineer", now - timedelta(days=3))
+    assert "f_TPR=r259200" in url
+
+
+# ── Beat 178: card pre-filter skips detail HTTP + hub-first location order ───
+
+def test_linkedin_guest_prefilter_skips_detail_fetch(monkeypatch):
+    """A title-hit card (Onsite) must never trigger its detail HTTP — the
+    verdict is identical with or without the JD body."""
+    from src.scrapers.linkedin import LinkedInScraper
+
+    search_html = """
+    <div class="base-card">
+      <h3 class="base-search-card__title">AI Engineer (Onsite)</h3>
+      <h4 class="base-search-card__subtitle"><a href="#">Avanza</a></h4>
+      <span class="job-search-card__location">Pakistan</span>
+      <a class="base-card__full-link" href="https://pk.linkedin.com/jobs/view/avanza-4467000001"></a>
+      <time datetime="2026-10-08"></time>
+    </div>
+    <div class="base-card">
+      <h3 class="base-search-card__title">Senior AI Engineer (Remote)</h3>
+      <h4 class="base-search-card__subtitle"><a href="#">Acme AI</a></h4>
+      <span class="job-search-card__location">Pakistan</span>
+      <a class="base-card__full-link" href="https://pk.linkedin.com/jobs/view/acme-4467999999"></a>
+      <time datetime="2026-10-08"></time>
+    </div>
+    """
+
+    class MockResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+            self.url = "https://linkedin.com"
+
+    detail_urls = []
+
+    def mock_get(url, **kwargs):
+        if "seeMoreJobPostings" in url:
+            return MockResponse(search_html)
+        if "jobPosting" in url:
+            detail_urls.append(url)
+            return MockResponse('<div class="show-more-less-html__markup">100% remote work from home</div>')
+        return MockResponse("", status_code=404)
+
+    import requests
+    monkeypatch.setattr(requests, "get", mock_get)
+    scraper = LinkedInScraper()
+    jobs = list(scraper._fetch_guest_public(["AI"], datetime(2026, 10, 7, tzinfo=timezone.utc)))
+
+    assert not any("4467000001" in u for u in detail_urls), "onsite card must skip detail HTTP"
+    assert any("4467999999" in u for u in detail_urls), "clean card still verified live"
+    assert [j.title for j in jobs] == ["Senior AI Engineer (Remote)"]
+
+
+def test_linkedin_guest_location_priority_hubs_before_worldwide(monkeypatch):
+    """Scarce guest budget goes to Pakistan + ME hubs first, Worldwide last."""
+    import requests
+    from urllib.parse import parse_qsl, urlparse
+    from src.scrapers.linkedin import LinkedInScraper
+
+    seen_locs = []
+
+    class MockResponse:
+        def __init__(self, text, status_code=200):
+            self.text = text
+            self.status_code = status_code
+            self.url = "https://linkedin.com"
+
+    def mock_get(url, **kwargs):
+        if "seeMoreJobPostings" in url:
+            loc = dict(parse_qsl(urlparse(url).query)).get("location", "")
+            if loc not in seen_locs:
+                seen_locs.append(loc)
+            return MockResponse("", status_code=200)
+        return MockResponse("", status_code=404)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+    scraper = LinkedInScraper()
+    list(scraper._fetch_guest_public(["AI"], datetime(2026, 10, 7, tzinfo=timezone.utc)))
+
+    assert seen_locs[0] == "Pakistan"
+    assert seen_locs[-1] == "Worldwide"
+    assert {"United Arab Emirates", "Saudi Arabia", "Qatar"} <= set(seen_locs)
+
+
+# ── Beat 180: owner's 4 mismatch cases — line-by-line proof, all 4 stages ────
+
+def _stage_verdicts(title, loc, desc):
+    """(prefilter_ok, helper_ok, helper_reason, daily_ok, digest_ok)."""
+    from src.location_law import (
+        DIGEST_DISQUALIFY,
+        GUEST_PREFILTER_DISQUALIFY,
+        evaluate,
+    )
+    from src.main import is_remotely_workable
+    from src.models import LOCATION_REMOTE
+    from src.scrapers.linkedin import _passes_guest_detail_filters
+
+    pre = evaluate(loc, "linkedin", None, title, disqualify=GUEST_PREFILTER_DISQUALIFY)
+    ok, why = _passes_guest_detail_filters(title, loc, desc)
+    daily = is_remotely_workable(LOCATION_REMOTE, loc, "linkedin", desc, title)
+    digest = evaluate(loc, "linkedin", desc, title, disqualify=DIGEST_DISQUALIFY)
+    return pre.ok, ok, why, daily, digest.ok
+
+
+def test_owner_mismatch_systems_karachi_lahore_offices():
+    ok = _stage_verdicts(
+        "Forward Deployed Engineer - GenAI", "Karachi / Lahore",
+        "We are hiring for our Karachi and Lahore offices. Office-based position.",
+    )
+    assert ok == (True, False, "worldwide", False, False), ok
+
+
+def test_owner_mismatch_melior_onsite_position():
+    ok = _stage_verdicts(
+        "Lead AI/ML Engineer", "Islamabad",
+        "THIS IS AN ONSITE POSITION. Work from our Islamabad office.",
+    )
+    assert ok[0] is True and ok[1] is False and ok[3] is False and ok[4] is False, ok
+    assert ok[2] in ("description", "onsite", "worldwide"), ok
+
+
+def test_owner_mismatch_avanza_onsite_title_prefiltered():
+    ok = _stage_verdicts(
+        "AI Copilot Architect (Java/Python) (Onsite)", "Pakistan",
+        "Join our team. Office based role.",
+    )
+    assert ok[0] is False, ok  # prefilter kills it: no detail HTTP at all
+    assert ok[1] is False and ok[3] is False and ok[4] is False, ok
+
+
+def test_owner_mismatch_codeninja_lahore_office_no_marker():
+    ok = _stage_verdicts(
+        "Senior AI Engineer / Agentic AI Architect", "Lahore, Pakistan",
+        "Join our Lahore office team. Great culture, on-site collaboration.",
+    )
+    assert ok == (True, False, "worldwide", False, False), ok
+
+
+def test_owner_controls_genuine_remote_still_pass():
+    ok = _stage_verdicts(
+        "Lead Asp.NET Core 8.0 Fullstack Engineer - Remote (Australian Startup)",
+        "Pakistan (Remote)",
+        "100% remote worldwide contractor role. B2B contract, work from anywhere in Pakistan.",
+    )
+    assert ok == (True, True, "", True, True), ok
+    ok = _stage_verdicts(
+        "Applied AI Engineering, Lead", "Turkiye (Global Remote)",
+        "Globally distributed remote team. 100% remote, work from anywhere.",
+    )
+    assert ok == (True, True, "", True, True), ok

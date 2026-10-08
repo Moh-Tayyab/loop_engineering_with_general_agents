@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.models import (
@@ -147,6 +148,69 @@ def test_indeed_missing_date_fail_closed():
     assert job.posted_date is None
 
 
+# ── Beat 159: full-JD pane must open for ANY pilot profile (not AI-only) ─────
+
+async def _noop_click(*args, **kwargs):
+    return None
+
+
+async def _noop_pause(*args, **kwargs):
+    return None
+
+
+def _odi_card(title_text: str, desc_sel: str):
+    mock_title = MockElement(text=title_text, attrs={"href": "/viewjob?jk=odi123", "title": title_text})
+    mock_company = MockElement(text="Bank")
+    mock_location = MockElement(text="Remote")
+    mock_desc = MockElement(text="ODI ETL role.")
+    mock_date = MockElement(text="Just posted")
+    return MockElement(
+        attrs={"data-jk": "odi123"},
+        children={
+            "h2.jobTitle a": mock_title,
+            "span[data-testid='company-name']": mock_company,
+            "div[data-testid='text-location']": mock_location,
+            desc_sel: mock_desc,
+            "span.date": mock_date,
+        },
+    )
+
+
+def test_indeed_full_desc_opens_for_odi_profile(monkeypatch):
+    """ODI title must trigger the right-pane full-JD read (was AI-only gate)."""
+    import src.scrapers.indeed as indeed_mod
+    monkeypatch.setattr(indeed_mod, "human_click", _noop_click)
+    monkeypatch.setattr(indeed_mod, "human_read_pause", _noop_pause)
+    full = "ODI mappings, FSDM data model, FCCM AML monitoring, ETL batches. " * 20
+    page = MockElement(children={"#jobDescriptionText": MockElement(text=full)})
+    scraper = IndeedScraper()
+    job = asyncio.run(scraper._parse_card(_odi_card("Oracle ODI Developer", "div.job-snippet"), "ODI", page=page))
+    assert job is not None
+    assert "FCCM AML monitoring" in (job.description or "")
+    assert len(job.description or "") > len("ODI ETL role.")
+
+
+def test_glassdoor_full_desc_opens_for_odi_profile(monkeypatch):
+    """Same any-profile gate on the Glassdoor right-pane read."""
+    import src.scrapers.glassdoor as gd_mod
+    monkeypatch.setattr(gd_mod, "human_click", _noop_click)
+    monkeypatch.setattr(gd_mod, "human_read_pause", _noop_pause)
+    full = "OFSAA FCCM implementation, KYC scenarios, Oracle Mantas support. " * 20
+    page = MockElement(children={"div#JobDescriptionContainer": MockElement(text=full)})
+    mock_title = MockElement(text="FCCM Consultant", attrs={"href": "/job-listing/?jl=777"})
+    mock_desc = MockElement(text="FCCM role.")
+    mock_date = MockElement(text="24h")
+    card = MockElement(children={
+        "a[data-test='job-title']": mock_title,
+        "div.JobCard_jobDescription__v_1k2": mock_desc,
+        "div[data-test='job-age']": mock_date,
+    })
+    scraper = GlassdoorScraper()
+    job = asyncio.run(scraper._parse_card(card, "FCCM", page=page))
+    assert job is not None
+    assert "Oracle Mantas" in (job.description or "")
+
+
 # ── Glassdoor Scraper Tests ───────────────────────────────────────────────────
 
 def test_glassdoor_missing_location_not_fabricated():
@@ -229,3 +293,229 @@ def test_canonical_job_urls():
     # Glassdoor jl & jobListingId
     assert canonical_job_url("https://www.glassdoor.com/Job/jobs.htm?jl=123456789&guid=abc", source="glassdoor") == "https://www.glassdoor.com/job-listing/?jl=123456789"
     assert canonical_job_url("https://www.glassdoor.com/partner/jobListing.htm?jobListingId=987654321&pos=101", source="glassdoor") == "https://www.glassdoor.com/job-listing/?jl=987654321"
+
+
+# ── Beat 164: Glassdoor URL backstop + UI filters + full-JD per card ──────────
+
+def test_glassdoor_search_url_backstop_no_easy_apply_by_default(monkeypatch):
+    """Owner removed the Easy Apply filter: default URL has fromAge + Remote,
+    and NO easyApplyOnly unless EASY_APPLY_ONLY=1."""
+    monkeypatch.delenv("EASY_APPLY_ONLY", raising=False)
+    s = GlassdoorScraper()
+    url = s._search_url("AI Engineer", 1, 2)
+    assert "fromAge=1" in url
+    assert "locKeyword=Remote" in url
+    assert "sc.keyword=AI+Engineer" in url
+    assert "page=2" in url
+    assert "easyApplyOnly" not in url
+
+
+def test_glassdoor_search_url_easy_apply_opt_in(monkeypatch):
+    monkeypatch.setenv("EASY_APPLY_ONLY", "1")
+    s = GlassdoorScraper()
+    assert "easyApplyOnly=true" in s._search_url("AI Engineer", 1, 1)
+
+
+def test_glassdoor_ui_filters_best_effort_nothing_found():
+    """No filter buttons on the page → no raise, URL backstop holds."""
+    s = GlassdoorScraper()
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=None)
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    assert page.query_selector.await_count >= 1
+
+
+def test_glassdoor_ui_filters_clicks_remote_and_apply(monkeypatch):
+    """Remote-only chip + Apply filters get clicked when visible."""
+    import src.scrapers.glassdoor as gd_mod
+    s = GlassdoorScraper()
+
+    class FakeEl:
+        async def is_visible(self):
+            return True
+
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=FakeEl())
+    clicks = []
+    monkeypatch.setattr(gd_mod, "human_click", AsyncMock(side_effect=lambda p, e: clicks.append(e)))
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    # date-filter btn + date option + remote chip + apply button
+    assert len(clicks) >= 3
+
+
+def test_glassdoor_parse_card_reads_full_desc_unconditionally(monkeypatch):
+    """Every card's right-pane JD is read — no profile/snippet gate. A junior
+    off-profile title still gets its full description attached."""
+    import src.scrapers.glassdoor as gd_mod
+    s = GlassdoorScraper()
+    full = "COMPLETE job description. " * 50  # 1250 chars, beats any snippet
+
+    title_el = MockElement(text="Junior Office Assistant", attrs={"href": "/job-listing/?jl=555"})
+    card = MockElement(
+        text="Junior Office Assistant\nUnknown\nSnippet short",
+        children={"a[data-test='job-title']": title_el},
+    )
+
+    class FakePane:
+        async def inner_text(self):
+            return full
+        async def is_visible(self):
+            return True
+
+    page = AsyncMock()
+    async def fake_qs(sel):
+        if "Show more" in sel:
+            return None
+        if "JobDetails_jobDescription" in sel or "job-description" in sel or "JobDescriptionContainer" in sel:
+            return FakePane()
+        return None
+    page.query_selector = fake_qs
+    monkeypatch.setattr(gd_mod, "human_click", AsyncMock())
+    monkeypatch.setattr(gd_mod, "human_read_pause", AsyncMock())
+    job = asyncio.run(s._parse_card(card, "AI Engineer", 1, page=page))
+    assert job is not None
+    assert job.description is not None and job.description.startswith("COMPLETE job description.")
+    assert len(job.description) > 1000
+
+
+# ── Beat 165: Indeed URL backstop + UI filters + full-JD per card ─────────────
+
+def test_indeed_search_url_backstop_no_easy_apply_by_default(monkeypatch):
+    """Owner removed the Easy Apply filter: default URL has fromage + Remote
+    + remote-only facet, and NO iaFilter unless EASY_APPLY_ONLY=1."""
+    monkeypatch.delenv("EASY_APPLY_ONLY", raising=False)
+    s = IndeedScraper()
+    url = s._search_url("AI Engineer", 1, 10)
+    assert "fromage=1" in url
+    assert "l=Remote" in url
+    assert "DSQF7" in url
+    assert "start=10" in url
+    assert "iaFilter" not in url
+
+
+def test_indeed_search_url_easy_apply_opt_in(monkeypatch):
+    monkeypatch.setenv("EASY_APPLY_ONLY", "1")
+    s = IndeedScraper()
+    assert "iaFilter=1" in s._search_url("AI Engineer", 1, 0)
+
+
+def test_indeed_ui_filters_best_effort_nothing_found():
+    """No filter controls on the page → no raise, URL backstop holds."""
+    s = IndeedScraper()
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=None)
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    assert page.query_selector.await_count >= 1
+
+
+def test_indeed_ui_filters_clicks_date_and_remote(monkeypatch):
+    """Date-posted button + option and the Remote chip get clicked."""
+    import src.scrapers.indeed as in_mod
+    s = IndeedScraper()
+
+    class FakeEl:
+        async def is_visible(self):
+            return True
+
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=FakeEl())
+    clicks = []
+    monkeypatch.setattr(in_mod, "human_click", AsyncMock(side_effect=lambda p, e: clicks.append(e)))
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    # date button + date option + remote chip
+    assert len(clicks) >= 3
+
+
+def test_indeed_parse_card_reads_full_desc_unconditionally(monkeypatch):
+    """Every card's right-pane JD is read — no profile/snippet gate."""
+    import src.scrapers.indeed as in_mod
+    s = IndeedScraper()
+    full = "FULL Indeed job description. " * 50  # 1500 chars, beats any snippet
+
+    title_el = MockElement(text="Junior Office Assistant", attrs={"href": "/rc/clk?jk=abc123"})
+    card = MockElement(
+        text="Junior Office Assistant\nUnknown\nJust posted\nSnippet short",
+        attrs={"data-jk": "abc123"},
+        children={"h2.jobTitle a": title_el},
+    )
+
+    class FakePane:
+        async def inner_text(self):
+            return full
+
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=FakePane())
+    monkeypatch.setattr(in_mod, "human_click", AsyncMock())
+    monkeypatch.setattr(in_mod, "human_read_pause", AsyncMock())
+    job = asyncio.run(s._parse_card(card, "AI Engineer", 1, page=page))
+    assert job is not None
+    assert job.description is not None and job.description.startswith("FULL Indeed job description.")
+    assert len(job.description) > 1000
+
+
+# ── Beat 167: checker MINOR #1 — stable hooks first, no decoy clicks ──────────
+
+def test_glassdoor_remote_hook_leads_and_no_bare_apply(monkeypatch):
+    """`[data-test]` remote hook is tried before page-wide text selectors, and
+    no substring 'Apply' selector can match a job 'Apply now' button."""
+    import src.scrapers.glassdoor as gd_mod
+    s = GlassdoorScraper()
+
+    class FakeEl:
+        async def is_visible(self):
+            return False  # force full sweep so every selector is attempted
+
+    seen: list[str] = []
+    page = AsyncMock()
+    async def fake_qs(sel):
+        seen.append(sel)
+        return FakeEl()
+    page.query_selector = fake_qs
+    monkeypatch.setattr(gd_mod, "human_click", AsyncMock())
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    remote_sels = [x for x in seen if "emote" in x]
+    assert remote_sels, "expected remote-only selectors to be attempted"
+    assert "data-test" in remote_sels[0], f"stable hook must lead, got: {remote_sels[0]}"
+    assert "button:has-text('Apply')" not in seen, "bare substring Apply must be gone"
+    assert any("text-is('Apply')" in x for x in seen), "exact-match Apply fallback expected"
+
+
+def test_indeed_remote_hook_leads(monkeypatch):
+    """`[data-testid]` remote hook is tried before page-wide text selectors."""
+    import src.scrapers.indeed as in_mod
+    s = IndeedScraper()
+
+    class FakeEl:
+        async def is_visible(self):
+            return False
+
+    seen: list[str] = []
+    page = AsyncMock()
+    async def fake_qs(sel):
+        seen.append(sel)
+        return FakeEl()
+    page.query_selector = fake_qs
+    monkeypatch.setattr(in_mod, "human_click", AsyncMock())
+    asyncio.run(s._apply_search_filters_ui(page, 1))
+    remote_sels = [x for x in seen if "emote" in x]
+    assert remote_sels, "expected remote selectors to be attempted"
+    assert "data-testid" in remote_sels[0], f"stable hook must lead, got: {remote_sels[0]}"
+
+
+# ── Beat 171: deep pagination + worldwide-remote backstop ─────────────────────
+
+def test_deep_pagination_depth_both_boards():
+    """Owner (worldwide fully-remote MAXIMUM jobs): 5 pages/starts per keyword."""
+    assert GlassdoorScraper._PAGES == (1, 2, 3, 4, 5)
+    assert IndeedScraper._STARTS == (0, 10, 20, 30, 40)
+
+
+def test_browser_source_timeout_default_900_for_deep_scrape(monkeypatch):
+    """Deep fan-out (5 domains × 5 pages × full-JD) needs the 15min board cap."""
+    import src.config as cfg
+
+    monkeypatch.delenv("BROWSER_SOURCE_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("JOB_LOOP_CLOUD", raising=False)
+    assert cfg.source_timeout_s("indeed") == 900.0
+    assert cfg.source_timeout_s("glassdoor") == 900.0
+    assert cfg.source_timeout_s("linkedin") != 900.0  # LinkedIn keeps its own caps

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Iterator
+from typing import Any, Iterator
 
 import src.config as cfg
 from src.browser import (
@@ -45,6 +45,8 @@ class IndeedScraper(BaseScraper):
     _BASE = "https://pk.indeed.com"
     _HOME = "https://pk.indeed.com/"
     _SEARCH = "https://pk.indeed.com/jobs?q={kw}&l=Remote&fromage={days}"
+    # Beat 171 (owner: worldwide fully-remote MAXIMUM jobs): deep pagination.
+    _STARTS = (0, 10, 20, 30, 40)
 
     def _apply_domain(self) -> None:
         """Phase 2 (A2): rebuild URL bases from the orchestrator-chosen or
@@ -62,12 +64,37 @@ class IndeedScraper(BaseScraper):
     def is_available(self) -> bool:
         return True
 
+    # Indeed's remote-only search facet: jobs whose location attribute is
+    # remote (`attr(DSQF7)`). Combined with `l=Remote` so both the query and
+    # the facet enforce worldwide-remote (Beat 165 parity with Glassdoor).
+    _REMOTE_FACET = "&sc=0kf%3Aattr%28DSQF7%29%3B"
+
+    def _search_url(self, keyword: str, days: int, start: int = 0) -> str:
+        """Search URL with the Beat-165 backstop baked in: `fromage` (last-day
+        window), `l=Remote` + remote-only facet, and `iaFilter` (Easy Apply)
+        only when `EASY_APPLY_ONLY=1` (owner removed the Easy Apply filter).
+        """
+        from urllib.parse import quote_plus
+        ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
+        return (
+            self._SEARCH.format(kw=quote_plus(keyword), days=days) + ia_filter
+            + self._REMOTE_FACET + f"&start={start}"
+        )
+
     def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         self._apply_domain()
         yield from asyncio.run(self._gather(keywords, posted_after))
 
     async def _gather(self, keywords, posted_after) -> list:
-        return [j async for j in self._fetch_async(keywords, posted_after)]
+        jobs = []
+        try:
+            async for j in self._fetch_async(keywords, posted_after):
+                jobs.append(j)
+        except (CaptchaDetected, CaptchaTimeout):
+            raise
+        except Exception as e:
+            log.warning("[%s] fetch aborted early (%s), keeping %d collected jobs", self.name, e, len(jobs))
+        return jobs
 
     async def _fetch_async(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
@@ -83,12 +110,13 @@ class IndeedScraper(BaseScraper):
             except Exception as e:
                 log.debug("[%s] warm_up non-fatal error: %s", self.name, e)
             for kw in keywords:
-                from urllib.parse import quote_plus
-                ia_filter = "&iaFilter=1" if cfg.easy_apply_only() else ""
-                # B6: paginate Indeed (start=0,10,20) — first page only capped recall.
-                for start in (0, 10, 20):
-                    url = self._SEARCH.format(kw=quote_plus(kw), days=days) + ia_filter + f"&start={start}"
+                # B6: paginate Indeed (Beat 171 deep: start=0..40) — first page only capped recall.
+                for start in self._STARTS:
+                    url = self._search_url(kw, days, start)
+                    log.info("[indeed] searching %r (start=%d) ...", kw, start)
                     try:
+                        if hasattr(page, "is_closed") and page.is_closed():
+                            page = context.pages[-1] if (context.pages and not context.pages[-1].is_closed()) else await context.new_page()
                         await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
                         if await has_captcha(page):
                             if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
@@ -97,9 +125,17 @@ class IndeedScraper(BaseScraper):
                         any_success = True
                         await human_scroll(page)
                         await human_delay(2.0, 5.0)
+                        # Beat 165 (owner): UI filters on the first page of every
+                        # keyword (last day + remote) — Indeed applies selections
+                        # instantly, no Apply button; URL backstop holds anyway.
+                        if start == 0:
+                            await self._apply_search_filters_ui(page, days)
+                            await human_scroll(page)
+                            await human_delay(1.0, 2.0)
                         cards = await page.query_selector_all("div.cardOutline, div.job_seen_beacon, div.jobsearch-SerpJobCard")
                         if not cards:
                             cards = await page.query_selector_all("td.resultContent")
+                        log.info("[indeed] %r (start=%d): found %d card(s)", kw, start, len(cards))
                         # B5: page loaded but 0 cards on first page = selector drift
                         if not cards and start == 0:
                             body_len = 0
@@ -127,6 +163,58 @@ class IndeedScraper(BaseScraper):
             await page.close()
         if not any_success and errors:
             raise errors[0]
+
+    async def _apply_search_filters_ui(self, page, days: int = 1) -> None:
+        """Beat 165 (owner): per-keyword UI filters — Date posted (last 24h)
+        + Remote facet, mirroring the Glassdoor beat-164 flow.
+
+        Best-effort with fallback selectors: the search URL already carries
+        `fromage` + `l=Remote` + the remote-only facet as a backstop, so a
+        missing/renamed control degrades to URL-level filtering, never to a
+        crash. Only called on the first page of each keyword.
+        """
+        try:
+            # Date posted → "Last 24 hours" (daily) else "Last 3 days".
+            try:
+                btn = await page.query_selector(
+                    "#filter-dateposted button, button:has-text('Date posted'), "
+                    "[data-testid='filter-dateposted'] button, #filter-dateposted"
+                )
+                if btn and await btn.is_visible():
+                    await human_click(page, btn)
+                    await asyncio.sleep(0.8)
+                    want = "24 hours" if days <= 1 else "3 days"
+                    opt = await page.query_selector(
+                        f"#filter-dateposted li:has-text('{want}'), "
+                        f"[role='option']:has-text('{want}'), "
+                        f"li:has-text('Last {want}')"
+                    )
+                    if opt and await opt.is_visible():
+                        await human_click(page, opt)
+                        await asyncio.sleep(1.5)
+                        log.info("[indeed] clicked UI date filter (days=%d)", days)
+            except Exception as e:
+                log.debug("[indeed] UI date filter click failed: %s", e)
+            # Remote facet chip (URL facet is the backstop).
+            # Beat 167 (checker MINOR #1): stable `[data-testid]` hook first —
+            # page-wide text selectors can hit decoy links, so the hook leads.
+            for sel in (
+                "[data-testid*='remote']",
+                "a:has-text('Remote')",
+                "button:has-text('Remote')",
+                "li:has-text('Remote')",
+            ):
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        await human_click(page, el)
+                        await asyncio.sleep(1.5)
+                        log.info("[indeed] clicked UI remote filter (%s)", sel)
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            log.debug("[indeed] UI search filters failed (URL backstop holds): %s", e)
 
     async def _parse_card(self, card, keyword: str, days: int = 1, page: Any = None) -> RawJob | None:
         title_el = await card.query_selector("h2.jobTitle a, a.jcs-JobTitle, h2.jobTitle span, h2 a")
@@ -171,19 +259,19 @@ class IndeedScraper(BaseScraper):
         except Exception:
             pass
 
-        # Try reading full description from right pane if card matches profile
+        # Beat 165 (owner, Glassdoor-164 parity): read the FULL description of
+        # EVERY card — click it open, take the right-pane JD. Snippet stays as
+        # the fallback so a slow/changed pane never drops the job. Fetch-vs-skip
+        # stays downstream (matcher + Rule 11); here we just stop flying blind.
         if page and title_el:
             try:
-                from src.matcher import match_usama_cv
-                is_match, _, _ = match_usama_cv(title, description=desc)
-                if is_match:
-                    await human_click(page, title_el)
-                    await human_read_pause(0.5, 1.5)
-                    full_desc_el = await page.query_selector("#jobDescriptionText, div.jobsearch-jobDescriptionText")
-                    if full_desc_el:
-                        full_text = (await full_desc_el.inner_text()).strip()
-                        if full_text and len(full_text) > len(desc or ""):
-                            desc = full_text[:3500]
+                await human_click(page, title_el)
+                await human_read_pause(0.5, 1.5)
+                full_desc_el = await page.query_selector("#jobDescriptionText, div.jobsearch-jobDescriptionText")
+                if full_desc_el:
+                    full_text = (await full_desc_el.inner_text()).strip()
+                    if full_text and len(full_text) > len(desc or ""):
+                        desc = full_text[:3500]
             except Exception:
                 pass
 

@@ -16,3 +16,7 @@ loop.log
 scratch/
 prune_output.py
 job-live-*.yml
+profiles/
+# runtime + loop artifacts (agentic-loop convention)
+.agents/
+skills-lock.json

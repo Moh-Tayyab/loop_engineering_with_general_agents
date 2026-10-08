@@ -665,7 +665,12 @@ def test_remote_only_drops_onsite_hybrid_unknown():
 
 def test_remote_only_keeps_remote():
     from src.main import is_remotely_workable
-    assert is_remotely_workable("remote")
+    # Beat 158: bare location_type with NO location text and NO description is
+    # unverifiable — fail-closed now (this assert used to encode the bypass).
+    assert not is_remotely_workable("remote")
+    assert is_remotely_workable(
+        "remote", None, description="Work from anywhere in the world, no location requirements."
+    )
 
 
 def test_remote_only_uses_location_text():

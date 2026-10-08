@@ -1198,3 +1198,215 @@ def test_run_source_drops_us_only_and_restricted_jobs(tmp_path, monkeypatch):
     assert len(jobs) == 2
     companies = {j.company for j in jobs}
     assert companies == {"Sticker Mule", "Evaboot"}
+
+
+def test_solve_arg_dispatches_solve_source(monkeypatch):
+    import src.main as main
+    called = []
+
+    async def fake_solve_source(source):
+        called.append(source)
+        return 0
+
+    monkeypatch.setattr(main, "solve_source", fake_solve_source)
+    rc = main.main(["--solve", "indeed"])
+    assert rc == 0
+    assert called == ["indeed"]
+
+# ── Beat 170: multi-domain fan-out in run_source ──────────────────────────────
+
+class _DomainFakeScraper:
+    """Yields one RawJob per active_domain (proves fan-out); explodes on `bad`."""
+
+    name = "indeed"
+    active_domain = None
+
+    def __init__(self):
+        self.seen_domains: list = []
+
+    def fetch(self, keywords, posted_after):
+        dom = self.active_domain
+        self.seen_domains.append(dom)
+        if dom and dom.startswith("bad."):
+            raise RuntimeError(f"CAPTCHA wall on {dom}")
+        n = len(self.seen_domains)
+        yield RawJob(
+            source="indeed",
+            title=f"AI Engineer L{n}",
+            company=f"Acme{n}",
+            url=f"https://{dom}/viewjob?jk=abc123{n}",
+            location="Remote",
+            posted_date=(datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            description=f"Worldwide remote LLM team hiring squad {n}.",
+            fetched_at=datetime.now(timezone.utc),
+        )
+
+    def is_available(self):
+        return True
+
+    def login_required(self):
+        return False
+
+
+def test_run_source_fans_out_across_all_closed_domains(tmp_slc, monkeypatch):
+    """Two closed Indeed domains → both scraped, jobs merged, each key success."""
+    import src.main as main
+
+    monkeypatch.setenv("INDEED_DOMAINS", "d1.example,d2.example")
+    monkeypatch.delenv("INDEED_DOMAINS_CLOUD", raising=False)
+    fake = _DomainFakeScraper()
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    seen = SeenStore()
+    circuit = CircuitManager(LoopState().state)
+    outcomes: dict = {}
+    jobs = run_source("indeed", ["AI Engineer"], datetime.now(timezone.utc) - timedelta(days=1),
+                      seen, circuit, 100, dry_run=True, outcomes=outcomes)
+
+    assert fake.seen_domains == ["d1.example", "d2.example"]
+    assert len(jobs) == 2
+    assert outcomes["indeed"] == "ok"
+    assert circuit._get("indeed:d1.example").total_successes == 1
+    assert circuit._get("indeed:d2.example").total_successes == 1
+
+
+def test_run_source_domain_failure_isolated_per_key(tmp_slc, monkeypatch):
+    """First domain explodes → its key takes the failure, second still runs ok."""
+    import src.main as main
+
+    monkeypatch.setenv("INDEED_DOMAINS", "bad.example,good.example")
+    monkeypatch.delenv("INDEED_DOMAINS_CLOUD", raising=False)
+    fake = _DomainFakeScraper()
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    seen = SeenStore()
+    circuit = CircuitManager(LoopState().state)
+    outcomes: dict = {}
+    jobs = run_source("indeed", ["AI Engineer"], datetime.now(timezone.utc) - timedelta(days=1),
+                      seen, circuit, 100, dry_run=True, outcomes=outcomes)
+
+    assert fake.seen_domains == ["bad.example", "good.example"]
+    assert len(jobs) == 1
+    assert outcomes["indeed"] == "ok"
+    assert circuit._get("indeed:bad.example").consecutive_fails == 1
+    assert circuit._get("indeed:good.example").total_successes == 1
+    assert circuit._get("indeed:good.example").consecutive_fails == 0
+
+
+def test_run_source_skips_open_domains(tmp_slc, monkeypatch):
+    """Open-circuit domain is never attempted; closed one still runs."""
+    import src.main as main
+
+    monkeypatch.setenv("INDEED_DOMAINS", "blocked.example,free.example")
+    monkeypatch.delenv("INDEED_DOMAINS_CLOUD", raising=False)
+    fake = _DomainFakeScraper()
+    monkeypatch.setattr(main, "get_scraper", lambda name: fake)
+
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    circuit = CircuitManager({"sources": {
+        "indeed:blocked.example": {"consecutive_fails": 5, "open_until": future},
+    }})
+    outcomes: dict = {}
+    jobs = run_source("indeed", ["AI Engineer"], datetime.now(timezone.utc) - timedelta(days=1),
+                      SeenStore(), circuit, 100, dry_run=True, outcomes=outcomes)
+
+    assert fake.seen_domains == ["free.example"]
+    assert len(jobs) == 1
+    assert outcomes["indeed"] == "ok"
+
+
+def test_pick_all_domain_keys_lists_every_closed_domain(monkeypatch):
+    from src.circuit_breaker import pick_all_domain_keys
+
+    monkeypatch.setenv("INDEED_DOMAINS", "a.example,b.example")
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    circuit = CircuitManager({"sources": {
+        "indeed:a.example": {"consecutive_fails": 5, "open_until": future},
+    }})
+    assert pick_all_domain_keys(circuit, "indeed") == ["indeed:b.example"]
+    assert pick_all_domain_keys(circuit, "linkedin") == ["linkedin"]
+
+
+def test_cross_domain_same_jk_dedupes_to_one(tmp_slc, monkeypatch):
+    """Same `jk=` on pk + com collapses via canonical id — max UNIQUE jobs."""
+    import src.main as main
+
+    class DupScraper(_DomainFakeScraper):
+        def fetch(self, keywords, posted_after):
+            self.seen_domains.append(self.active_domain)
+            yield RawJob(
+                source="indeed",
+                title="AI Engineer",
+                company="Acme",
+                url=f"https://{self.active_domain}/viewjob?jk=abc123",
+                location="Remote",
+                posted_date=(datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                description="Worldwide remote LLM team hiring.",
+                fetched_at=datetime.now(timezone.utc),
+            )
+
+    monkeypatch.setenv("INDEED_DOMAINS", "pk.example,com.example")
+    monkeypatch.delenv("INDEED_DOMAINS_CLOUD", raising=False)
+    monkeypatch.setattr(main, "get_scraper", lambda name: DupScraper())
+
+    seen = SeenStore()
+    circuit = CircuitManager(LoopState().state)
+    jobs = run_source("indeed", ["AI Engineer"], datetime.now(timezone.utc) - timedelta(days=1),
+                      seen, circuit, 100, dry_run=True)
+
+    assert len(jobs) == 1
+
+
+# ── Beat 173: fan-out edge semantics + stale-shell guard ─────────────────────
+
+def test_run_source_zero_max_jobs_never_reports_hollow_ok(tmp_slc, monkeypatch):
+    """Empty results with no cancellation report plain ok and no jobs (never
+    a hollow ok masking a cancel — the cancelled path needs cancel set)."""
+    import src.main as main
+
+    class QuietScraper:
+        name = "quiet_test"
+        active_domain = None
+        def fetch(self, kw, posted_after):
+            raise AssertionError("must not fetch with max_jobs=0")
+        def is_available(self):
+            return True
+        def login_required(self):
+            return False
+
+    from src.scrapers import _REGISTRY, BaseScraper  # noqa: F401  (registry intact)
+    monkeypatch.setattr(main, "get_scraper", lambda name: QuietScraper())
+    seen = SeenStore()
+    from src.state import LoopState
+    from src.circuit_breaker import CircuitManager
+    circuit = CircuitManager(LoopState().state)
+    outcomes: dict = {}
+    jobs = run_source("quiet_test", ["AI"], datetime.now(timezone.utc) - timedelta(days=1),
+                      seen, circuit, 0, dry_run=True, outcomes=outcomes)
+    assert jobs == []
+    assert outcomes["quiet_test"] == "ok"
+
+
+def test_warn_stale_env_override(tmp_path, monkeypatch, caplog):
+    """Shell-exported token shadowing .env warns loudly (values never logged)."""
+    import logging
+    import src.main as main
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text('TELEGRAM_BOT_TOKEN="file-token-abc"\n', encoding="utf-8")
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stale-shell-token-xyz")
+    with caplog.at_level(logging.WARNING):
+        assert main._warn_stale_env_override(dotenv) is True
+    assert any("shadows .env" in r.message for r in caplog.records)
+    assert not any("stale-shell-token-xyz" in r.message or "file-token-abc" in r.message
+                   for r in caplog.records)
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "file-token-abc")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert main._warn_stale_env_override(dotenv) is False
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    assert main._warn_stale_env_override(dotenv) is False
+    assert main._warn_stale_env_override(tmp_path / "missing.env") is False

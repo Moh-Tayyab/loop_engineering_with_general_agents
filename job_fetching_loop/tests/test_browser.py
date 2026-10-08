@@ -161,3 +161,43 @@ def test_launch_browser_seeds_cookies_in_persistent_context():
 
     assert mock_browser.add_cookies.call_count == 1
     assert mock_browser.add_cookies.call_args[0][0] == fake_cookies
+
+
+def test_clean_stale_singleton_locks_removes_dead_pid(tmp_path):
+    from src.browser import _clean_stale_singleton_locks
+
+    prof_dir = tmp_path / "test-profile"
+    prof_dir.mkdir()
+    lock_file = prof_dir / "SingletonLock"
+    socket_file = prof_dir / "SingletonSocket"
+    cookie_file = prof_dir / "SingletonCookie"
+
+    dead_pid = 99999999
+    lock_file.symlink_to(f"testmachine-{dead_pid}")
+    socket_file.write_text("socket")
+    cookie_file.write_text("cookie")
+
+    _clean_stale_singleton_locks(prof_dir)
+
+    assert not lock_file.exists() and not lock_file.is_symlink()
+    assert not socket_file.exists()
+    assert not cookie_file.exists()
+
+
+def test_clean_stale_singleton_locks_preserves_live_pid(tmp_path):
+    import os
+    from src.browser import _clean_stale_singleton_locks
+
+    prof_dir = tmp_path / "test-profile"
+    prof_dir.mkdir()
+    lock_file = prof_dir / "SingletonLock"
+    socket_file = prof_dir / "SingletonSocket"
+
+    live_pid = os.getpid()
+    lock_file.symlink_to(f"testmachine-{live_pid}")
+    socket_file.write_text("socket")
+
+    _clean_stale_singleton_locks(prof_dir)
+
+    assert lock_file.is_symlink()
+    assert socket_file.exists()

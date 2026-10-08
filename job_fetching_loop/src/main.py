@@ -41,7 +41,7 @@ from src.models import (
     utc_now,
 )
 from src.schedule import compute_fetch_window, check_last_run_freshness, next_fetch_start
-from src.circuit_breaker import CircuitManager, pick_domain_key
+from src.circuit_breaker import CircuitManager, pick_all_domain_keys
 from src.state import DeadLetterQueue, LockTimeoutError, LoopState, SeenStore, atomic_write_text, lock_holder, lock_path_for
 from src.dedup import accept_and_record, dedup_job
 from src.digest import collect_weekly_jobs, generate_digest, write_digest, week_key
@@ -65,6 +65,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="replay dead-lettered batches for a source (default: google_sheets); respects --dry-run")
     p.add_argument("--reset-circuit", action="store_true", help="reset all circuit breakers")
     p.add_argument("--linkedin-login", action="store_true", help="open LinkedIn login gate")
+    p.add_argument("--solve", type=str, default=None, metavar="SOURCE",
+                   help="open headed browser for a source (indeed, glassdoor, linkedin) to solve CAPTCHA and persist session")
     p.add_argument("--list-sources", action="store_true", help="print registered sources and exit")
     p.add_argument("--keywords", type=str, default=None, help="override SCRAPE_KEYWORDS (comma-sep)")
     p.add_argument("--serve", action="store_true",
@@ -112,85 +114,74 @@ async def linkedin_login() -> int:
     return 0
 
 
-# ── Normalization ────────────────────────────────────────────────────────────
+async def solve_source(source_name: str) -> int:
+    source_name = source_name.lower().strip()
+    if source_name == "linkedin":
+        return await linkedin_login()
 
-def normalize_raw(raw: RawJob) -> NormalizedJob:
-    """Convert a source-specific RawJob to the standard NormalizedJob schema."""
-    from src.models import canonical_job_url
-    url = canonical_job_url(raw.url, source=raw.source)
-    salary_min, salary_max, salary_currency = parse_salary(raw.salary)
-    location_type = classify_location(raw.location, title=raw.title)
-    if location_type != LOCATION_REMOTE and raw.location:
-        if is_worldwide_remote(raw.location, source=raw.source, description=raw.description, title=raw.title):
-            location_type = LOCATION_REMOTE
-    jid = job_id(url, raw.title, raw.company, source=raw.source)
-    # Keep enough body for Rule 11 (location law / description restrictions)
-    # without dumping multi-KB pages into every daily JSON row.
-    snippet = (raw.description or "")[:2000]
-    from src.matcher import match_usama_cv
-    _, cv_score, cv_label = match_usama_cv(raw.title, raw.description, raw.tags)
-    return NormalizedJob(
-        id=jid,
-        title=raw.title,
-        title_normalized=normalize_text(raw.title),
-        company=raw.company,
-        company_normalized=normalize_text(raw.company),
-        url=url,
-        source=raw.source,
-        location=raw.location,
-        location_type=location_type,
-        salary_min=salary_min,
-        salary_max=salary_max,
-        salary_currency=salary_currency,
-        job_type=classify_job_type(raw.job_type),
-        posted_date=parse_posted_date(raw.posted_date),
-        fetched_at=raw.fetched_at,
-        tags=raw.tags,
-        description_snippet=snippet,
-        cv_match_score=cv_score,
-        cv_match_label=cv_label,
-        raw=raw.to_dict(),
-    )
+    url_map = {
+        "indeed": "https://pk.indeed.com/",
+        "glassdoor": "https://www.glassdoor.com/",
+    }
+    target_url = url_map.get(source_name)
+    if not target_url:
+        print(f"Unknown source '{source_name}'. Supported for --solve: indeed, glassdoor, linkedin")
+        return 1
+
+    from src.browser import await_captcha_solve, has_captcha, human_delay, human_scroll, launch_browser
+    log.info("Opening headed browser for %s (%s) to solve CAPTCHA and persist session...", source_name, target_url)
+    async with launch_browser(source_name, headless=False, persistent=True) as context:
+        page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await page.bring_to_front()
+        except Exception:
+            pass
+        log.info("[%s] Navigating to %s ...", source_name, target_url)
+        try:
+            await page.goto(target_url, timeout=45_000, wait_until="domcontentloaded")
+        except Exception as exc:
+            log.warning("[%s] Initial navigation note: %s", source_name, exc)
+
+        try:
+            await page.bring_to_front()
+        except Exception:
+            pass
+
+        # Check for captcha or allow manual interaction
+        if await has_captcha(page):
+            log.info("[%s] CAPTCHA detected — please solve the checkbox in the opened browser window.", source_name)
+            solved = await await_captcha_solve(page, source_name, target_url, timeout=300.0)
+            if not solved:
+                log.error("[%s] CAPTCHA was not solved within 300s.", source_name)
+                return 1
+        else:
+            log.info("[%s] No blocking CAPTCHA detected initially. Lingering to ensure session cookies are set...", source_name)
+            await human_delay(min_s=2.0, max_s=4.0)
+            await human_scroll(page)
+
+        # Save storage state
+        try:
+            from src.session import save as save_session
+            storage = await context.storage_state()
+            save_session(source_name, storage)
+            log.info("[%s] Saved session state to .runtime/%s-session.json", source_name, source_name)
+        except Exception as exc:
+            log.warning("[%s] Could not save storage_state: %s", source_name, exc)
+
+        log.info("[%s] Session solve complete and persistent context saved! You can now run the scraper.", source_name)
+        await asyncio.sleep(2.0)
+    return 0
 
 
-def is_remotely_workable(
-    location_type: str,
-    location: str | None = None,
-    source: str | None = None,
-    description: str | None = None,
-    title: str | None = None,
-) -> bool:
-    """True only when the job is clearly worldwide-remote.
+# ── Normalization & Qualification Gates (Beat 182 GateChain) ─────────────────
+from src.gate_chain import (
+    GateChain,
+    GateResult,
+    is_remotely_workable,
+    normalize_raw,
+    record_reject as _record_reject,
+)
 
-    Used by SCRAPE_REMOTE_ONLY: drops city/state-restricted remote jobs
-    (e.g. "Remote in Brooklyn, NY", "Remote, OR"), US domestic-only remote jobs
-    (e.g. Indeed/Glassdoor bare "Remote"), and non-remote positions entirely.
-    Strictly drops on-site, hybrid, and unknown positions.
-    When location text is available, uses is_worldwide_remote for precision;
-    otherwise falls back to location_type == LOCATION_REMOTE.
-    """
-    from src.models import is_title_restricted, is_description_restricted, _is_us_restricted
-    if is_title_restricted(title):
-        return False
-    if is_description_restricted(description):
-        return False
-    # A7: daily gate must match weekly (digest) — description-level US pins
-    # ("based in California", "Must be based in New York City") are rejected here too.
-    if description and _is_us_restricted(description):
-        return False
-    if location_type != LOCATION_REMOTE:
-        return False
-    if location is not None:
-        # Beat 108: daily must match digest — foreign location labels are out
-        # unless the description carries strong worldwide-eligibility phrasing
-        # (is_worldwide_remote applies the same B3 escape via is_foreign…).
-        from src.models import is_foreign_country_restricted, _has_strong_worldwide_eligibility
-        if is_foreign_country_restricted(location) and not _has_strong_worldwide_eligibility(description):
-            return False
-        return is_worldwide_remote(location, source=source, description=description, title=title)
-    if source and source.lower() in ("indeed", "glassdoor", "ziprecruiter", "monster"):
-        return False
-    return True
 
 
 # ── Save jobs to file ────────────────────────────────────────────────────────
@@ -258,35 +249,79 @@ def run_source(
     `outcomes`: optional tally of this source's verdict for the run report
     ('ok' | 'failed' | 'open' | 'login' | 'timeout'), used by the outer run to
     detect a total-outage day for the exit code.
+
+    Beat 170 fan-out: registry sources (Indeed/Glassdoor) run EVERY closed
+    domain key sequentially inside the one worker (same timeout/cancel/max_jobs
+    budget) — `INDEED_DOMAINS` is a rotation no longer, each surface adds jobs
+    and cross-domain dupes collapse via canonical `jk=` ids. Per-domain success
+    and failure record under that domain's own key, so one CAPTCHA-burned host
+    never takes the rest down (Rule 10).
     """
     if timeout_s is None:
         timeout_s = cfg.source_timeout_s(source_name)
 
-    # Phase 2 (A2): resolve the per-domain circuit key BEFORE the worker starts
-    # so timeout, error, and success all record under the same key. Registry
-    # sources get `source:domain` (first closed circuit wins); no available
-    # circuit → skip exactly like the old source-level gate.
-    ckey = pick_domain_key(circuit, source_name)
-    if ckey is None:
+    # Phase 2 (A2) + Beat 170: resolve ALL runnable per-domain circuit keys
+    # BEFORE the worker starts. Empty → skip exactly like the old gate.
+    ckeys = pick_all_domain_keys(circuit, source_name)
+    if not ckeys:
         log.info("[%s] circuit OPEN — skipping", source_name)
         if outcomes is not None:
             outcomes[source_name] = "open"
         return []
-    domain = ckey.split(":", 1)[1] if ":" in ckey else None
 
     box: dict[str, object] = {}
     cancel_event = threading.Event()
     rejects: list[dict] = []
+    # Pre-seed: a timeout striking before the worker thread even starts still
+    # charges the first domain (old unconditional semantics) instead of
+    # recording nothing on a real stall.
+    box["current"] = ckeys[0]
 
     def _work() -> None:
-        try:
-            verdict, jobs = _run_source_impl(source_name, keywords, posted_after,
-                                            seen, circuit, max_jobs, cancel_event=cancel_event,
-                                            rejects=rejects, circuit_key=ckey, domain=domain)
-            box["verdict"] = verdict
-            box["jobs"] = jobs
-        except BaseException as exc:  # noqa: BLE001 - propagate in caller thread
-            box["error"] = exc
+        results: list[tuple[str, str, list, BaseException | None]] = []
+        shared_ids: set[str] = set()
+        shared_recent: list[dict] = []
+        for ck in ckeys:
+            if cancel_event.is_set():
+                break
+            domain = ck.split(":", 1)[1] if ":" in ck else None
+            box["current"] = ck
+            try:
+                done = sum(len(r[2]) for r in results)
+                remaining = max_jobs - done
+                if remaining <= 0:
+                    break
+                verdict, jobs = _run_source_impl(source_name, keywords, posted_after,
+                                                seen, circuit, remaining, cancel_event=cancel_event,
+                                                rejects=rejects, circuit_key=ck, domain=domain,
+                                                batch_ids=shared_ids, batch_recent=shared_recent)
+                results.append((ck, verdict, jobs, None))
+                if verdict == "ok":
+                    box.setdefault("done_ok", []).append(ck)
+            except Exception as exc:  # noqa: BLE001 - one burned domain (CAPTCHA/timeout) must not take the rest down: record below, fan out on
+                results.append((ck, "failed", [], exc))
+                continue
+            except BaseException as exc:  # noqa: BLE001 - KeyboardInterrupt/SystemExit: abort the whole source like the old path
+                results.append((ck, "failed", [], exc))
+                break
+        box["results"] = results
+
+    def _record_domain_failure(ck: str, err: str) -> None:
+        circuit.record_failure(ck, dry_run=dry_run)
+        log.warning(
+            "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
+            "circuit opens; recover with local headed run or --reset-circuit",
+            _ckey_label(ck, source_name),
+        )
+        if not dry_run:
+            dlq = DeadLetterQueue()
+            dlq.push({
+                "source": source_name,
+                "domain": ck,
+                "error": err,
+                "timestamp": utc_now().isoformat(),
+            })
+            dlq.save()
 
     worker = threading.Thread(target=_work, name=f"source-{source_name}", daemon=True)
     worker.start()
@@ -303,78 +338,68 @@ def run_source(
         except Exception as exc:
             log.warning("[%s] error cleaning up browser processes: %s", source_name, exc)
         worker.join(0.5)
+        # Timeout struck mid-fan-out: only the in-flight domain earns the
+        # failure — never a domain never attempted (that would open innocent
+        # circuits), and never one already completed-ok (microsecond gap race:
+        # its results were lost with the worker, but its breaker stays clean).
+        # A domain that errored during the grace join still earns the timeout
+        # failure (old unconditional semantics: exactly one count per stall).
+        current = box.get("current")
+        done_ok = set(box.get("done_ok", []))
+        if isinstance(current, str) and current not in done_ok:
+            _record_domain_failure(current, f"TimeoutError: exceeded {timeout_s:.0f}s")
         if outcomes is not None:
             outcomes[source_name] = "timeout"
-        circuit.record_failure(ckey, dry_run=dry_run)
-        log.warning(
-            "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
-            "circuit opens; recover with local headed run or --reset-circuit",
-            source_name,
-        )
-        if not dry_run:
-            dlq = DeadLetterQueue()
-            dlq.push({
-                "source": source_name,
-                "error": f"TimeoutError: exceeded {timeout_s:.0f}s",
-                "timestamp": utc_now().isoformat(),
-            })
-            dlq.save()
         return []
 
-    if "error" in box:
-        exc = box["error"]
-        log.error("[%s] scraper failed: %s — recording failure, continuing loop", source_name, exc)
-        try:
-            from src.browser import kill_child_browser_processes
-            kill_child_browser_processes()
-        except Exception:
-            pass
-        if outcomes is not None:
-            outcomes[source_name] = "failed"
-        circuit.record_failure(ckey, dry_run=dry_run)
-        log.warning(
-            "[%s] failure recorded — if CAPTCHA/timeout persists past threshold, "
-            "circuit opens; recover with local headed run or --reset-circuit",
-            source_name,
-        )
-        if not dry_run:
-            dlq = DeadLetterQueue()
-            dlq.push({
-                "source": source_name,
-                "error": f"{type(exc).__name__}: {exc}",
-                "timestamp": utc_now().isoformat(),
-            })
-            dlq.save()
-        return []
-
-    verdict = str(box.get("verdict", "ok"))
-    jobs = box.get("jobs", [])
+    results = box.get("results", [])
+    all_jobs: list = []
+    last_verdict = "ok"
+    any_ok = False
+    for ck, verdict, jobs, err in results:
+        if err is not None:
+            log.error("[%s] scraper failed: %s — recording failure, continuing loop",
+                      _ckey_label(ck, source_name), err)
+            try:
+                from src.browser import kill_child_browser_processes
+                kill_child_browser_processes()
+            except Exception:
+                pass
+            _record_domain_failure(ck, f"{type(err).__name__}: {err}")
+            last_verdict = "failed"
+            continue
+        last_verdict = verdict
+        if verdict != "ok":
+            continue  # "cancelled"/"open"/"login": neither success nor failure
+        any_ok = True
+        circuit.record_success(ck)
+        all_jobs.extend(jobs)
     if outcomes is not None:
-        outcomes[source_name] = verdict
+        if any_ok:
+            outcomes[source_name] = "ok"
+        elif not results:
+            # Worker finished with zero completed domains (instant cancel before
+            # the first fetch, or max_jobs<=0): never report a hollow "ok" —
+            # the old single-key path surfaced impl's "cancelled" here.
+            outcomes[source_name] = "cancelled" if cancel_event.is_set() else "ok"
+        else:
+            outcomes[source_name] = last_verdict
 
     # C5: persist filter-reject audit rows (real runs only — dry-run stays pure)
     if not dry_run and rejects:
         _flush_rejects(rejects)
 
-    if verdict == "ok":
-        circuit.record_success(ckey)
-        log.info("[%s] found %d new jobs", source_name, len(jobs))
-        for j in jobs:  # type: ignore[union-attr]
+    if any_ok:
+        log.info("[%s] found %d new jobs", source_name, len(all_jobs))
+        for j in all_jobs:
             accept_and_record(j, seen)
-    return jobs  # type: ignore[return-value]
+    return all_jobs
 
 
-def _record_reject(sink: list[dict] | None, source: str, title: str, gate: str, reason: str) -> None:
-    """C5: append a filter-rejection audit row (written to rejected.jsonl on real runs)."""
-    if sink is None:
-        return
-    sink.append({
-        "source": source,
-        "title": (title or "")[:120],
-        "gate": gate,
-        "reason": reason,
-        "ts": utc_now().isoformat(timespec="seconds"),
-    })
+def _ckey_label(ckey: str, source_name: str) -> str:
+    """Log label for a circuit key: `source:domain`, or plain source."""
+    return ckey if ":" in ckey else source_name
+
 
 
 def _flush_rejects(rejects: list[dict]) -> None:
@@ -403,12 +428,19 @@ def _run_source_impl(
     rejects: list[dict] | None = None,
     circuit_key: str | None = None,
     domain: str | None = None,
+    batch_ids: set[str] | None = None,
+    batch_recent: list[dict] | None = None,
 ) -> tuple[str, list[NormalizedJob]]:
     """Unbounded implementation of run_source (the worker-thread body).
 
     Pure execution: never mutates circuit, outcomes, DeadLetterQueue, or SeenStore
     directly, eliminating concurrent mutation and TOCTOU races between worker and main thread.
     Dedup state mutations are deferred to caller on confirmed success.
+
+    Beat 170 fan-out: `batch_ids`/`batch_recent` may be SHARED across sequential
+    per-domain calls so a job seen on pk.indeed.com dedups on www.indeed.com
+    within the same run (canonical `jk=` id + fuzzy layer both consult them).
+    Defaults to fresh sets (single-source behaviour unchanged).
     """
     key = circuit_key or source_name
     if not circuit.is_available(key):
@@ -424,97 +456,29 @@ def _run_source_impl(
         return "login", []
 
     new_jobs: list[NormalizedJob] = []
-    batch_ids: set[str] = set()
-    batch_recent: list[dict] = []
+    if batch_ids is None:
+        batch_ids = set()
+    if batch_recent is None:
+        batch_recent = []
     count = 0
+    chain = GateChain(
+        posted_after=posted_after,
+        seen=seen,
+        keywords=cfg.scan_keywords(),
+        scrape_remote_only=cfg.scrape_remote_only(),
+        batch_ids=batch_ids,
+        batch_recent=batch_recent,
+        rejects=rejects,
+    )
     for raw in scraper.fetch(keywords, posted_after):
         if cancel_event is not None and cancel_event.is_set():
             return "cancelled", []
         if count >= max_jobs:
             break
-        if not ai_keyword_matches(raw, cfg.scan_keywords()):
-            _record_reject(rejects, source_name, raw.title, "ai_keyword", "no AI keyword match")
-            continue
-        if is_expired_job(raw):
-            log.info("[%s] skipping expired: %s", source_name, raw.title[:60])
-            _record_reject(rejects, source_name, raw.title, "expired", "expired/closed title or body")
-            continue
-        normalized = normalize_raw(raw)
-        # Strict date/time window across all platforms:
-        # 1. Compare full datetime if available (strict 24h hour-level check)
-        # 2. Fall back to calendar date comparison when only date is available
-        from src.models import parse_posted_datetime
-        posted_dt = parse_posted_datetime(raw.posted_date)
-        if posted_dt is not None:
-            cmp_after = posted_after if posted_after.tzinfo is not None else posted_after.replace(tzinfo=timezone.utc)
-            if posted_dt.tzinfo is None:
-                posted_dt = posted_dt.replace(tzinfo=timezone.utc)
-            if posted_dt < cmp_after:
-                log.debug("[%s] skipping outside datetime window (%s < %s): %s", source_name, posted_dt, cmp_after, raw.title[:50])
-                _record_reject(rejects, source_name, raw.title, "window", "posted datetime before window")
-                continue
-
-        cutoff_date = posted_after.date()
-        if normalized.posted_date and normalized.posted_date < cutoff_date:
-            log.debug("[%s] skipping outside window (%s < %s): %s", source_name, normalized.posted_date, cutoff_date, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "window", "posted date before window")
-            continue
-
-        # Strict 24h fail-closed: when neither a full datetime nor a calendar
-        # date could be parsed, the job cannot be verified as posted within the
-        # window — drop it rather than pass an age-unknown job into the digest.
-        if posted_dt is None and normalized.posted_date is None:
-            log.info("[%s] dropping job with no parseable posted date (strict 24h): %s",
-                     source_name, raw.title[:60])
-            _record_reject(rejects, source_name, raw.title, "recency", "no parseable posted date")
-            continue
-        from src.models import is_valid_job_url
-        if not is_valid_job_url(raw.url):
-            log.info("[%s] dropping job with invalid or profile URL: %s (%s)",
-                     source_name, raw.url, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "url", f"invalid URL: {raw.url}")
-            continue
-
-        if cfg.scrape_remote_only() and not is_remotely_workable(
-            normalized.location_type,
-            raw.location,
-            source=source_name,
-            description=raw.description,
-            title=raw.title,
-        ):
-            _record_reject(rejects, source_name, raw.title, "rule11",
-                           f"not remotely workable: loc={raw.location!r}")
-            continue
-
-        if not normalized.cv_match_score or normalized.cv_match_score < 70:
-            log.debug("[%s] dropping role failing CV match score (%d%%): %s",
-                      source_name, normalized.cv_match_score, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "cv_match",
-                           f"score {normalized.cv_match_score} < 70")
-            continue
-
-        # Quality gate: drop jobs with missing company AND description (Indeed/Glassdoor noise)
-        if (normalized.company in ("Unknown", "N/A", "n/a") or not normalized.company) and not raw.description:
-            log.debug("[%s] quality-gate: dropping %s (no company + no description)", source_name, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "quality", "no company + no description")
-            continue
-        is_new, reason = dedup_job(normalized, seen, extra_ids=batch_ids, extra_recent=batch_recent)
-        if not is_new:
-            _record_reject(rejects, source_name, raw.title, "dedup", reason or "duplicate")
-            continue
-        # PR #13 finding 2: network health HEAD only for jobs that survived
-        # every gate AND dedup — cuts HEADs to unique survivors and keeps the
-        # source wall-clock inside budget (1.5s timeout inside the helper).
-        from src.models import check_link_health
-        if not check_link_health(raw.url):
-            log.info("[%s] dropping job with dead URL: %s (%s)",
-                     source_name, raw.url, raw.title[:50])
-            _record_reject(rejects, source_name, raw.title, "url", f"dead URL: {raw.url}")
-            continue
-        new_jobs.append(normalized)
-        batch_ids.add(normalized.id)
-        batch_recent.append(normalized.to_dict())
-        count += 1
+        res = chain.evaluate(raw, source=source_name)
+        if res.accepted and res.job is not None:
+            new_jobs.append(res.job)
+            count += 1
 
     if cancel_event is not None and cancel_event.is_set():
         return "cancelled", []
@@ -606,7 +570,7 @@ def _run_scrape_pass(state: LoopState, circuit: CircuitManager, args: argparse.N
     log.info("[sources] %d sources: %s", len(sources_to_run), ", ".join(sources_to_run))
 
     seen = SeenStore()
-    keywords = [k.strip() for k in args.keywords.split(",")] if args.keywords else cfg.scan_keywords()
+    keywords = [k.strip() for k in args.keywords.split(",")] if args.keywords else cfg.all_scan_keywords()
     max_jobs = cfg.max_jobs_per_source()
     all_new_jobs: list[NormalizedJob] = []
     outcomes: dict[str, str] = {}
@@ -773,9 +737,40 @@ def serve_loop(health_port: int | None = None, shutdown_event: threading.Event |
     return 0
 
 
+def _warn_stale_env_override(dotenv_path=None) -> bool:
+    """Beat 173 (pending since Beat 162): a shell-exported TELEGRAM_BOT_TOKEN
+    silently masks `.env` because dotenv never overrides existing env vars —
+    the exact trap that produced a phantom 401 while the file token was
+    already valid. Logs a loud WARNING naming the winner (never values).
+    Returns True when a stale shell export shadows the file."""
+    import os
+    from pathlib import Path
+
+    path = Path(dotenv_path) if dotenv_path is not None else cfg.ROOT / ".env"
+    file_val = ""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("TELEGRAM_BOT_TOKEN="):
+                file_val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    except OSError:
+        return False
+    env_val = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if file_val and env_val and file_val != env_val:
+        log.warning(
+            "[config] shell-exported TELEGRAM_BOT_TOKEN shadows .env — "
+            "the SHELL value wins (stale exports cause phantom 401s); "
+            "run `unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID` to use the file"
+        )
+        return True
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     cfg.load_env()
+    _warn_stale_env_override()
     setup_logging()
     cfg.ensure_dirs()
     load_all_scrapers()
@@ -786,6 +781,9 @@ def main(argv: list[str] | None = None) -> int:
     # ── utility commands ──
     if args.linkedin_login:
         return asyncio.run(linkedin_login())
+
+    if args.solve:
+        return asyncio.run(solve_source(args.solve))
 
     if args.list_sources:
         print("registered sources:")

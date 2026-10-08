@@ -51,7 +51,10 @@ class TelegramNotifier(Notifier):
         self.api_base = f"https://api.telegram.org/bot{bot_token}"
 
     def send_daily(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> bool:
-        text = self._format_daily(jobs, stats)
+        if cfg.pilot_mode():
+            text = self._format_pilot_daily(jobs, stats)
+        else:
+            text = self._format_daily(jobs, stats)
         ok = self._send(text)
         if jobs and ok:
             today = utc_now().date().isoformat()
@@ -115,6 +118,52 @@ class TelegramNotifier(Notifier):
         if len(jobs) > 5:
             lines.append(f"... and {len(jobs) - 5} more jobs.")
             lines.append("Check output/jobs_" + today + ".json for the full list.")
+
+        return "\n".join(lines)
+
+    def _format_pilot_daily(self, jobs: list[NormalizedJob], stats: dict[str, Any]) -> str:
+        """Pilot delivery: one section per profiles/*.yaml, best-first inside.
+
+        Empty-section honesty: a profile with zero leads says so explicitly
+        (with the reject breakdown when provided) instead of vanishing —
+        silence erodes trust, reasons build it.
+        """
+        from src.matcher import list_profiles, load_profile
+
+        today = utc_now().date().isoformat()
+        total = stats.get("total_this_week", 0)
+        rejects_by_profile: dict[str, int] = stats.get("rejects_by_profile", {})
+
+        lines = [
+            f"🤖 Daily Leads — {today}",
+            "━" * 32,
+            f"📊 New: {len(jobs)} jobs | This week: {total}",
+            "",
+        ]
+
+        for name in list_profiles():
+            try:
+                profile = load_profile(name)
+            except (FileNotFoundError, ValueError):
+                continue
+            section = [j for j in jobs if (j.profile_best or "") == name]
+            # Jobs predating profile_scores (legacy store) fall back to best-score.
+            if not section and not any(getattr(j, "profile_scores", None) for j in jobs):
+                section = sorted(jobs, key=lambda j: (j.cv_match_score or 0), reverse=True)[:5]
+                section = [j for j in section if (j.cv_match_score or 0) >= profile.match_threshold]
+            icon = "🏦" if "awais" in name or "odi" in name or "fcc" in name else "🤖"
+            lines.append(f"{icon} {profile.display_name} — {len(section)} lead(s)")
+            if not section:
+                n_rej = rejects_by_profile.get(name, 0)
+                extra = f" ({n_rej} scraped but filtered — onsite/restricted/junior)" if n_rej else ""
+                lines.append(f"   └ aaj koi match nahi{extra} — kal phir")
+            for job in sorted(section, key=lambda j: (j.cv_match_score or 0), reverse=True)[:10]:
+                salary = ""
+                if job.salary_min:
+                    salary = f" ({job.salary_currency or ''}{job.salary_min//1000}k)"
+                lines.append(f"   • {job.title} @ {job.company} — {job.cv_match_score}%{salary}")
+                lines.append(f"     kyun: {job.cv_match_label} | 🔗 {job.url}")
+            lines.append("")
 
         return "\n".join(lines)
 

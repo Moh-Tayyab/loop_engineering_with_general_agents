@@ -197,6 +197,8 @@ class NormalizedJob:
     description_snippet: str
     cv_match_score: int = 0
     cv_match_label: str = ""
+    profile_scores: dict[str, int] = field(default_factory=dict)
+    profile_best: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -220,6 +222,8 @@ class NormalizedJob:
             "description_snippet": self.description_snippet,
             "cv_match_score": self.cv_match_score,
             "cv_match_label": self.cv_match_label,
+            "profile_scores": self.profile_scores,
+            "profile_best": self.profile_best,
         }
 
     @classmethod
@@ -244,6 +248,8 @@ class NormalizedJob:
             description_snippet=str(d.get("description_snippet", "")),
             cv_match_score=int(d.get("cv_match_score", 0)),
             cv_match_label=str(d.get("cv_match_label", "")),
+            profile_scores=dict(d.get("profile_scores") or {}),
+            profile_best=str(d.get("profile_best") or ""),
             raw=dict(d.get("raw", {})),
         )
 
@@ -1214,6 +1220,22 @@ def _is_us_restricted(text: str) -> bool:
             low,
         ):
             return True
+    # Beat 158: short-string US-metro rule — a bare "City, ST" location label
+    # ("San Francisco, CA (Remote)", "Austin, TX", "Seattle, WA — Remote") is
+    # a US residency pin even with NO pin verb ("based in", "remote in") and
+    # even when the description carries worldwide-eligibility marketing (that
+    # B3 escape must not unlock a US metro). Guards: only short location
+    # labels (prose stays open), never when a non-US locality shares the
+    # string ("hubs in Austin, TX and Berlin" = multi-locality, open), never
+    # on worldwide-marked text (handled by the marker exception below).
+    words = low.split()
+    if (
+        len(words) <= 6
+        and not any(w in low for w in ("worldwide", "anywhere in the world", "work from anywhere", "global remote", "globally remote"))
+        and not any(re.search(rf"\b{re.escape(f)}\b", low) for f in _NON_US_LOCALITY_TOKENS)
+        and any(re.search(rf"\b{re.escape(city)}\b", low) for city in _US_MAJOR_CITIES)
+    ):
+        return True
     # Beat 122 MEDIUM-A: target-marker exception — applied ONLY after every
     # hard US pin above. Casual multi-region prose ("Europe, LATAM, APAC, the
     # U.S., Canada", "Worldwide; hubs in Austin and Berlin") falls through to
@@ -1740,10 +1762,11 @@ def keyword_matches(job: RawJob, keywords: list[str]) -> bool:
 
 
 def ai_keyword_matches(job: RawJob, ai_keywords: list[str], role_keywords: list[str] | None = None) -> bool:
-    """AI-domain gate: requires candidate CV match (Muhammad Usama profile)
-    and strictly drops blacklisted non-technical roles and unrelated tech stacks.
+    """Profile gate: True when ANY pilot profile matches the job.
+
+    (The keyword args are legacy — matching is profile-driven now. Kept in
+    the signature so existing callers and tests don't break.)
     """
-    from src.matcher import match_usama_cv
-    is_match, score, label = match_usama_cv(job.title, job.description, job.tags)
-    return is_match
+    from src.matcher import passing_profiles
+    return bool(passing_profiles(job.title, job.description, job.tags))
 

@@ -235,6 +235,51 @@ def _feed_post_to_raw(post: dict[str, Any], kw: str,
     )
 
 
+# Scraper-local pre-filters (NOT Rule 11 — they live here, not in location_law).
+CLOSED_WORDS = ("no longer accepting applications", "this job is closed")
+REMOTE_HEADER_MARKERS = ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual", "worldwide")
+REMOTE_DESC_MARKERS = (
+    "100% remote", "fully remote", "100% work from home", "fully work from home",
+    "remote position", "remote role", "work remotely", "working remotely",
+    "remote opportunity", "remote job", "remote candidate", "globally distributed",
+)
+
+
+def _passes_guest_detail_filters(title: str | None, loc: str | None, real_desc: str | None) -> tuple[bool, str]:
+    """Beat 180: the post-detail-fetch verdict for one guest card, extracted
+    verbatim from the inline chain so the owner's mismatch cases are provable
+    line-by-line without a browser: closed-words → shared law (GUEST set) →
+    explicit remote marker. Returns (ok, reason); reason "" when ok.
+
+    Callers still handle expired/redirect, JD-body presence, jid parsing, and
+    empty locations inline (structural, not verdicts). Complete-description
+    reading stays upstream: `real_desc` is the FULL detail JD body.
+    """
+    from src.location_law import GUEST_DISQUALIFY, evaluate
+
+    title_s = title or ""
+    loc_s = loc or ""
+    desc_s = real_desc or ""
+    full_check = f"{title_s.lower()} {loc_s.lower()} {desc_s.lower()}"
+    if any(w in full_check for w in CLOSED_WORDS):
+        return False, "closed"
+    law = evaluate(loc, "linkedin", real_desc, title, disqualify=GUEST_DISQUALIFY)
+    if not law.ok:
+        return False, law.reason
+    title_loc = f"{title_s.lower()} {loc_s.lower()}"
+    has_remote_in_header = any(w in title_loc for w in REMOTE_HEADER_MARKERS)
+    low = desc_s.lower()
+    has_strict_remote_desc = (
+        any(w in low for w in REMOTE_DESC_MARKERS)
+        or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", low))
+        or bool(re.search(r"\bremote[,\s]+pakistan\b", low))
+        or bool(re.search(r"\bpakistan[,\s]+remote\b", low))
+    )
+    if not (has_remote_in_header or has_strict_remote_desc):
+        return False, "remote_marker"
+    return True, ""
+
+
 @register_scraper
 class LinkedInScraper(BaseScraper):
     name = "linkedin"
@@ -242,6 +287,27 @@ class LinkedInScraper(BaseScraper):
     _BASE = "https://www.linkedin.com"
     _SEARCH = "https://www.linkedin.com/jobs/search/?keywords={kw}&f_WT=2&location=Worldwide"
     _FEED = "https://www.linkedin.com/search/results/content/?keywords={kw}"
+
+    @staticmethod
+    def _board_url(keyword: str, posted_after: datetime) -> str:
+        """Authenticated board search URL (Beat 172: worldwide-remote MAXIMUM).
+
+        Mirrors the guest pass filters the board path was missing: `f_WT=2`
+        (remote-only), `location=Worldwide`, `sortBy=DD` (newest first) and a
+        window-scaled `f_TPR` (past-24h+ recency). Easy-Apply / experience
+        levels stay opt-in only (owner removed the Easy Apply filter).
+        """
+        seconds = int(max(86400, (utc_now() - posted_after).total_seconds()))
+        extra = ""
+        if cfg.easy_apply_only():
+            extra += "&f_AL=true"
+        exp_levels = cfg.linkedin_experience_levels()
+        if exp_levels:
+            extra += f"&f_E={exp_levels}"
+        return (
+            f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}"
+            f"&f_WT=2&location=Worldwide&sortBy=DD&f_TPR=r{seconds}{extra}"
+        )
 
     def login_required(self) -> bool:
         # Graceful degradation: if no authenticated session exists, fallback to
@@ -278,12 +344,23 @@ class LinkedInScraper(BaseScraper):
     def _fetch_guest_public(cls, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
         """Scrape LinkedIn public guest endpoint (no login required, high yield).
 
-        Bounded internally: 13 keywords × 2 locations is up to 26 sequential
+        Bounded internally: 15 keywords × 5 locations is up to 75 sequential
         requests; if LinkedIn throttles (each request can stall up to its 15s
-        timeout) an unbounded pass can eat 390s and starve the whole source.
-        A monotonic deadline (cfg.linkedin_guest_timeout_s(), 45s) yields what
+        timeout) an unbounded pass can eat 1125s and starve the whole source.
+        A monotonic deadline (cfg.linkedin_guest_timeout_s(), 180s) yields what
         was already collected and stops, leaving room for the browser pass.
+
+        Location priority (Beat 178, owner): in-scope hubs FIRST, Worldwide
+        LAST — scarce budget goes to Pakistan + ME hubs before the
+        US/EU-flooded worldwide query.
         """
+        import html
+        import re
+        from time import monotonic
+
+        import requests
+
+        _LOC_PRIORITY = ("Pakistan", "United Arab Emirates", "Saudi Arabia", "Qatar", "Worldwide")
         import html
         import re
         from time import monotonic
@@ -300,12 +377,13 @@ class LinkedInScraper(BaseScraper):
         any_success = False
         errors: list[Exception] = []
         detail_drops = 0
+        prefilter_drops = 0
         for kw in keywords:
             if monotonic() > deadline:
                 log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
                          len(seen_urls))
                 break
-            for loc_query in ("Worldwide", "Pakistan"):
+            for loc_query in _LOC_PRIORITY:
                 if monotonic() > deadline:
                     log.info("[linkedin] guest pass budget exhausted — stopping (kept %d collected jobs)",
                              len(seen_urls))
@@ -320,7 +398,7 @@ class LinkedInScraper(BaseScraper):
                 # B6: paginate guest search (25/page, cap 4 pages) so recall is
                 # not stuck on the first ~25 cards per query.
                 page_parsed = False
-                for start in (0, 25, 50, 75):
+                for start in (0, 25):
                     if monotonic() > deadline:
                         break
                     url = (
@@ -373,6 +451,24 @@ class LinkedInScraper(BaseScraper):
                                 continue
                             seen_urls.add(raw_lnk)
 
+                            # Beat 178: card-level pre-filter — title-only law
+                            # flags are description-independent, so a hit here
+                            # can never survive the full chain: skip the detail
+                            # HTTP (budget burn) with the identical verdict.
+                            from src.location_law import (
+                                GUEST_PREFILTER_DISQUALIFY,
+                                evaluate as _law_evaluate,
+                            )
+                            _pre = _law_evaluate(
+                                loc, "linkedin", None, title,
+                                disqualify=GUEST_PREFILTER_DISQUALIFY,
+                            )
+                            if not _pre.ok:
+                                prefilter_drops += 1
+                                log.debug("[linkedin] guest pre-filter drop (%s): %s",
+                                          _pre.reason, title[:60])
+                                continue
+
                             # Deep verification: ensure job is not expired and is genuinely remote
                             jid_m = re.search(r"-(\d+)$", raw_lnk)
                             if not jid_m:
@@ -396,45 +492,13 @@ class LinkedInScraper(BaseScraper):
                                     log.debug("[linkedin] dropping (JD body too short): %s", title[:60])
                                     detail_drops += 1
                                     continue
-                                full_check = f"{title.lower()} {loc.lower()} {real_desc.lower()}"
-                                if any(w in full_check for w in ("no longer accepting applications", "this job is closed")):
-                                    log.debug("[linkedin] dropping closed posting: %s", title)
-                                    continue
-                                from src.models import (
-                                    is_language_restricted,
-                                    is_hybrid_work,
-                                    is_title_restricted,
-                                    is_description_restricted,
-                                    is_worldwide_remote,
-                                )
-                                if is_language_restricted(title) or is_language_restricted(real_desc):
-                                    log.debug("[linkedin] dropping language-restricted: %s", title)
-                                    continue
-                                if is_hybrid_work(title) or is_hybrid_work(real_desc) or is_hybrid_work(loc):
-                                    log.debug("[linkedin] dropping hybrid: %s", title)
-                                    continue
-                                if is_title_restricted(title) or is_description_restricted(real_desc):
-                                    log.debug("[linkedin] dropping restricted: %s", title)
-                                    continue
-                                if not is_worldwide_remote(loc, source="linkedin", description=real_desc, title=title):
-                                    log.debug("[linkedin] dropping non-worldwide remote: %s (%s)", title, loc)
-                                    continue
-                                if any(w in full_check for w in ("on-site", "onsite", "in-office", "office-based", "office only")):
-                                    log.debug("[linkedin] dropping onsite posting: %s (%s)", title, loc)
-                                    continue
-                                title_loc = f"{title.lower()} {loc.lower()}"
-                                has_remote_in_header = any(
-                                    w in title_loc
-                                    for w in ("remote", "work from home", "wfh", "anywhere", "telecommute", "virtual", "worldwide")
-                                )
-                                has_strict_remote_desc = (
-                                    any(w in real_desc.lower() for w in ("100% remote", "fully remote", "100% work from home", "fully work from home"))
-                                    or bool(re.search(r"\b(?:location|workplace|workplace\s+type)\s*:\s*remote\b", real_desc.lower()))
-                                    or bool(re.search(r"\bremote[,\s]+pakistan\b", real_desc.lower()))
-                                    or bool(re.search(r"\bpakistan[,\s]+remote\b", real_desc.lower()))
-                                )
-                                if not (has_remote_in_header or has_strict_remote_desc):
-                                    log.debug("[linkedin] dropping posting lacking explicit remote marker: %s (%s)", title, loc)
+                                # Beat 180: verdict via the extracted helper (closed
+                                # words, shared law, remote marker — same
+                                # predicates, same inputs, now provable per job).
+                                _ok, _why = _passes_guest_detail_filters(title, loc, real_desc)
+                                if not _ok:
+                                    log.debug("[linkedin] dropping %s: %s (%s)",
+                                              _why, title, loc)
                                     continue
                             except Exception as detail_exc:
                                 detail_drops += 1
@@ -448,11 +512,17 @@ class LinkedInScraper(BaseScraper):
                                 company=comp,
                                 url=raw_lnk,
                                 location=loc,
-                                description=real_desc[:2500],
+                                # Beat 158: keep the fuller JD body (was 2500) so
+                                # full-description matching sees restriction text
+                                # buried late in the posting. Storage snippet in
+                                # normalize_raw stays capped; raw is not persisted.
+                                description=real_desc[:4000],
                                 posted_date=posted,
                                 tags=[kw],
                                 fetched_at=utc_now(),
                             )
+                        if len(titles) < 10:
+                            break
                     except Exception as exc:
                         errors.append(exc)
                         log.info("[linkedin] guest public search failed (kw=%r, loc=%r): %s", kw, loc_query, exc)
@@ -463,6 +533,9 @@ class LinkedInScraper(BaseScraper):
         if detail_drops:
             log.info("[linkedin] guest pass dropped %d job(s) on detail-fetch/JD-body failure (B4 visibility)",
                      detail_drops)
+        if prefilter_drops:
+            log.info("[linkedin] guest pass pre-filtered %d title-hit card(s) without detail fetch (Beat 178)",
+                     prefilter_drops)
         if not any_success and errors:
             raise errors[0]
 
@@ -566,7 +639,7 @@ class LinkedInScraper(BaseScraper):
         async with launch_browser(self.name, persistent=True, headless=cfg.scrape_headless()) as context:
             page = await context.new_page()
             for kw in keywords:
-                url = self._SEARCH.format(kw=kw.replace(" ", "+"))
+                url = self._board_url(kw, posted_after)
                 await page.goto(url, timeout=45_000, wait_until="domcontentloaded")
                 await check_captcha(page, self.name)
                 try:

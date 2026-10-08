@@ -49,6 +49,25 @@ def scan_role_keywords() -> list[str]:
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
+def all_scan_keywords() -> list[str]:
+    """Union of global SCRAPE_KEYWORDS + every pilot profile's keywords.
+
+    Scrape once, match twice: without this, profile keywords (e.g. ODI/FCCM)
+    are never searched and whole candidate segments get zero volume.
+    Order-preserving dedup; falls back to scan_keywords() if profiles are
+    unavailable (never fail the scrape on a profile-load error)."""
+    keywords = scan_keywords()
+    try:
+        from src.matcher import profile_keywords
+        prof_primary, _ = profile_keywords()
+        for k in prof_primary:
+            if k not in keywords:
+                keywords.append(k)
+    except Exception:
+        pass
+    return keywords
+
+
 def scrape_delay_range() -> tuple[float, float]:
     lo = env_float("SCRAPE_DELAY_MIN", 1.0)
     hi = env_float("SCRAPE_DELAY_MAX", 3.0)
@@ -161,6 +180,23 @@ _DEFAULT_DOMAINS = {
     "indeed": "pk.indeed.com",          # proven both local and in cloud cron
     "glassdoor": "www.glassdoor.com",
 }
+# Beat 170 (owner: maximum jobs): default fan-out lists used when the env
+# registry is unset. Order matters — proven host first, global volume second,
+# APAC/ME regional after (Rule 11 drops non-qualifying content downstream, so
+# extra surfaces only cost time, never bad jobs). `_DEFAULT_DOMAINS` above is
+# untouched: state migration must keep pointing at the legacy host.
+_DEFAULT_DOMAIN_LISTS = {
+    "indeed": [
+        "pk.indeed.com",      # proven default
+        "www.indeed.com",     # global volume
+        "ae.indeed.com",      # UAE / Middle East
+        "sa.indeed.com",      # Saudi / Middle East
+        "sg.indeed.com",      # Singapore / APAC
+    ],
+    "glassdoor": [
+        "www.glassdoor.com",  # global (single — owner scoped multi-domain to Indeed)
+    ],
+}
 _DOMAIN_ENV = {
     "indeed": "INDEED_DOMAINS",
     "glassdoor": "GLASSDOOR_DOMAINS",
@@ -219,8 +255,7 @@ def source_domains(source: str) -> list[str]:
     - In the scheduled cloud runner (`JOB_LOOP_CLOUD=1`), `<SOURCE>_DOMAINS_CLOUD`
       wins when set — the split lets cloud cron and local human runs use
       different domains without code changes.
-    - No env → the pre-Phase-2 default (single proven domain): behaviour-
-      preserving unless you opt in.
+    - No env → the Beat-170 default fan-out list (`_DEFAULT_DOMAIN_LISTS`):
     - Non-registry sources → `[]` (no domain scoping; plain circuit keys).
     """
     base = _DOMAIN_ENV.get(source.lower())
@@ -233,7 +268,7 @@ def source_domains(source: str) -> list[str]:
     raw = os.environ.get(base)
     if raw is not None and raw.strip():
         return parse_domains(raw)
-    return parse_domains(_DEFAULT_DOMAINS[source.lower()])
+    return parse_domains(",".join(_DEFAULT_DOMAIN_LISTS.get(source.lower(), [])))
 
 
 def notify_telegram() -> bool:
@@ -246,6 +281,13 @@ def notify_whatsapp() -> bool:
 
 def notify_linkedin() -> bool:
     return os.environ.get("NOTIFY_LINKEDIN", "0") == "1" and bool(os.environ.get("LINKEDIN_POST_ACCESS_TOKEN"))
+
+
+def pilot_mode() -> bool:
+    """Pilot delivery: Telegram daily uses the combined per-profile sectioned
+    format (one section per profiles/*.yaml) instead of the single-user digest.
+    Default off — owner mode unchanged unless PILOT_MODE=1."""
+    return os.environ.get("PILOT_MODE", "0") == "1"
 
 
 def linkedin_feed_enabled() -> bool:
@@ -304,16 +346,19 @@ def source_timeout_s(source_name: str | None = None, now: datetime | None = None
             return env_float("LINKEDIN_FEED_TIMEOUT_S", 600.0)
         return env_float("LINKEDIN_TIMEOUT_S", 150.0)
     if source_name and source_name in BROWSER_BOUND_SOURCES:
-        return env_float("BROWSER_SOURCE_TIMEOUT_S", 300.0)
+        # Beat 171 (owner: deep worldwide scrape — 5 domains × 5 pages × full-JD
+        # per card): 15min per board; the 60min cron budget still fits sequential
+        # linkedin + indeed + glassdoor with headroom. Env-tunable as before.
+        return env_float("BROWSER_SOURCE_TIMEOUT_S", 900.0)
     return env_float("SOURCE_TIMEOUT_S", 150.0)
 
 
 def linkedin_guest_timeout_s() -> float:
-    """Budget for LinkedIn's public guest pass (26 sequential requests: 13
-    keywords × Worldwide/Pakistan). Unbounded it can eat 390s of network
-    timeout and starve the whole source. Yields what it collected once the
-    budget is exhausted and stops, so the browser feed pass still has room."""
-    return env_float("LINKEDIN_GUEST_TIMEOUT_S", 120.0)
+    """Budget for LinkedIn's public guest pass.
+    Strictly bounded under source_timeout_s with headroom so it safely yields
+    collected jobs before the outer runner thread hits join timeout."""
+    default_s = min(110.0, max(30.0, source_timeout_s() - 30.0))
+    return env_float("LINKEDIN_GUEST_TIMEOUT_S", default_s)
 
 
 def linkedin_browser_timeout_s() -> float:

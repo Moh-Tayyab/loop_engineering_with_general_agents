@@ -115,6 +115,52 @@ def _profile_dir(source: str) -> str:
     return str(cfg.RUNTIME_DIR / f"{source}-profile")
 
 
+def _clean_stale_singleton_locks(profile_dir: Path | str) -> None:
+    """Clean up stale Chromium Singleton* locks left by crashes or killed processes.
+
+    If Chromium is killed (e.g. timeout kill or SIGKILL), it leaves broken symlinks
+    SingletonLock -> hostname-pid, SingletonSocket, SingletonCookie. Chromium then
+    hangs or spawns isolated processes on subsequent launches.
+    We inspect the target PID of SingletonLock; if the process is dead, we unlink them.
+    """
+    p = Path(profile_dir)
+    if not p.is_dir():
+        return
+    lock_file = p / "SingletonLock"
+    if not lock_file.exists() and not lock_file.is_symlink():
+        return
+
+    is_stale = False
+    try:
+        if lock_file.is_symlink():
+            target = os.readlink(lock_file)
+            parts = target.rsplit("-", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                pid = int(parts[1])
+                try:
+                    os.kill(pid, 0)
+                    is_stale = False
+                except (ProcessLookupError, OSError):
+                    is_stale = True
+            else:
+                is_stale = True
+        else:
+            is_stale = True
+    except Exception as exc:
+        log.debug("Error inspecting SingletonLock in %s: %s", p, exc)
+        is_stale = True
+
+    if is_stale:
+        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            f = p / name
+            if f.exists() or f.is_symlink():
+                try:
+                    f.unlink()
+                    log.info("Removed stale Chromium lock: %s", f)
+                except OSError as exc:
+                    log.debug("Failed unlinking stale lock %s: %s", f, exc)
+
+
 STEALTH_INIT_SCRIPT = """
 (() => {
     // 1. Webdriver evasion
@@ -256,6 +302,7 @@ async def launch_browser(
 
         if persistent:
             user_data_dir = _profile_dir(source)
+            _clean_stale_singleton_locks(user_data_dir)
             cfg.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
             try:
                 os.chmod(cfg.RUNTIME_DIR, 0o700)
@@ -442,6 +489,12 @@ async def await_captcha_solve(page, source: str, url: str, timeout: float = 300.
     waited = 0.0
     log.warning("CAPTCHA detected on %s — solve it in the open browser window (%s)", source, url)
     log.warning("  waiting up to %ds for manual solve...", int(timeout))
+
+    try:
+        if hasattr(page, "bring_to_front") and callable(page.bring_to_front):
+            await page.bring_to_front()
+    except Exception:
+        pass
 
     last_turnstile_click = 0.0
 

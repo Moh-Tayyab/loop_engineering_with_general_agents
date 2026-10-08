@@ -37,14 +37,6 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
     """
     from src.models import (
         is_valid_job_url,
-        is_worldwide_remote,
-        is_title_restricted,
-        is_description_restricted,
-        is_language_restricted,
-        is_hybrid_work,
-        is_foreign_country_restricted,
-        _is_us_restricted,
-        _has_strong_worldwide_eligibility,
     )
 
     url = job.url or ""
@@ -56,8 +48,10 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
         return False
 
     # Title restrictions (e.g. non-engineering, US-only, Onsite in Katy Texas, etc.)
-    if is_title_restricted(job.title):
-        return False
+    # + language/hybrid/description/US/foreign/worldwide — Beat 177: the whole
+    # location-law subset is one `location_law.evaluate` projection (DIGEST
+    # set); URL/CV/pk-desc rules below stay here (not location law).
+    from src.location_law import DIGEST_DISQUALIFY, evaluate
 
     # A12: filter on the FULL stored description (raw), not the 2000-char notify
     # snippet — restriction text past the truncate point must still be seen.
@@ -65,30 +59,12 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
     raw_desc = ((job.raw or {}).get("description") or "")
     if len(raw_desc) > len(desc):
         desc = raw_desc
-    full_text = f"{job.title} {desc}".strip()
 
-    # Language restrictions (Japanese, JLPT, German, Hebrew, etc.)
-    if is_language_restricted(full_text):
-        return False
-
-    # Onsite / Hybrid checks
-    if is_hybrid_work(full_text):
-        return False
-
-    # Description restrictions (US work auth, clearance, right to work in UK/EU, etc.)
-    if is_description_restricted(desc):
-        return False
-
-    # Location checks — foreign labels allowed only with strong worldwide eligibility
-    # (Beat 108 parity with daily / B3; bare "impact worldwide" marketing does not count).
     loc = job.location or ""
-    if is_foreign_country_restricted(loc) and not _has_strong_worldwide_eligibility(desc):
-        return False
-    if _is_us_restricted(loc) or _is_us_restricted(desc):
-        return False
-
-    # Remotely workable check
-    if not is_worldwide_remote(loc, source=job.source, description=desc, title=job.title):
+    law = evaluate(
+        loc, job.source, desc, job.title, disqualify=DIGEST_DISQUALIFY,
+    )
+    if not law.ok:
         return False
 
     # Foreign physical cities (e.g. Dubai, Abu Dhabi, Singapore, Riyadh) MUST have a non-empty description
@@ -98,8 +74,16 @@ def is_valid_digest_job(job: NormalizedJob) -> bool:
     if not is_pk and not is_generic_remote and not desc:
         return False
 
-    # CV match score minimum (70%)
-    if job.cv_match_score is not None and job.cv_match_score < 70:
+    # CV match minimum — per-profile thresholds (AI 70 / Awais 60); legacy
+    # stored jobs without profile_scores fall back to the old flat 70 gate.
+    from src.matcher import meets_threshold
+    gate_scores = job.profile_scores or (
+        {job.profile_best: job.cv_match_score} if job.profile_best else {}
+    )
+    if gate_scores:
+        if not any(meets_threshold(name, s) for name, s in gate_scores.items()):
+            return False
+    elif job.cv_match_score is not None and job.cv_match_score < 70:
         return False
 
     return True

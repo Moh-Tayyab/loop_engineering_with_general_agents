@@ -69,8 +69,14 @@ def test_parse_domains_rejects_scheme_and_path_like_hostnames():
 
 # ── source_domains: defaults, env override, cloud/local split ───────────────
 
-def test_source_domains_defaults_are_behaviour_preserving():
-    assert cfg.source_domains("indeed") == ["pk.indeed.com"]
+def test_source_domains_defaults_are_fan_out_lists():
+    """Beat 170 (owner: maximum jobs): unset env → multi-domain fan-out for
+    Indeed (proven host FIRST so `_apply_domain` keeps its base), single for
+    Glassdoor (owner scoped multi-domain to Indeed)."""
+    assert cfg.source_domains("indeed") == [
+        "pk.indeed.com", "www.indeed.com", "ae.indeed.com",
+        "sa.indeed.com", "sg.indeed.com",
+    ]
     assert cfg.source_domains("glassdoor") == ["www.glassdoor.com"]
 
 

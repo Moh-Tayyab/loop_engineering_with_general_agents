@@ -262,6 +262,23 @@ class CircuitManager:
             })
         return out
 
+def pick_all_domain_keys(circuit: CircuitManager, source: str) -> list[str]:
+    """All runnable circuit keys for `source` (Beat 170 fan-out).
+
+    Registry sources: every `source:domain` whose circuit is closed, in
+    registry order (proven/volume hosts first — cheapest success first).
+    Open-circuit domains are skipped (Rule 10: never retry past threshold).
+    Empty registry (all entries invalid) → [] (fail-closed, never the plain
+    key — checker P1, Beat 138).
+    Non-registry sources: `[source]` when closed, else `[]`.
+    """
+    if source in cfg.DOMAIN_SOURCES:
+        domains = cfg.source_domains(source)
+        return [domain_key(source, dom) for dom in domains
+                if circuit.is_available(domain_key(source, dom))]
+    return [source] if circuit.is_available(source) else []
+
+
 def pick_domain_key(circuit: CircuitManager, source: str) -> str | None:
     """Resolve the circuit key to run `source` under (Phase 2 / A2).
 
@@ -273,13 +290,5 @@ def pick_domain_key(circuit: CircuitManager, source: str) -> str | None:
     fall back to the plain source key, which would scrape the hard-coded
     default host while recording under the wrong circuit.
     Non-registry sources: the plain source key when closed, else None."""
-    if source in cfg.DOMAIN_SOURCES:
-        domains = cfg.source_domains(source)
-        if not domains:
-            return None
-        for dom in domains:
-            key = domain_key(source, dom)
-            if circuit.is_available(key):
-                return key
-        return None
-    return source if circuit.is_available(source) else None
+    keys = pick_all_domain_keys(circuit, source)
+    return keys[0] if keys else None
