@@ -141,3 +141,37 @@ def test_redact_secrets_custom_replacement():
 def test_redact_secrets_rejects_non_str(bad):
     with pytest.raises(ValueError):
         redact_secrets(bad)
+
+
+def test_redact_secrets_openai_dashed_key():
+    assert redact_secrets("sk-proj-9f8e7d6c5b4a3c2d1e0f") == "[REDACTED]"
+
+
+def test_redact_secrets_uppercase_prefix():
+    assert redact_secrets("GHP_abcdefghijklmnopqrstuvwxyz1234567890") == "[REDACTED]"
+
+
+def test_redact_secrets_uppercase_mixed_inline():
+    assert redact_secrets("token SK_test_abcdefghijklmnopqrstuvwxyz123456") == (
+        "token [REDACTED]"
+    )
+
+
+def test_redact_secrets_lowercase_aws_key():
+    assert redact_secrets("akiaiosfodnn7example") == "[REDACTED]"
+
+
+def test_redact_secrets_short_dashed_body_unchanged():
+    assert redact_secrets("skill-set-42") == "skill-set-42"
+
+
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_slugify_rejects_non_int_max_len(bad):
+    with pytest.raises(ValueError):
+        slugify("hello", max_len=bad)
+
+
+@pytest.mark.parametrize("bad", [None, "5", 2.5, False])
+def test_truncate_rejects_non_int_max_chars(bad):
+    with pytest.raises(ValueError):
+        truncate("abc", max_chars=bad)
