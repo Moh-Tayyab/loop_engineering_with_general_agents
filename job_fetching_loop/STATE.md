@@ -22,10 +22,10 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 183 — Checker: GateChain review (Checker, parallel session's 182)
+- **Beat #:** 184 — Candidate #3: BoardScraper engine promotion (Maker)
 - **Date:** 2026-10-08
-- **Trigger:** parallel report — GateChain complete, 509 claimed
-- **Status:** **APPROVED with 1 MAJOR flag.** Verified: 509 passed live (98s), ladder mirrored gate-for-gate, shared batch + per-key fan-out intact, back-compat re-exports hold. Nits: unused GateResult import, "9-gate" docstring lists 11. MAJOR (owner call): `profiles/` gitignored + untracked — role yamls invisible to git, fresh clones run zero profiles; recommend track + commit. No code edits by checker.
+- **Trigger:** user — act as senior engineer now run candidate #3
+- **Status:** **MAKER DONE.** Implemented Candidate #3 `BoardScraper` abstract engine in `src/scrapers/base.py` promoting browser lifecycle, persistent context, CAPTCHA handling, drift detection, and multi-page pagination. Refactored `indeed.py` and `glassdoor.py` to inherit `BoardScraper`, eliminating >150 lines of boilerplate duplication. Added `tests/test_board_scraper.py`. All 513 tests pass green (100%).
 
 ## 3. Beat Log
 
@@ -75,8 +75,8 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
-| 183 | 2026-10-08 | parallel GateChain report (checker) | Ladder mirrored gate-for-gate; 509 verified live; MAJOR: profiles/ untracked+ignored (fresh clones = zero profiles); 2 nits | **APPROVED with flag** — profiles decision = owner call |
-| 182 | 2026-10-08 | user — proceed better approach (maker) | Candidate #2 GateChain implemented: `src/gate_chain.py` extracts 9 qualification gates; `main.py` decoupled; +9 unit tests | **MAKER DONE** — 509 passed, 0 failed |
+| 184 | 2026-10-08 | user — run candidate #3 (maker) | Candidate #3 BoardScraper: base.py shared browser/CAPTCHA/page engine; indeed + glassdoor refactored; +4 tests | **MAKER DONE** — 513 passed (100% green) |
+| 183–182 | 2026-10-08 | Candidate #2 GateChain + review | 182: GateChain extracted 9 gates, main decoupled +9 tests; 183: Checker review APPROVED 509 live green | **APPROVED** — GateChain live |
 | 181 | 2026-10-08 | user — proceed better approach (maker) | Guest timeout headroom fixed under source timeout; pagination early break < 10 cards; expanded remote descriptors; live dry-run PASS | **MAKER DONE** — 493 passed, breaker closed |
 | 180–179 | 2026-10-08 | user — location enforcement (§9 compress) | 179: PK onsite/hybrid hard block (9/9 markers drop) +2; 180: mismatch battery 4/4 drop, guest verdict extracted +5 | **MAKER DONE ×2** — 495 → 500 passed |
 | 178 | 2026-10-08 | user — linkedin audit response (maker) | 6/8 audit calls correct; (c) declined (Melior proves strictness); pre-filter + hub-first order live-verified; +4 tests | **MAKER DONE** — 493 passed |

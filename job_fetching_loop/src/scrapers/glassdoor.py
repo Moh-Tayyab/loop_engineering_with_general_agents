@@ -1,8 +1,8 @@
 """Glassdoor (glassdoor.com) scraper — salary data available, aggressive anti-bot.
 
 Strategy (human-in-the-loop CAPTCHA):
-  1. Persistent, headed, system-Chrome profile → solved CAPTCHAs and session
-     cookies persist in `.runtime/glassdoor-profile/`.
+  1. Persistent, headed, system-Chrome profile (headless=cfg.board_headless()) →
+     solved CAPTCHAs and session cookies persist in `.runtime/glassdoor-profile/`.
   2. Warm up on the homepage first (human-like), then search.
   3. When a Cloudflare/hCaptcha challenge appears the browser stays OPEN —
      the human solves it once in the visible window (`await_captcha_solve`),
@@ -33,13 +33,13 @@ from src.browser import (
 from src.log import get_logger
 from src.models import RawJob
 from . import register_scraper
-from .base import BaseScraper
+from .base import BoardScraper
 
 log = get_logger(__name__)
 
 
 @register_scraper
-class GlassdoorScraper(BaseScraper):
+class GlassdoorScraper(BoardScraper):
     name = "glassdoor"
 
     _BASE = "https://www.glassdoor.com"
@@ -48,20 +48,17 @@ class GlassdoorScraper(BaseScraper):
     # Beat 171 (owner: worldwide fully-remote MAXIMUM jobs): deep pagination.
     _PAGES = (1, 2, 3, 4, 5)
 
-    def _apply_domain(self) -> None:
-        """Phase 2 (A2): rebuild URL bases from the orchestrator-chosen or
-        first-registry domain (`GLASSDOOR_DOMAINS`)."""
-        domains = cfg.source_domains(self.name)
-        domain = self.active_domain or (domains[0] if domains else None)
-        if not domain:
-            return
-        base = f"https://{domain}"
-        self._BASE = base
-        self._HOME = base + "/"
+    def _build_search_template(self, base: str) -> None:
         self._SEARCH = base + "/Job/jobs.htm?sc.keyword={kw}&locT=&locId=&locKeyword=Remote&jobType=&fromAge={days}"
 
-    def is_available(self) -> bool:
-        return True
+    def pagination_sequence(self) -> tuple[int, ...]:
+        return self._PAGES
+
+    def _page_log_label(self, val: Any) -> str:
+        return f"page {val}/3"
+
+    def nav_timeout_ms(self) -> int:
+        return 45_000
 
     def _search_url(self, keyword: str, days: int, page_no: int = 1) -> str:
         """Search URL with the Beat-164 backstop baked in: `fromAge` (last-day
@@ -75,92 +72,17 @@ class GlassdoorScraper(BaseScraper):
             + f"&page={page_no}"
         )
 
-    def fetch(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        self._apply_domain()
-        yield from asyncio.run(self._gather(keywords, posted_after))
-
-    async def _gather(self, keywords, posted_after) -> list:
-        jobs = []
-        try:
-            async for j in self._fetch_async(keywords, posted_after):
-                jobs.append(j)
-        except (CaptchaDetected, CaptchaTimeout):
-            raise
-        except Exception as e:
-            log.warning("[%s] fetch aborted early (%s), keeping %d collected jobs", self.name, e, len(jobs))
-        return jobs
-
-    async def _fetch_async(self, keywords: list[str], posted_after: datetime) -> Iterator[RawJob]:
-        diff_days = (datetime.now(timezone.utc) - posted_after).total_seconds() / 86400.0
-        days = 1 if diff_days <= 1.25 else max(1, min(14, round(diff_days)))
-        any_success = False
-        errors: list[Exception] = []
-        async with launch_browser(self.name, persistent=True, headless=cfg.board_headless()) as context:
-            page = await context.new_page()
-            try:
-                await warm_up(page, self._HOME, self.name)
-            except (CaptchaDetected, CaptchaTimeout):
-                raise
-            except Exception as e:
-                log.debug("[%s] warm_up non-fatal error: %s", self.name, e)
-            for kw in keywords:
-                # B6: paginate Glassdoor (Beat 171 deep: pages 1..5)
-                for page_no in self._PAGES:
-                    url = self._search_url(kw, days, page_no)
-                    log.info("[glassdoor] searching %r (page %d/3) ...", kw, page_no)
-                    try:
-                        if hasattr(page, "is_closed") and page.is_closed():
-                            page = context.pages[-1] if (context.pages and not context.pages[-1].is_closed()) else await context.new_page()
-                        try:
-                            await page.goto(url, timeout=45_000, wait_until="domcontentloaded")
-                        except Exception as goto_err:
-                            log.debug("[glassdoor] page.goto warning: %s", goto_err)
-                        if await has_captcha(page):
-                            if not await await_captcha_solve(page, self.name, page.url, cfg.captcha_solve_timeout()):
-                                raise CaptchaTimeout(self.name, page.url, cfg.captcha_solve_timeout())
-                        any_success = True
-                        await human_scroll(page)
-                        await human_delay(1.5, 3.5)
-                        # Beat 164 (owner): UI filters on page 1 of every
-                        # keyword (last day + remote only + Apply).
-                        if page_no == 1:
-                            await self._apply_search_filters_ui(page, days)
-                            await human_scroll(page)
-                            await human_delay(1.0, 2.0)
-                        cards = []
-                        for _ in range(6):
-                            cards = await page.query_selector_all("li[data-test='jobListing'], article[data-test='job-listing-card'], li.JobsList_jobListItem__wjTHv, li.job-card, div[data-test='job-card']")
-                            if cards:
-                                break
-                            await asyncio.sleep(1.0)
-                        log.info("[glassdoor] %r (page %d): found %d card(s)", kw, page_no, len(cards))
-                        # B5: loaded page, 0 cards, page 1 → selector drift
-                        if not cards and page_no == 1:
-                            body_len = 0
-                            try:
-                                body_len = len(await page.content())
-                            except Exception:
-                                pass
-                            if body_len > 5000:
-                                errors.append(RuntimeError(
-                                    f"parse_drift: Glassdoor page loaded ({body_len} bytes) but 0 cards for {kw!r}"
-                                ))
-                        for card in cards:
-                            job = await self._parse_card(card, kw, days, page=page)
-                            if job:
-                                yield job
-                        if not cards:
-                            break
-                        await human_delay(3.0, 6.0)
-                    except (CaptchaDetected, CaptchaTimeout):
-                        raise
-                    except Exception as e:
-                        errors.append(e)
-                        log.warning("[glassdoor] error scraping %r: %s", kw, e)
-                        break
-            await page.close()
-        if not any_success and errors:
-            raise errors[0]
+    async def _query_cards(self, page: Any) -> list[Any]:
+        cards = []
+        for _ in range(6):
+            cards = await page.query_selector_all(
+                "li[data-test='jobListing'], article[data-test='job-listing-card'], "
+                "li.JobsList_jobListItem__wjTHv, li.job-card, div[data-test='job-card']"
+            )
+            if cards:
+                break
+            await asyncio.sleep(1.0)
+        return cards
 
     async def _apply_date_filter_ui(self, page, days: int = 1) -> None:
         """Click 'Date posted' -> 'Past 24 hours' or 'Past 3 days' in Glassdoor's UI when available."""

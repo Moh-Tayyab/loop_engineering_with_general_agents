@@ -7,7 +7,7 @@ themselves via `@register_scraper`.
 from __future__ import annotations
 
 from src.models import RawJob
-from .base import BaseScraper  # noqa: F401  (re-exported for callers)
+from .base import BaseScraper, BoardScraper  # noqa: F401  (re-exported for callers)
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
