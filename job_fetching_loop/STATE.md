@@ -22,10 +22,19 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 184 — Candidate #3: BoardScraper engine promotion (Maker)
+- **Beat #:** 185 — morning heartbeat triage: CI-red profiles failure → ESCALATED (no code)
 - **Date:** 2026-10-08
-- **Trigger:** user — act as senior engineer now run candidate #3
-- **Status:** **MAKER DONE.** Implemented Candidate #3 `BoardScraper` abstract engine in `src/scrapers/base.py` promoting browser lifecycle, persistent context, CAPTCHA handling, drift detection, and multi-page pagination. Refactored `indeed.py` and `glassdoor.py` to inherit `BoardScraper`, eliminating >150 lines of boilerplate duplication. Added `tests/test_board_scraper.py`. All 513 tests pass green (100%).
+- **Trigger:** schedule — weekday morning triage (both spines read)
+- **Status:** **RISKY/AMBIGUOUS → §10 item 25, no code touched.** test-gate red
+  on `main` (run 37784909742 push; 37784752300 on `job_fetching_loop` PR branch):
+  `tests/test_profiles.py` → `FileNotFoundError … profiles/senior_ai_engineer.yaml;
+  available: []` (+ 16 more failures/errors). Root cause: commit `1110fa2`
+  (beats 173-183) added `profiles/` to `job_fetching_loop/.gitignore` AND added
+  `test_profiles.py` in the SAME commit — profile YAMLs were never tracked, so a
+  CI checkout has none (local repro: dir absent here too). Fix needs a human
+  decision (un-ignore + commit real profiles vs hermetic fixtures vs skip-when-
+  missing) — see §10 item 25. Beat 184 (BoardScraper) stands: code + 513 tests
+  green locally apart from this pre-existing fixture gap.
 
 ## 3. Beat Log
 
@@ -75,6 +84,7 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 185 | 2026-10-08 | schedule — morning triage | **CI-red triage (no code):** test-gate red on main (`37784909742`) + job branch (`37784752300`) — `test_profiles.py` FileNotFoundError, `profiles/` gitignored by the same commit (`1110fa2`) that added the tests; real YAMLs absent everywhere in git. Fix = product decision (commit real profiles / hermetic fixtures / skip) | **RISKY → §10 item 25** — escalated to human; no code touched |
 | 184 | 2026-10-08 | user — run candidate #3 (maker) | Candidate #3 BoardScraper: base.py shared browser/CAPTCHA/page engine; indeed + glassdoor refactored; +4 tests | **MAKER DONE** — 513 passed (100% green) |
 | 183–182 | 2026-10-08 | Candidate #2 GateChain + review | 182: GateChain extracted 9 gates, main decoupled +9 tests; 183: Checker review APPROVED 509 live green | **APPROVED** — GateChain live |
 | 181 | 2026-10-08 | user — proceed better approach (maker) | Guest timeout headroom fixed under source timeout; pagination early break < 10 cards; expanded remote descriptors; live dry-run PASS | **MAKER DONE** — 493 passed, breaker closed |
@@ -94,7 +104,7 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 | 162–160 | 2026-10-07/08 | user — token saga (§9 compress) | 160/161: dead token + Indeed wall → BLOCKED; 162: file token valid (shell stale), 2-job resend delivered `daily:telegram` 10-08 | **BLOCKED ×2 → MAKER DONE** — delivery PASS |
 | 159–156 | 2026-10-07 | user — Oct-7 pilot day (§9 compress) | 159: token 401 + any-profile JD gate + SF-DROP/PK-KEEP; 158: keyword union + JD4000 +4 tests; 157: hireability gates +10 (SF-leak closed); 156: PILOT_MODE live, 2 survivors, Telegram 401 → BLOCKED auth | **MAKER DONE ×3 + BLOCKED(auth)** — 448 → 454 |
 | 155–152 | 2026-10-06/07 | user — hardening + pilot base (§9 compress) | 153: stealth hardening; 152: Phase 2b + residency pins +7 tests; 155: per-profile scoring +10; 154: profiles engine +15 | **MAKER DONE ×4** — 413 → 438 passed |
-| 151–145 | 2026-09-30/10-02 | PR #20 + closed infra (§9 compress) | PR #20 escalation→Option A→merge `e415d52` (reworks 1/2+2/2); PR #25 LOWs APPROVED; Phases 4+5 (`0d4033c`) | **ESCALATED → APPROVED + MAKER DONE ×4** |
+recompressed at 2026-10-08 (beat 185, §9 cap 20): beats 145–151 folded (verdicts kept: ESCALATED → APPROVED + MAKER DONE ×4 — PR #20 escalation→Option A→merge, PR #25 LOWs APPROVED, Phases 4+5 landed).
 recompressed at 2026-10-08 (beat 182, §9 cap 20): beats 117–144 merged (verdicts kept: PRs #13/#15/#16/#20/#25 cycles, phases 1–5, 383–413 green).
 
 
@@ -142,6 +152,25 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
 22. **(Beat 154, PILOT — next)** Wire per-profile scoring into `main.py` `normalize_raw` (scrape once, match twice; keep single `cv_match_score` gate for now vs per-profile filter — human call), combined 2-section Telegram digest, `--dry-run` purity verify, test message to owner before house delivery. Awais expectation set: 1–3 leads/week = success (niche market).
 23. **(Beat 155, PILOT GO-LIVE — human)** Set `PILOT_MODE=1` + house `TELEGRAM_CHAT_ID` in `.env` (never commit), run Day-1 live weekday 08:00 PKT, confirm digest lands in house chat. Week-1: track leads/day per profile + reject reasons; Day 4–5 first relevance feedback → blacklist/tier update. Kill/continue gate end Week-2.
 24. ~~**(Beat 156, BLOCKED — human token fix)**~~ **RESOLVED Beat 175:** Telegram bot token updated in local `.env` and GitHub secrets; `getMe` HTTP 200 (`@muhmmad_assistant_bot`), test notification delivered successfully (`MESSAGE_DELIVERED: True`).
+25. **(Beat 185, HUMAN — CI RED on main, RISKY/AMBIGUOUS):** `test-gate` red on
+    `main` (run `37784909742`, push `e248589`) and on the `job_fetching_loop`
+    PR branch (`37784752300`) — 17 failures/errors, all rooted in
+    `tests/test_profiles.py`: `FileNotFoundError: [profiles] no profile
+    'senior_ai_engineer' … available: []`. Evidence: commit `1110fa2` (beats
+    173-183) added `profiles/` to `job_fetching_loop/.gitignore` (line 19) AND
+    added `test_profiles.py` in the same commit; the YAMLs
+    (`senior_ai_engineer.yaml`, `awais_odifccm.yaml`) were never tracked and
+    don't exist on this machine either. Repro: `ls job_fetching_loop/profiles`
+    → absent; `python -m pytest job_fetching_loop/tests/test_profiles.py` fails
+    identically to CI. **Do NOT fabricate the YAMLs** — production scoring loads
+    `profiles/*.yaml` at runtime, so invented thresholds/keywords would silently
+    mis-score real jobs (pilot tasks 22-23). **Question for the human:**
+    (a) commit the real profiles (un-ignore `profiles/` — they contain personal
+    CV/target data, your call), (b) hermetic fixtures under
+    `tests/fixtures/profiles/` + monkeypatch `PROFILES_DIR` (test-only), or
+    (c) skip `test_profiles` when profiles are absent (fastest, but CI loses
+    pilot coverage). Recommendation: (a) if the data is acceptable in git,
+    else (b). Nothing shipped this beat — main stays red until decided.
 
 ## 11. Human Gate Decisions (job loop)
 
