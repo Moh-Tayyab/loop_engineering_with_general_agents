@@ -23,7 +23,8 @@ def slugify(text: str, *, max_len: int = 64) -> str:
 
     - Lowercases, strips non-alphanumeric runs, keeps hyphens.
     - Truncates to ``max_len`` on a word boundary (never splits a word).
-    - Raises ``ValueError`` for empty/non-string input.
+    - Raises ``ValueError`` for empty/non-string input or a non-int,
+      non-positive ``max_len``.
     """
     _require_str(text)
     if not isinstance(max_len, int) or isinstance(max_len, bool):
@@ -48,7 +49,8 @@ def slugify(text: str, *, max_len: int = 64) -> str:
 def truncate(text: str, *, max_chars: int = 80, ellipsis: str = "...") -> str:
     """Truncate ``text`` to ``max_chars``, appending ``ellipsis`` when cut.
 
-    Raises ``ValueError`` if ``max_chars`` is less than the ellipsis length.
+    Raises ``ValueError`` for non-str input, a non-int ``max_chars``,
+    a negative ``max_chars``, or an ``ellipsis`` longer than ``max_chars``.
     """
     _require_str(text)
     _require_str(ellipsis)
@@ -75,7 +77,7 @@ def count_words(text: str) -> int:
 
 _SECRET_PATTERNS = [
     re.compile(
-        r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_-]{16,}\b",
+        r"\b(sk|pk|ghp|gho|ghu|ghs|github_pat|AKIA)[A-Za-z0-9_-]*[A-Za-z0-9_]{16,}\b",
         re.IGNORECASE,
     ),
     re.compile(r"bearer\s+[a-z0-9._~+/=-]{20,}", re.IGNORECASE),

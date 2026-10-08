@@ -48,6 +48,12 @@ def test_slugify_rejects_nonpositive_max_len():
         slugify("hello", max_len=0)
 
 
+@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
+def test_slugify_rejects_non_int_max_len(bad):
+    with pytest.raises(ValueError):
+        slugify("hello", max_len=bad)
+
+
 # --- truncate ----------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -81,6 +87,12 @@ def test_truncate_rejects_non_str(bad):
 def test_truncate_rejects_negative_max_chars():
     with pytest.raises(ValueError):
         truncate("abc", max_chars=-1)
+
+
+@pytest.mark.parametrize("bad", [None, "5", 2.5, False])
+def test_truncate_rejects_non_int_max_chars(bad):
+    with pytest.raises(ValueError):
+        truncate("abc", max_chars=bad)
 
 
 def test_truncate_rejects_ellipsis_longer_than_max_chars():
@@ -165,13 +177,9 @@ def test_redact_secrets_short_dashed_body_unchanged():
     assert redact_secrets("skill-set-42") == "skill-set-42"
 
 
-@pytest.mark.parametrize("bad", [None, "5", 2.5, True])
-def test_slugify_rejects_non_int_max_len(bad):
-    with pytest.raises(ValueError):
-        slugify("hello", max_len=bad)
-
-
-@pytest.mark.parametrize("bad", [None, "5", 2.5, False])
-def test_truncate_rejects_non_int_max_chars(bad):
-    with pytest.raises(ValueError):
-        truncate("abc", max_chars=bad)
+def test_redact_secrets_kebab_case_prose_unchanged():
+    assert redact_secrets("skill-set-builder-extra-long") == (
+        "skill-set-builder-extra-long"
+    )
+    assert redact_secrets("ghost-writing-service") == "ghost-writing-service"
+    assert redact_secrets("ghoulish-housekeeper") == "ghoulish-housekeeper"
