@@ -2,7 +2,7 @@
 
 import pytest
 
-from textutils import count_words, redact_secrets, slugify, truncate
+from textutils import count_words, redact_secrets, slugify, truncate, wrap_text
 
 
 # --- slugify -----------------------------------------------------------------
@@ -109,6 +109,71 @@ def test_count_words(text, expected):
 def test_count_words_rejects_non_str(bad):
     with pytest.raises(ValueError):
         count_words(bad)
+
+
+# --- wrap_text ---------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("text", "width", "expected"),
+    [
+        ("hello world", 80, "hello world"),
+        ("hello world", 11, "hello world"),
+        ("hello world", 10, "hello\nworld"),
+        ("the quick brown fox", 10, "the quick\nbrown fox"),
+        ("abcdef", 5, "abcde\nf"),
+        ("a" * 10, 3, "aaa\naaa\naaa\na"),
+        ("one two three\nfour five six", 7, "one two\nthree\nfour\nfive\nsix"),
+        ("hello\nworld", 80, "hello\nworld"),
+        ("a\n\nb", 80, "a\n\nb"),
+    ],
+)
+def test_wrap_text_basic(text, width, expected):
+    assert wrap_text(text, width=width) == expected
+
+
+def test_wrap_text_default_width():
+    assert wrap_text("short line") == "short line"
+
+
+def test_wrap_text_empty_returns_empty():
+    assert wrap_text("") == ""
+
+
+@pytest.mark.parametrize("blank", ["   ", "\t", "\n", " \t \n "])
+def test_wrap_text_whitespace_only_returns_empty(blank):
+    assert wrap_text(blank) == ""
+
+
+def test_wrap_text_strips_surrounding_whitespace():
+    assert wrap_text("  hello  ", width=80) == "hello"
+
+
+def test_wrap_text_normalizes_tabs():
+    assert wrap_text("a\tb", width=80) == "a b"
+
+
+def test_wrap_text_never_exceeds_width():
+    text = "supercalifragilistic expialidocious words " * 5
+    for line in wrap_text(text, width=9).split("\n"):
+        assert len(line) <= 9
+
+
+@pytest.mark.parametrize("bad", [None, 42, 3.14, b"bytes", ["a"], {"a": 1}])
+def test_wrap_text_rejects_non_str(bad):
+    with pytest.raises(ValueError):
+        wrap_text(bad)
+
+
+@pytest.mark.parametrize("bad_width", [0, -1, -100])
+def test_wrap_text_rejects_nonpositive_width(bad_width):
+    with pytest.raises(ValueError):
+        wrap_text("hello", width=bad_width)
+
+
+@pytest.mark.parametrize("bad_width", ["5", 5.0, None, True, [5]])
+def test_wrap_text_rejects_non_int_width(bad_width):
+    with pytest.raises(ValueError):
+        wrap_text("hello", width=bad_width)
 
 
 # --- redact_secrets ----------------------------------------------------------

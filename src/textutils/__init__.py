@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import textwrap
 
 from ._validate import require_str as _require_str
 from .diff import diff, render_unified, similarity
@@ -11,6 +12,7 @@ __all__ = [
     "slugify",
     "truncate",
     "count_words",
+    "wrap_text",
     "redact_secrets",
     "diff",
     "render_unified",
@@ -67,6 +69,43 @@ def count_words(text: str) -> int:
     """
     _require_str(text)
     return len(text.split())
+
+
+def wrap_text(text: str, width: int = 80) -> str:
+    """Wrap ``text`` to ``width`` columns, preserving existing line breaks.
+
+    - Hard newlines split the input first; each line is word-wrapped on its own
+      (a blank line stays a blank line).
+    - Words longer than ``width`` are hard-broken so no line ever exceeds
+      ``width`` characters.
+    - Empty or whitespace-only input returns ``""``.
+    - Raises ``ValueError`` for non-string input, a non-integer ``width``
+      (``bool`` included), or ``width < 1``.
+    """
+    _require_str(text)
+    if isinstance(width, bool) or not isinstance(width, int):
+        raise ValueError(f"width must be an int, got {type(width).__name__}")
+    if width < 1:
+        raise ValueError("width must be >= 1")
+
+    if not text.strip():
+        return ""
+
+    wrapped_lines: list[str] = []
+    for line in text.split("\n"):
+        wrapped_lines.extend(
+            textwrap.wrap(
+                line.strip(),
+                width=width,
+                break_long_words=True,
+                break_on_hyphens=False,
+                expand_tabs=False,
+                replace_whitespace=True,
+                drop_whitespace=True,
+            )
+            or [""]
+        )
+    return "\n".join(wrapped_lines)
 
 
 _SECRET_PATTERNS = [
