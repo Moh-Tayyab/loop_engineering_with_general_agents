@@ -18,20 +18,18 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 36 — morning heartbeat triage: issue #4 `wrap_text` CLEAR FIX shipped
-- **Date:** 2026-10-12
+- **Beat #:** 37 — morning heartbeat triage (textutils trainer infra; no code)
+- **Date:** 2026-10-14
 - **Trigger:** schedule — weekday morning triage (both loops' spines read)
-- **Status:** **CLEAR FIX → checker APPROVED (read-only adversarial; `checker` spawn
-  still infra-blocked, task 14).** Issue #4: `wrap_text(text, width=80)` in
-  `src/textutils/__init__.py` (shared trainer util; this loop owns textutils beats by
-  precedent from issue #6/beat 36). Strict `ValueError` validation (non-str text;
-  non-int/`bool`/`<1` width), newline-preserving per-line wrap, long-word hard-break,
-  whitespace-only → `""`; +18 tests. Gate: `tests/` **155 passed**; full
-  `--ignore=job_fetching_loop` **367 passed** (1 pre-existing env failure: ffprobe
-  absent locally). Branch `fix/wraptext-textutils`, commit `7cd61a9`, PR opened (closes
-  #4). Issue #6 redact fix remains on open **PR #31** (checker APPROVED) but its
-  test-gate is blocked by the job-loop `profiles/` RED — job §10 item 25. Beat 35
-  unchanged (WAITING ON HUMAN: Google `--login` / day-9 resume).
+- **Status:** **TRIAGE DONE, NO CODE.** Re-verified both textutils CLEAR FIXes this
+  loop owns by precedent: issue #6 → **PR #31** (`fix/redact-secrets-openai-uppercase`,
+  checker r2 APPROVED) and issue #4 → **PR #32** (`fix/wraptext-textutils`, checker
+  APPROVED) — both open, MERGEABLE, root suite green; their `test-gate` is red ONLY
+  from the job-loop `profiles/` fixture gap (RISKY → human, job §10 item 25), which
+  blocks the merge. Issue #3 = exact duplicate of #4 (close when #32 lands); issue #1
+  = stale workflow-test issue (close when convenient). Also landed the bookkeeping
+  stranded on the fix branches (beats 35–36) onto main. Beat 35 unchanged — still
+  **WAITING ON HUMAN** (Google `--login` / day-9 resume).
 
 ## 3. Beat Log
 
@@ -39,6 +37,7 @@ compressed at 2026-10-12 (beat 36, §9 cap 20): beats 20–25 folded into one le
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 37 | 2026-10-14 | schedule — morning triage | **Textutils triage, no code:** #6→PR #31 (checker r2 APPROVED) + #4→PR #32 (checker APPROVED) both open/MERGEABLE, root green — merge blocked only by job `profiles/` RED (job §10.25 RISKY→human); #3 dup of #4, #1 stale; recovered bookkeeping stranded on fix branches (beats 35–36) onto main | **DONE (no code)** — human: resolve profiles gate → merge #31/#32; beat 35 WAITING ON HUMAN unchanged |
 | 36 | 2026-10-12 | schedule — morning triage | **Issue #4 `wrap_text` (CLEAR FIX):** `src/textutils/__init__.py` + `wrap_text(text, width=80)` — strict ValueError (non-str / non-int / bool / `<1` width), newline-preserving per-line wrap, long-word hard-break, whitespace-only → `""`; +18 tests; checker APPROVED (read-only `general` fallback) | **APPROVED → PR open** — 155 root / 367 root+video green; closes #4 |
 | 35 | 2026-10-07 | manual — day-9 resume checkpoint | **WAITING ON HUMAN:** Google session revoked server-side (cookies intact, signed-out everywhere); login-gate v4 hardened beat 34 (checker r5 APPROVED, 213 green). Handoff: headed `--login`, then clear `extend_progress.json` `pending_extend` (seg-3 render never started) and resume day 9 (1 attempt left, segs 3-8) | **WAITING ON HUMAN** — no code; day 8 failed (`clip_attempts[final.mp4]=3`), day 9 in_progress (attempts=2, 16s) |
 | 34 | 2026-10-07 | manual | **Login-gate server-side hardening (final):** gate v1 (cookies) + v2 (myaccount probe) both false-verified a REVOKED session live. v3/v4: probe now navigates RAW `https://flow.google.com/` (signed-out ⇒ server-302 to /about at domcontentloaded, no client race — measured), 16×500ms watch loop backstops slow client hops, startswith-aligned, TWO-consecutive streak, probe-fails hint, exact-host netloc. Tests: `_HopProbePage` pins the watch loop (deletable-proof), probe-destination test, 7 gate tests | **APPROVED** — checker round 5 (adversarial: urlparse bypasses, races, hop pin); 213 loop / 213 CI gate |
