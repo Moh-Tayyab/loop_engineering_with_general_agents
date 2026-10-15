@@ -18,30 +18,28 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 36 — morning heartbeat triage → issue #6 fix shipped (PR #31)
-- **Date:** 2026-10-08
+- **Beat #:** 37 — morning heartbeat triage (textutils trainer infra; no code)
+- **Date:** 2026-10-14
 - **Trigger:** schedule — weekday morning triage (both loops' spines read)
-- **Status:** **PR #31 OPEN, checker APPROVED (round 2).** Issues #6 CLEAR FIX:
-  old PRs #5/#7/#8/#9 were all closed-unmerged and their branches deleted, so
-  the leak still reproduced on `main`; re-implemented on
-  `fix/redact-secrets-openai-uppercase` — pattern 1 = prefix + `[A-Za-z0-9_-]*`
-  + dash-free `[A-Za-z0-9_]{16,}` tail + `IGNORECASE` (catches dashed
-  OpenAI-style keys, uppercase/mixed-case prefixes — issue #6's three repros —
-  never kebab prose), non-int `max_len`/`max_chars` → `ValueError`. Checker r1
-  CHANGES (kebab FP `skill-set-builder-extra-long`) → rework → r2 **APPROVED**
-  (via read-only `general` — `checker` spawn still fails, task 14). Tests: 60
-  textutils / 350 root gate green. Issue #4 (wrap_text) still OPEN — branch
-  deleted, needs a fresh beat. Beat 35 left WAITING ON HUMAN (Google sign-in /
-  day-9 resume) — unchanged.
+- **Status:** **TRIAGE DONE, NO CODE.** Re-verified both textutils CLEAR FIXes this
+  loop owns by precedent: issue #6 → **PR #31** (`fix/redact-secrets-openai-uppercase`,
+  checker r2 APPROVED) and issue #4 → **PR #32** (`fix/wraptext-textutils`, checker
+  APPROVED) — both open, MERGEABLE, root suite green; their `test-gate` is red ONLY
+  from the job-loop `profiles/` fixture gap (RISKY → human, job §10 item 25), which
+  blocks the merge. Issue #3 = exact duplicate of #4 (close when #32 lands); issue #1
+  = stale workflow-test issue (close when convenient). Also landed the bookkeeping
+  stranded on the fix branches (beats 35–36) onto main. Beat 35 unchanged — still
+  **WAITING ON HUMAN** (Google `--login` / day-9 resume).
 
 ## 3. Beat Log
 
-compressed at 2026-10-08 (beat 36, §9 cap 20): beats 20–25 folded into one legacy row (verdicts kept: PASS ×6 hardening + production-readiness).
+compressed at 2026-10-12 (beat 36, §9 cap 20): beats 20–25 folded into one legacy row (verdicts kept: PASS ×6 hardening + production-readiness).
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
-| 36 | 2026-10-08 | schedule — morning triage | **Issue #6 redact fix (CLEAR FIX):** old PRs #5/#7/#8/#9 closed-unmerged, branches gone, leak still on `main`; re-implemented: pattern = prefix + `[A-Za-z0-9_-]*` + dash-free `{16,}` tail + IGNORECASE, non-int → ValueError, +14 tests; checker r1 CHANGES (kebab FP) → rework → r2 APPROVED (via `general`; `checker` spawn still fails, task 14) | **APPROVED → PR #31 open** — 60 textutils / 350 root green; #4 wrap_text still open (branch deleted), #3 dup, #1 stale |
-| 35 | 2026-10-07 | manual — day-9 resume checkpoint | **WAITING ON HUMAN:** Google session revoked server-side (cookies intact, signed-out everywhere); login-gate v4 hardened in beat 34 (checker r5 APPROVED, 213 green). Handoff: user headed `--login`, then clear `extend_progress.json` `pending_extend` (seg-3 render never started) and resume day 9 (1 attempt left, segs 3-8) | **WAITING ON HUMAN** — no code; day 8 failed (`clip_attempts[final.mp4]=3`), day 9 in_progress (attempts=2, 16s) |
+| 37 | 2026-10-14 | schedule — morning triage | **Textutils triage, no code:** #6→PR #31 (checker r2 APPROVED) + #4→PR #32 (checker APPROVED) both open/MERGEABLE, root green — merge blocked only by job `profiles/` RED (job §10.25 RISKY→human); #3 dup of #4, #1 stale; recovered bookkeeping stranded on fix branches (beats 35–36) onto main | **DONE (no code)** — human: resolve profiles gate → merge #31/#32; beat 35 WAITING ON HUMAN unchanged |
+| 36 | 2026-10-12 | schedule — morning triage | **Issue #4 `wrap_text` (CLEAR FIX):** `src/textutils/__init__.py` + `wrap_text(text, width=80)` — strict ValueError (non-str / non-int / bool / `<1` width), newline-preserving per-line wrap, long-word hard-break, whitespace-only → `""`; +18 tests; checker APPROVED (read-only `general` fallback) | **APPROVED → PR open** — 155 root / 367 root+video green; closes #4 |
+| 35 | 2026-10-07 | manual — day-9 resume checkpoint | **WAITING ON HUMAN:** Google session revoked server-side (cookies intact, signed-out everywhere); login-gate v4 hardened beat 34 (checker r5 APPROVED, 213 green). Handoff: headed `--login`, then clear `extend_progress.json` `pending_extend` (seg-3 render never started) and resume day 9 (1 attempt left, segs 3-8) | **WAITING ON HUMAN** — no code; day 8 failed (`clip_attempts[final.mp4]=3`), day 9 in_progress (attempts=2, 16s) |
 | 34 | 2026-10-07 | manual | **Login-gate server-side hardening (final):** gate v1 (cookies) + v2 (myaccount probe) both false-verified a REVOKED session live. v3/v4: probe now navigates RAW `https://flow.google.com/` (signed-out ⇒ server-302 to /about at domcontentloaded, no client race — measured), 16×500ms watch loop backstops slow client hops, startswith-aligned, TWO-consecutive streak, probe-fails hint, exact-host netloc. Tests: `_HopProbePage` pins the watch loop (deletable-proof), probe-destination test, 7 gate tests | **APPROVED** — checker round 5 (adversarial: urlparse bypasses, races, hop pin); 213 loop / 213 CI gate |
 | 33 | 2026-10-07 | manual | **Day-8/9 live runs + session-revocation diagnosis:** run10 setsid — day 8 escalated correctly (extend seg-2 never committed, 3/3 attempts, `@Moh-Tayyab` fired). run11 — day 9 seg1 done + seg2 extended 8→16s, seg-3 Start never started (90s gate + 2 pending waits); day 9 kept `attempts=2`/1 budget. Diags: cookies fully intact (SID/SECURE/2PSIDTS exp 2027) yet myaccount/gemini/flow ALL server-side signed-out → session revoked everywhere. Flow facts: project-listing shows poster thumb (`img[alt='Generated video thumbnail']`), not `<video>`; edit_url/project_url → /about; extend wait deadlocked → `pending_extend=True` must be cleared (with evidence) pre-resume | **ESCALATED** — no valid Google session; generation impossible until fresh human sign-in (headed `--login` gate); day 9 in_progress preserves one attempt |
 | 32 | 2026-10-06 | manual | **Extend LIVE run (no-ref):** user: "final video generate kro" + "ref images use nhi karni" → storyboard refs stripped (5 scenes), MCP chrome killed (profile free), `FLOW_APPROVE_CREDITS=1 ... --resume` launched; segment-1 generate clicked (free-credit accepted) → 900s timeout → manual assist; resume pending-guard refused re-pay (correct), editor unreachable ×2 → budget 3/3 | **ESCALATED** — day 7 failed, `clip_attempts[final.mp4]=3` durable gate, esc_relay pinged, loop FROZEN; manual_todo 16:57 |
@@ -88,13 +86,12 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
    otherwise covered by task 1. Use `docs/PRODUCTION_RUNBOOK.md`.
 3. **YouTube re-consent:** `.venv/bin/python -m src.main --youtube-auth` (token from
    2026-08-31 past Google testing-mode ~7d expiry).
-4. ~~Decide stale PRs #5/#7/#8~~ **Resolved beat 36:** #5/#7/#8/#9 were all
-   closed-unmerged with branches deleted; the redact leak was re-fixed in
-   **PR #31** (checker APPROVED) — human: review/merge #31 (closes #6).
-   **Issue #4 (wrap_text) still open:** branch `opencode/heartbeat-20261007-wraptext`
-   deleted from origin — re-implement next beat (spec + 26-test precedent in the
-   issue thread), then checker → PR. #3 is an exact duplicate of #4 (close when
-   one lands); #1 is a stale test issue (close when convenient).
+4. ~~Decide stale PRs: #5 (wrap_text), #7 (redact fix), #8 (issue #6 fix) — merge or close.~~
+   **Beat 36:** #5/#7/#8/#9 all closed-unmerged. Issue #4 (wrap_text) re-shipped on
+   `fix/wraptext-textutils` (checker APPROVED) → **PR open, human: review/merge (closes #4)**.
+   Issue #6 (redact) sits on open **PR #31** (checker APPROVED) but its test-gate is
+   blocked by the job-loop `profiles/` RED (job STATE §10 item 25). #3 is an exact dup of
+   #4 (close when one lands); #1 is a stale workflow test issue (close when convenient).
 5. **rclone Drive sync** (laptop-off design): GitHub cron pulls clips/uploads/syncs back
    with the laptop off — still pending.
 6. `_approve_credits` live verification on the credit dialog (part of G5 / extend chain).
