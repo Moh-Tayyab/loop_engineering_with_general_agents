@@ -22,20 +22,19 @@
 
 ## 2. Current Beat
 
-- **Beat #:** 186 — morning heartbeat triage: `profiles/` CI-red RE-ESCALATED + production-gate finding (no code)
-- **Date:** 2026-10-14
+- **Beat #:** 187 — morning heartbeat triage: `profiles/` CI-red re-confirmed (no code)
+- **Date:** 2026-10-16
 - **Trigger:** schedule — weekday morning triage (both spines read)
-- **Status:** **RISKY/AMBIGUOUS (re-confirmed) → §10 item 25, no code touched.**
-  `test-gate` still red on `main` (run `37784909742`, push `e248589`) — all failures
-  root in `tests/test_profiles.py` (`profiles/` gitignored, YAMLs never tracked).
-  **NEW evidence (beat 186):** the gap is not just CI — in any checkout without
-  `profiles/*.yaml` (incl. the cloud cron runner) Gate 1 `ai_keyword_matches` →
-  `passing_profiles()` returns `[]`, so **every job reaching Gate 1 is rejected**
-  ("no AI keyword match") and Gate 8 `cv_match` would reject the rest; today's cloud
-  run `38536127149` found 0 new jobs (23 dropped earlier at JD-body fail-closed).
-  Consequence: open **PR #31 + PR #32** (textutils, both checker-APPROVED) stay
-  merge-blocked by this RED. Human decision on §10 item 25 (commit real profiles /
-  hermetic fixtures / skip) unblocks tests AND cloud pilot delivery. Beat 184 stands.
+- **Status:** **RISKY/AMBIGUOUS (3rd confirmation) → §10 item 25, no code touched.**
+  Fresh local repro today: `tests/test_profiles.py` fails with
+  `FileNotFoundError: [profiles] … available: []` (`profiles/` gitignored, absent in
+  every checkout). No new CI runs on main since 10-08 (run `37784909742` still the
+  last, RED). Cloud cron `38871131901` (10-16) ran green but **found 0 new jobs**
+  (42 JD-body drops + 15 rejects) — Gate-1/Gate-8 profile gap stands as production
+  impact. NEW: PR #31/#32 `test-gate` runs (10-15) ended `action_required` with 0
+  jobs → their checks never executed, so merge needs a human workflow approval too.
+  Beat 186 stands; human decision on §10 item 25 unblocks CI + cloud delivery + PRs.
+  Verdict: **ESCALATED** (RISKY → human gate, no code touched).
 
 ## 3. Beat Log
 
@@ -85,6 +84,7 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 
 | Beat | Date | Trigger | Action | Result |
 |------|------|---------|--------|--------|
+| 187 | 2026-10-16 | schedule — morning triage | **CI-red re-confirmed, no code:** local `test_profiles.py` repro fresh (`FileNotFoundError … available: []`, `profiles/` gitignored L19); cloud cron `38871131901` green-run 0 new jobs (42 JD-body drops, 15 rejects) → Gate-1/8 gap still production impact; PR #31/#32 test-gate runs 10-15 ended `action_required` (0 jobs) so checks never ran | **ESCALATED → §10 item 25** — human decision (profiles delivery + workflow-run approval) unblocks CI, cloud, PRs |
 | 186 | 2026-10-14 | schedule — morning triage | **CI-red re-triage, no code:** `profiles/` still gitignored → `test_profiles.py` red on main + every PR; NEW: same gap breaks CLOUD GATE 1 (`ai_keyword_matches`→`passing_profiles`=[] rejects all jobs) + Gate 8 — today's cloud run 0 new jobs; PRs #31/#32 (textutils, checker-APPROVED) merge-blocked by it | **RISKY → §10 item 25 (addendum)** — human decision on profiles delivery unblocks CI + cloud pilot |
 | 185 | 2026-10-12 | schedule — morning triage | **CI-red triage (no code):** test-gate red on main (`37784909742`) + job branch (`37784752300`) — `test_profiles.py` FileNotFoundError; `profiles/` gitignored so CI checkout has no YAMLs; 51F+9E reproduced locally | **RISKY → §10 item 25** — escalated to human; no code touched |
 | 184 | 2026-10-08 | user — run candidate #3 (maker) | Candidate #3 BoardScraper: base.py shared browser/CAPTCHA/page engine; indeed + glassdoor refactored; +4 tests | **MAKER DONE** — 513 passed (100% green) |
@@ -97,14 +97,13 @@ recompressed at 2026-10-06 (beat 152, §9 cap): beat 116 folded into legacy beat
 | 175 | 2026-10-08 | user — token update in env/secrets (maker) | Token getMe 200 (@muhmmad_assistant_bot); live message delivered; shell clean (no stale env); circuits CLOSED (0 fails); DLQ 0 | **MAKER DONE** — token active & verified |
 | 174 | 2026-10-08 | user — pending sweep 2 (maker+checker) | DLQ: 21 stale outage records (0 replayable) backed up + cleared → 0; re-pass 173 APPROVED (481 post-change, cron YAML valid, no secrets) | **APPROVED** — shell/cloud/single-writer stay human |
 | 173 | 2026-10-08 | user — pending sweep (maker+checker) | Adversarial 170–172: fixed hollow-ok, timeout gap race, per-call batch dupes + stale-shell guard; +2 tests | **MAKER DONE** — 481 passed; DLQ 21 + shell/cloud-sync stay human |
-| 172–171 | 2026-10-08 | user — worldwide max jobs (§9 compress) | 171: deep pages 3→5, board cap 900s, cron 60min, roles data-only; 172: LinkedIn board `_board_url` guest-parity + live volume audit (~50 cards/kw, gates correct) | **MAKER DONE ×2** — 477 → 479 passed |
-| 170 | 2026-10-08 | user — indeed multi-domains max jobs (maker) | Default fan-out pk+www+ae+sa+sg; run_source tries ALL closed keys (shared budget, per-key verdicts, shared in-batch dedup); pick_all added; +5 tests | **MAKER DONE** — 474 passed; live multi-domain run pending (fresh CAPTCHA per host) |
+| 172–170 | 2026-10-08 | user — worldwide/indeed max jobs (§9 compress) | 171: deep pages 3→5, board cap 900s, cron 60min, roles data-only; 172: LinkedIn board `_board_url` guest-parity + live volume audit (~50 cards/kw); 170: indeed fan-out pk+www+ae+sa+sg, run_source tries ALL closed keys, pick_all +5 tests | **MAKER DONE ×3** — 474 → 479 passed |
 | 169 | 2026-10-08 | user — now run next (checker re-pass 167, in-main) | Delta re-pass: data-test hooks lead (diff-verified), bare Apply gone, `:text-is` OK on playwright 1.63, 469 gate post-change green, no secrets/state writes; residual 'Remote' decoy risk inherent + backstop holds | **APPROVED** — no rework; MINOR #1 closed; NOTE: parallel session wrote its own 168 concurrently — single-writer call needed |
 | 168–163 | 2026-10-08 | user — CAPTCHA saga (§9 compress) | 163 (PARTIAL): Indeed still walled (6 clicks fail), Glassdoor one auto-solve + cookie save; 168 (parallel): Singleton cleaner + bring_to_front + `--solve` CLI + page recovery +3 tests | **PARTIAL → MAKER DONE** — 469; Glassdoor active, Indeed auto-solved (per 168) |
 | 167–166 | 2026-10-08 | user — review cycle 164/165 (§9 compress) | 166: in-main adversarial pass APPROVED with 3 MINORs (spawn failed, task 14); 167: MINOR#1 fixed (data-test first, exact text-is Apply) +2 tests | **APPROVED → MAKER DONE** — 469 passed |
 | 165–164 | 2026-10-08 | user — board filters + full-JD (§9 compress) | 164: Glassdoor UI (last-day + remote-only + Apply) + every-card full JD; 165: Indeed parity (fromage/Remote/DSQF7 + auto-apply UI) + every-card full JD; Easy Apply removed both | **MAKER DONE ×2** — 459 → 467 passed |
-| 162–160 | 2026-10-07/08 | user — token saga (§9 compress) | 160/161: dead token + Indeed wall → BLOCKED; 162: file token valid (shell stale), 2-job resend delivered `daily:telegram` 10-08 | **BLOCKED ×2 → MAKER DONE** — delivery PASS |
-| 159–156 | 2026-10-07 | user — Oct-7 pilot day (§9 compress) | 159: token 401 + any-profile JD gate + SF-DROP/PK-KEEP; 158: keyword union + JD4000 +4 tests; 157: hireability gates +10 (SF-leak closed); 156: PILOT_MODE live, 2 survivors, Telegram 401 → BLOCKED auth | **MAKER DONE ×3 + BLOCKED(auth)** — 448 → 454 |
+| 162–156 | 2026-10-07 | user — token saga + Oct-7 pilot day (§9 compress) | 160/161 dead token + Indeed wall → BLOCKED; 162 file token valid (shell stale), 2-job resend delivered `daily:telegram` 10-08; 159 token 401 + any-profile JD gate + SF-DROP/PK-KEEP; 158 keyword union +JD4000; 157 hireability gates +10; 156 PILOT_MODE live, 2 survivors, Telegram 401 → BLOCKED auth | **BLOCKED ×2 → MAKER DONE ×4 + BLOCKED(auth)** — delivery PASS; 448 → 454 |
+recompressed at 2026-10-16 (beat 187, §9 cap 20): beats 170–172 folded into one row + beats 156–162 folded into one row (verdicts kept: MAKER DONE ×4, BLOCKED ×2, BLOCKED(auth), delivery PASS) before adding beat 187.
 recompressed at 2026-10-14 (beat 186, §9 cap 20): beats 152–155 folded (verdicts kept: **MAKER DONE ×4** — 153 stealth hardening, 152 Phase 2b + residency pins, 155 per-profile scoring +10, 154 profiles engine +15; 413 → 438 passed).
 recompressed at 2026-10-12 (beat 185, §9 cap 20): beats 145–151 folded (verdicts kept: ESCALATED → APPROVED + MAKER DONE ×4 — PR #20 escalation→Option A→merge, PR #25 LOWs APPROVED, Phases 4+5 landed).
 recompressed at 2026-10-08 (beat 182, §9 cap 20): beats 117–144 merged (verdicts kept: PRs #13/#15/#16/#20/#25 cycles, phases 1–5, 383–413 green).
@@ -180,6 +179,13 @@ exceeded. Keep verdicts; never drop budget (§4) or escalation (THIS loop's `AGE
     fail-open when no profiles are present — the last needs a deliberate
     fail-open-vs-fail-closed call, Rule 10 context). Open PRs #31/#32
     (textutils, checker-APPROVED) remain merge-blocked by this RED.
+    **Beat 187 addendum (2026-10-16):** 3rd confirmation, still no code —
+    fresh local repro (`FileNotFoundError … available: []`), no new main
+    test-gate run since 10-08, and cloud cron `38871131901` again **0 new
+    jobs** (42 JD-body drops + 15 rejects). NEW second blocker: PR #31/#32
+    `test-gate` runs on 10-15 concluded `action_required` with **0 jobs**
+    (workflow-run approval pending in repo settings) — so merging those PRs
+    now needs BOTH the profiles fix AND a human approving the runs.
 
 ## 11. Human Gate Decisions (job loop)
 
